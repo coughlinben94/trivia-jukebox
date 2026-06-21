@@ -304,7 +304,7 @@ export default function Jukebox({ onLogout }) {
             ))}
           </div>
 
-          {/* Add new set */}
+          {/* Add new theme */}
           <div className="px-2 mt-3">
             {addingSet ? (
               <div className="flex gap-1">
@@ -317,18 +317,18 @@ export default function Jukebox({ onLogout }) {
                     if (e.key === 'Enter') createSet()
                     if (e.key === 'Escape') { setAddingSet(false); setNewSetName('') }
                   }}
-                  placeholder="Name…"
-                  className="flex-1 bg-white/[0.06] text-white text-[11px] rounded-lg px-2 py-1.5 outline-none border border-white/[0.08] placeholder-white/20 min-w-0"
+                  placeholder="Theme name…"
+                  className="flex-1 bg-white/[0.06] text-white text-[11px] rounded-lg px-2 py-1.5 outline-none border border-[#1DB954]/40 placeholder-white/20 min-w-0"
                 />
                 <button onClick={createSet} className="text-[#1DB954] text-xs px-1.5 cursor-pointer hover:opacity-80">✓</button>
               </div>
             ) : (
               <button
                 onClick={() => setAddingSet(true)}
-                className="w-full text-left text-[11px] text-white/25 hover:text-white/50 transition-colors duration-150 cursor-pointer px-2 py-1.5 rounded-lg hover:bg-white/[0.04] flex items-center gap-1.5"
+                className="w-full text-[11px] font-semibold text-[#1DB954] border border-[#1DB954]/30 hover:border-[#1DB954]/60 hover:bg-[#1DB954]/[0.07] transition-all duration-150 cursor-pointer px-2 py-2 rounded-lg flex items-center justify-center gap-1.5 active:scale-[0.97]"
               >
-                <span className="text-base leading-none">+</span>
-                <span>New night</span>
+                <span className="text-sm leading-none">+</span>
+                <span>Add Theme</span>
               </button>
             )}
           </div>
