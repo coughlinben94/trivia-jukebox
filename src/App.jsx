@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { login, handleCallback, logout, getToken } from './lib/spotify'
+import Jukebox from './components/Jukebox'
 
 export default function App() {
   const [token, setToken] = useState(null)
@@ -11,7 +12,9 @@ export default function App() {
 
     if (code) {
       window.history.replaceState({}, '', '/')
-      handleCallback(code).then(() => getToken().then(setToken)).finally(() => setLoading(false))
+      handleCallback(code)
+        .then(() => getToken().then(setToken))
+        .finally(() => setLoading(false))
     } else {
       getToken().then(setToken).finally(() => setLoading(false))
     }
@@ -19,19 +22,23 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center">
-        <div className="w-6 h-6 border-2 border-green-500 border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
+        <div className="w-5 h-5 border-[1.5px] border-white/10 border-t-[#1DB954] rounded-full animate-spin" />
       </div>
     )
   }
 
   if (!token) {
     return (
-      <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-6">
-        <h1 className="text-5xl font-bold tracking-tight">🎵 Trivia Jukebox</h1>
+      <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col items-center justify-center gap-8">
+        <div className="text-center space-y-2">
+          <div className="text-5xl mb-4">🎵</div>
+          <h1 className="text-2xl font-semibold tracking-tight">Trivia Jukebox</h1>
+          <p className="text-sm text-white/35">Your personal music trivia queue</p>
+        </div>
         <button
           onClick={login}
-          className="bg-green-500 hover:bg-green-400 text-black font-semibold px-8 py-3 rounded-full transition-colors"
+          className="bg-[#1DB954] hover:bg-[#1ed760] text-black text-sm font-semibold px-7 py-3 rounded-full transition-all duration-150 active:scale-[0.97]"
         >
           Connect Spotify
         </button>
@@ -39,16 +46,5 @@ export default function App() {
     )
   }
 
-  return (
-    <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-4">
-      <h1 className="text-5xl font-bold tracking-tight">🎵 Trivia Jukebox</h1>
-      <p className="text-green-400 text-sm">Connected to Spotify</p>
-      <button
-        onClick={() => { logout(); setToken(null) }}
-        className="text-gray-500 hover:text-gray-300 text-sm underline transition-colors"
-      >
-        Disconnect
-      </button>
-    </div>
-  )
+  return <Jukebox onLogout={() => setToken(null)} />
 }

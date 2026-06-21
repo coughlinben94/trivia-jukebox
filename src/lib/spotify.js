@@ -1,6 +1,6 @@
 const CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID
 const REDIRECT_URI = import.meta.env.DEV
-  ? 'http://localhost:5173'
+  ? 'http://127.0.0.1:5173'
   : 'https://trivia-jukebox.vercel.app'
 const SCOPES = [
   'streaming',
@@ -102,4 +102,15 @@ export function logout() {
   localStorage.removeItem('spotify_token')
   localStorage.removeItem('spotify_refresh_token')
   localStorage.removeItem('spotify_token_expiry')
+}
+
+export async function searchTracks(query) {
+  const token = await getToken()
+  if (!token) return []
+  const res = await fetch(
+    `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=8`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  )
+  const data = await res.json()
+  return data.tracks?.items ?? []
 }
