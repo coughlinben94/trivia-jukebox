@@ -92,7 +92,7 @@
 .live-bg-out { animation: live-fade-out 0.4s cubic-bezier(0.23,1,0.32,1) both }
 .live-art-in   { animation: live-art-in   350ms cubic-bezier(0.23,1,0.32,1) both }
 .live-art-out  { animation: live-art-out  280ms cubic-bezier(0.23,1,0.32,1) both }
-.live-text-in  { animation: live-text-in  280ms 120ms cubic-bezier(0.23,1,0.32,1) both }
+.live-text-in  { animation: live-text-in  280ms 200ms cubic-bezier(0.23,1,0.32,1) both }
 .live-playing  { animation: live-pulse 2.2s ease-in-out infinite }
 
 /* Scrubber */

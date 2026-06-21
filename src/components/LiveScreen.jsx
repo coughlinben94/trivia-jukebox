@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 
 export default function LiveScreen({ currentTrack, isPaused, onClose }) {
   const [shown, setShown] = useState(currentTrack)
@@ -70,23 +71,29 @@ export default function LiveScreen({ currentTrack, isPaused, onClose }) {
               * When prev is null (first song or Live Screen just opened), skip the
               * directional slide and use a plain fade so nothing shoots in from nowhere.
               */}
+            {/*
+              * Page flip: exit card rotates Y 0→90° (snaps away, ease-in),
+              * then enter card rotates Y -90→0° (snaps into place, ease-out).
+              * AnimatePresence mode="wait" sequences them — exit first, then enter.
+              * initial={false} skips the flip on first mount (first song just appears).
+              * Pulse on the container; flip on the inner motion.div — no shared transform.
+              */}
             <div
               className={`relative w-72 h-72 sm:w-80 sm:h-80 rounded-2xl overflow-hidden ${!isPaused && !prev ? 'live-playing' : ''}`}
-              style={{ boxShadow: '0 32px 80px rgba(0,0,0,0.7)' }}
+              style={{ perspective: '1200px', boxShadow: '0 32px 80px rgba(0,0,0,0.7)' }}
             >
-              {/* Outgoing: slides left + fades out */}
-              {prev && prevArtUrl && (
-                <div key={prev.uri + '-out'} className="absolute inset-0 live-art-out">
-                  <img src={prevArtUrl} alt="" className="w-full h-full object-cover" />
-                </div>
-              )}
-              {/* Incoming: directional slide on transitions, plain fade on first song */}
-              <div
-                key={shown.uri + '-in'}
-                className={`absolute inset-0 ${prev ? 'live-art-in' : 'live-fade-in'}`}
-              >
-                <img src={artUrl} alt="" className="w-full h-full object-cover" />
-              </div>
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.div
+                  key={shown.uri}
+                  className="absolute inset-0"
+                  initial={{ rotateY: -90 }}
+                  animate={{ rotateY: 0, transition: { duration: 0.16, ease: [0, 0, 0.55, 1] } }}
+                  exit={{ rotateY: 90, transition: { duration: 0.16, ease: [0.45, 0, 1, 1] } }}
+                  style={{ backfaceVisibility: 'hidden' }}
+                >
+                  <img src={artUrl} alt="" className="w-full h-full object-cover" />
+                </motion.div>
+              </AnimatePresence>
             </div>
 
             {/* Track info */}
