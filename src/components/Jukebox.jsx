@@ -36,6 +36,7 @@ export default function Jukebox({ onLogout }) {
   const [playlists, setPlaylists] = useState([])
   const [openPlaylist, setOpenPlaylist] = useState(null)
   const [playlistTracks, setPlaylistTracks] = useState([])
+  const [playlistError, setPlaylistError] = useState(null)
   const [loadingPlaylist, setLoadingPlaylist] = useState(false)
   const [loadingPlaylists, setLoadingPlaylists] = useState(false)
   const [searching, setSearching] = useState(false)
@@ -107,10 +108,13 @@ export default function Jukebox({ onLogout }) {
 
   const openPlaylistFn = async (pl) => {
     setOpenPlaylist(pl)
+    setPlaylistTracks([])
+    setPlaylistError(null)
     setLoadingPlaylist(true)
     try {
-      const tracks = await getPlaylistTracks(pl.id)
+      const { tracks, error } = await getPlaylistTracks(pl.id)
       setPlaylistTracks(tracks)
+      setPlaylistError(error)
     } finally { setLoadingPlaylist(false) }
   }
 
@@ -415,10 +419,13 @@ export default function Jukebox({ onLogout }) {
                       <div className="flex justify-center py-10">
                         <div className="w-4 h-4 border-[1.5px] border-white/10 border-t-[#1DB954] rounded-full animate-spin" />
                       </div>
-                    ) : playlistTracks.length === 0 ? (
-                      <div className="py-10 text-center text-white/20 text-xs">
-                        No tracks found. If this playlist is private, disconnect and reconnect Spotify to grant playlist access.
+                    ) : playlistError ? (
+                      <div className="py-10 text-center space-y-2">
+                        <p className="text-red-400/60 text-xs">{playlistError}</p>
+                        <p className="text-white/20 text-[11px]">Try disconnecting and reconnecting Spotify to refresh permissions.</p>
                       </div>
+                    ) : playlistTracks.length === 0 ? (
+                      <div className="py-10 text-center text-white/20 text-xs">No tracks found in this playlist.</div>
                     ) : (
                       <div className="bg-[#0f0f0f] border border-white/[0.06] rounded-2xl overflow-hidden">
                         {playlistTracks.map((track, i) => (

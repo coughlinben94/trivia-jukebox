@@ -161,7 +161,7 @@ export function useSpotifyPlayer({ onAdvance } = {}) {
 
     if (genRef.current !== gen) return
 
-    if (stopMs > startMs) startMonitor(stopMs, gen)
+    startMonitor(stopMs > startMs ? stopMs : 0, gen)
   }, [startMonitor])
 
   // ─── Fade out and pause ──────────────────────────────────────────
