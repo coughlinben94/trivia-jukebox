@@ -306,15 +306,9 @@ export default function Jukebox({ onLogout }) {
         {/* Library panel */}
         <div className="flex-1 flex flex-col overflow-hidden border-r border-white/[0.05]">
           {/* Library header */}
-          <div className="px-4 py-3 border-b border-white/[0.05] flex items-center justify-between flex-shrink-0">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-white">{activeSetName}</span>
-              {library.length > 0 && (
-                <span className="text-[11px] text-white/25">{library.length}</span>
-              )}
-            </div>
-            {library.length > 0 && (
-              confirmClear ? (
+          {library.length > 0 && (
+            <div className="px-4 py-2 border-b border-white/[0.05] flex items-center justify-end flex-shrink-0">
+              {confirmClear ? (
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-white/40">Clear all?</span>
                   <button onClick={clearLibrary} className="text-[11px] text-red-400 hover:text-red-300 cursor-pointer transition-colors">Yes</button>
@@ -327,9 +321,9 @@ export default function Jukebox({ onLogout }) {
                 >
                   Clear all
                 </button>
-              )
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
           {/* Library grid */}
           <div className="flex-1 overflow-y-auto p-3 pb-32">
