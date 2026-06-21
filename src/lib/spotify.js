@@ -1,7 +1,7 @@
 const CLIENT_ID = import.meta.env.VITE_SPOTIFY_CLIENT_ID
 const REDIRECT_URI = import.meta.env.DEV
   ? 'http://127.0.0.1:5173'
-  : 'https://trivia-jukebox.vercel.app'
+  : 'https://trivia-jukebox.vercel.app/'
 const SCOPES = [
   'streaming',
   'user-read-email',
