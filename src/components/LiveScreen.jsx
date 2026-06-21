@@ -128,7 +128,7 @@ export default function LiveScreen({ currentTrack, isPaused, onClose }) {
 
               {/* Reel: white cards cascade upward through the dark container */}
               <AnimatePresence>
-                {isSpinning && !shouldReduceMotion
+                {isSpinning
                   ? Array.from({ length: 8 }, (_, i) => (
                       <motion.div
                         key={`${spinKey}-${i}`}
