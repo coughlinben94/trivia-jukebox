@@ -129,6 +129,19 @@ export default function Jukebox({ onLogout }) {
     setShowLive(false)
   }, [player.fadeAndPause])
 
+  // Spacebar: play/pause (Stream Deck)
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.code !== 'Space') return
+      if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return
+      e.preventDefault()
+      if (isPlaying) handleStop()
+      else startShuffle()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [isPlaying, handleStop, startShuffle])
+
   const inLibrary = (id) => library.some(t => t.id === id)
 
   return (
