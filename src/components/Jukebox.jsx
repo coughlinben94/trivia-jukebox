@@ -381,11 +381,15 @@ export default function Jukebox({ onLogout }) {
                   />
                 ))}
               </div>
-            ) : !searching && !query ? (
+            ) : searching ? null : !query ? (
               <div className="flex items-center justify-center h-full text-white/[0.08] text-xs pb-16">
                 Type to search Spotify
               </div>
-            ) : null}
+            ) : (
+              <div className="flex items-center justify-center h-full text-white/[0.12] text-xs pb-16">
+                No results found
+              </div>
+            )}
           </div>
         </div>
       </div>

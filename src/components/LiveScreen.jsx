@@ -75,12 +75,12 @@ export default function LiveScreen({ currentTrack, isPaused, onClose }) {
                   style={{ boxShadow: '0 32px 80px rgba(0,0,0,0.7)' }}
                 />
               )}
-              {/* Current art fading in */}
+              {/* Current art fading in, pulses while playing */}
               <img
                 key={shown.uri + '-art'}
                 src={artUrl}
                 alt=""
-                className="w-full h-full rounded-2xl object-cover live-art-in"
+                className={`w-full h-full rounded-2xl object-cover live-art-in ${!isPaused ? 'live-playing' : ''}`}
                 style={{ boxShadow: '0 32px 80px rgba(0,0,0,0.7)' }}
               />
             </div>
