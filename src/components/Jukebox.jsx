@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { searchTracks, logout } from '../lib/spotify'
-import { playCassetteClick } from '../lib/audio'
 import { useSpotifyPlayer } from '../hooks/useSpotifyPlayer'
 import Player from './Player'
 import LiveScreen from './LiveScreen'
@@ -131,7 +130,6 @@ export default function Jukebox({ onLogout }) {
 
   const startShuffle = useCallback(() => {
     if (library.length === 0) return
-    playCassetteClick()
     const order = shuffleArray(library.map((_, i) => i))
     shuffleOrderRef.current = order
     shuffleIdxRef.current = 0
