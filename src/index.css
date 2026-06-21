@@ -85,6 +85,11 @@
 
 .live-fade-in  { animation: live-fade-in  0.6s  cubic-bezier(0.23,1,0.32,1) both }
 .live-fade-out { animation: live-fade-out 0.5s  cubic-bezier(0.23,1,0.32,1) both }
+/* Background uses slower in / faster out — ambient scenery, not UI action.
+   Old color exits in 0.4s so it's gone before the art lands (350ms).
+   New color washes in over 1.6s, arriving after the art has settled. */
+.live-bg-in  { animation: live-fade-in  1.6s cubic-bezier(0.23,1,0.32,1) both }
+.live-bg-out { animation: live-fade-out 0.4s cubic-bezier(0.23,1,0.32,1) both }
 .live-art-in   { animation: live-art-in   350ms cubic-bezier(0.23,1,0.32,1) both }
 .live-art-out  { animation: live-art-out  280ms cubic-bezier(0.23,1,0.32,1) both }
 .live-text-in  { animation: live-text-in  280ms 120ms cubic-bezier(0.23,1,0.32,1) both }

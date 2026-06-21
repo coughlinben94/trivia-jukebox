@@ -30,11 +30,11 @@ export default function LiveScreen({ currentTrack, isPaused, onClose }) {
   return (
     <div className="fixed inset-0 bg-black z-50 overflow-hidden flex flex-col items-center justify-center">
 
-      {/* Blurred background — prev fading out */}
+      {/* Blurred background — old color exits fast (0.4s) so it's gone before art lands */}
       {prevBgUrl && (
         <div
           key={prev.uri + '-bg'}
-          className="absolute inset-0 bg-center bg-cover live-fade-out"
+          className="absolute inset-0 bg-center bg-cover live-bg-out"
           style={{
             backgroundImage: `url(${prevBgUrl})`,
             filter: 'blur(72px) brightness(0.25) saturate(1.8)',
@@ -43,11 +43,11 @@ export default function LiveScreen({ currentTrack, isPaused, onClose }) {
         />
       )}
 
-      {/* Blurred background — current fading in */}
+      {/* Blurred background — new color washes in slowly (1.6s), settles after art */}
       {bgUrl && (
         <div
           key={(shown?.uri ?? 'empty') + '-bg'}
-          className="absolute inset-0 bg-center bg-cover live-fade-in"
+          className="absolute inset-0 bg-center bg-cover live-bg-in"
           style={{
             backgroundImage: `url(${bgUrl})`,
             filter: 'blur(72px) brightness(0.25) saturate(1.8)',
