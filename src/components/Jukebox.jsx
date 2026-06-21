@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { searchTracks, logout } from '../lib/spotify'
+import { useSpotifyPlayer } from '../hooks/useSpotifyPlayer'
+import Player from './Player'
 
 export default function Jukebox({ onLogout }) {
   const [query, setQuery] = useState('')
@@ -10,12 +12,24 @@ export default function Jukebox({ onLogout }) {
   })
   const [searching, setSearching] = useState(false)
   const [resultsKey, setResultsKey] = useState(0)
+  const [playingId, setPlayingId] = useState(null)
   const debounceRef = useRef(null)
-  const inputRef = useRef(null)
+  const player = useSpotifyPlayer()
 
   useEffect(() => {
     localStorage.setItem('trivia_queue', JSON.stringify(queue))
   }, [queue])
+
+  // Sync currently playing track with queue
+  useEffect(() => {
+    if (player.currentTrack) {
+      const uri = player.currentTrack.uri
+      const match = queue.find(t => t.uri === uri)
+      setPlayingId(match?.id ?? null)
+    } else {
+      setPlayingId(null)
+    }
+  }, [player.currentTrack, queue])
 
   const search = useCallback((q) => {
     clearTimeout(debounceRef.current)
@@ -41,39 +55,50 @@ export default function Jukebox({ onLogout }) {
     setQueue(prev => prev.filter(t => t.id !== id))
   }
 
-  const clearAll = () => setQueue([])
+  const playFromQueue = useCallback((track, index) => {
+    const uris = queue.slice(index).map(t => t.uri)
+    player.play(uris)
+    setPlayingId(track.id)
+  }, [queue, player])
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
       <header className="sticky top-0 z-10 border-b border-white/[0.05] bg-[#0a0a0a]/90 backdrop-blur-md px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <span className="text-xl leading-none">🎵</span>
-          <span className="text-base font-semibold tracking-tight text-white">Trivia Jukebox</span>
+          <span className="text-base font-semibold tracking-tight">Trivia Jukebox</span>
         </div>
-        <button
-          onClick={() => { logout(); onLogout() }}
-          className="text-xs text-white/30 hover:text-white/60 transition-colors duration-150 cursor-pointer"
-        >
-          Disconnect
-        </button>
+        <div className="flex items-center gap-4">
+          {player.error && (
+            <span className="text-xs text-red-400/80">{player.error}</span>
+          )}
+          {!player.isReady && !player.error && (
+            <span className="text-xs text-white/25">Connecting player…</span>
+          )}
+          <button
+            onClick={() => { logout(); onLogout() }}
+            className="text-xs text-white/30 hover:text-white/60 transition-colors duration-150 cursor-pointer"
+          >
+            Disconnect
+          </button>
+        </div>
       </header>
 
-      <main className="max-w-xl mx-auto px-5 py-10 space-y-8">
+      <main className="max-w-xl mx-auto px-5 py-10 space-y-8 pb-36">
         {/* Search */}
         <div>
           <div className="relative">
             <div className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-white/30">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
                 <path d="M7 12A5 5 0 1 0 7 2a5 5 0 0 0 0 10zM14 14l-3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
               </svg>
             </div>
             <input
-              ref={inputRef}
               type="text"
               placeholder="Search for a song…"
               value={query}
               onChange={e => { setQuery(e.target.value); search(e.target.value) }}
-              className="w-full bg-white/[0.05] border border-white/[0.07] rounded-2xl pl-11 pr-5 py-4 text-white placeholder-white/25 outline-none focus:border-[#1DB954]/40 focus:bg-white/[0.07] transition-all duration-200 text-sm"
+              className="w-full bg-white/[0.05] border border-white/[0.07] rounded-2xl pl-10 pr-5 py-4 text-white placeholder-white/25 outline-none focus:border-[#1DB954]/40 focus:bg-white/[0.07] transition-all duration-200 text-sm"
             />
             {searching && (
               <div className="absolute right-4 top-1/2 -translate-y-1/2">
@@ -83,10 +108,7 @@ export default function Jukebox({ onLogout }) {
           </div>
 
           {results.length > 0 && (
-            <div
-              key={resultsKey}
-              className="mt-2 bg-[#111] border border-white/[0.07] rounded-2xl overflow-hidden"
-            >
+            <div key={resultsKey} className="mt-2 bg-[#111] border border-white/[0.07] rounded-2xl overflow-hidden">
               {results.map((track, i) => (
                 <SearchResult
                   key={track.id}
@@ -108,7 +130,7 @@ export default function Jukebox({ onLogout }) {
                 Queue · {queue.length}
               </span>
               <button
-                onClick={clearAll}
+                onClick={() => setQueue([])}
                 className="text-[11px] text-white/25 hover:text-red-400/80 transition-colors duration-150 cursor-pointer"
               >
                 Clear all
@@ -120,7 +142,11 @@ export default function Jukebox({ onLogout }) {
                   key={track.id}
                   track={track}
                   index={i}
-                  onRemove={removeFromQueue}
+                  isPlaying={track.id === playingId}
+                  isPaused={player.isPaused}
+                  isReady={player.isReady}
+                  onPlay={() => playFromQueue(track, i)}
+                  onRemove={() => removeFromQueue(track.id)}
                 />
               ))}
             </div>
@@ -133,6 +159,8 @@ export default function Jukebox({ onLogout }) {
           </div>
         )}
       </main>
+
+      <Player player={player} />
     </div>
   )
 }
@@ -143,15 +171,15 @@ function SearchResult({ track, index, inQueue, onAdd }) {
 
   return (
     <div
-      className="animate-fade-up flex items-center gap-3 px-4 py-3 border-b border-white/[0.04] last:border-0 @media(hover:hover){hover:bg-white/[0.04]} transition-colors duration-150"
+      className="animate-fade-up flex items-center gap-3 px-4 py-3 border-b border-white/[0.04] last:border-0 hover:bg-white/[0.04] transition-colors duration-150"
       style={{ animationDelay: `${index * 35}ms` }}
     >
       {img
-        ? <img src={img.url} alt="" width={40} height={40} className="rounded-lg object-cover flex-shrink-0 w-10 h-10" />
+        ? <img src={img.url} alt="" className="w-10 h-10 rounded-lg object-cover flex-shrink-0" />
         : <div className="w-10 h-10 rounded-lg bg-white/[0.06] flex-shrink-0" />
       }
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-white leading-tight truncate">{track.name}</p>
+        <p className="text-sm font-medium text-white truncate leading-tight">{track.name}</p>
         <p className="text-xs text-white/35 truncate mt-0.5">{artists} · {track.album?.name}</p>
       </div>
       <button
@@ -169,31 +197,49 @@ function SearchResult({ track, index, inQueue, onAdd }) {
   )
 }
 
-function QueueItem({ track, index, onRemove }) {
+function QueueItem({ track, index, isPlaying, isPaused, isReady, onPlay, onRemove }) {
   const img = track.album?.images?.[2] ?? track.album?.images?.[0]
   const artists = track.artists?.map(a => a.name).join(', ')
 
   return (
     <div
-      className="animate-slide-in flex items-center gap-3 px-4 py-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.05] transition-all duration-150 group"
+      className={`animate-slide-in flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-150 group cursor-pointer ${
+        isPlaying
+          ? 'bg-[#1DB954]/[0.08] hover:bg-[#1DB954]/[0.12]'
+          : 'bg-white/[0.03] hover:bg-white/[0.06]'
+      }`}
       style={{ animationDelay: `${index * 30}ms` }}
+      onClick={isReady ? onPlay : undefined}
     >
-      <span className="text-[11px] font-mono text-white/20 w-4 text-right flex-shrink-0 tabular-nums">
-        {index + 1}
-      </span>
+      {/* Index / playing indicator */}
+      <div className="w-5 flex-shrink-0 flex items-center justify-center">
+        {isPlaying ? (
+          <span className="w-2 h-2 rounded-full bg-[#1DB954] flex-shrink-0" />
+        ) : (
+          <span className="text-[11px] font-mono text-white/20 group-hover:hidden tabular-nums">{index + 1}</span>
+        )}
+        {!isPlaying && (
+          <svg className="hidden group-hover:block text-white/50" width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5v14l11-7z"/>
+          </svg>
+        )}
+      </div>
+
       {img
-        ? <img src={img.url} alt="" width={36} height={36} className="rounded-md object-cover flex-shrink-0 w-9 h-9" />
+        ? <img src={img.url} alt="" className="w-9 h-9 rounded-md object-cover flex-shrink-0" />
         : <div className="w-9 h-9 rounded-md bg-white/[0.06] flex-shrink-0" />
       }
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-white leading-tight truncate">{track.name}</p>
+        <p className={`text-sm font-medium truncate leading-tight ${isPlaying ? 'text-[#1DB954]' : 'text-white'}`}>
+          {track.name}
+        </p>
         <p className="text-xs text-white/35 truncate mt-0.5">{artists}</p>
       </div>
       <button
-        onClick={() => onRemove(track.id)}
-        className="opacity-0 group-hover:opacity-100 text-white/25 hover:text-red-400/70 text-xs transition-all duration-150 cursor-pointer active:scale-[0.97] flex-shrink-0"
+        onClick={e => { e.stopPropagation(); onRemove() }}
+        className="opacity-0 group-hover:opacity-100 text-white/25 hover:text-red-400/70 text-xs transition-all duration-150 cursor-pointer active:scale-[0.97] flex-shrink-0 px-1"
       >
-        Remove
+        ✕
       </button>
     </div>
   )
