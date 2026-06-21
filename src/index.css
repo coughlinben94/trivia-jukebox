@@ -47,6 +47,19 @@
   }
 }
 
+/* Live screen transitions */
+@keyframes live-fade-in  { from { opacity: 0 } to { opacity: 1 } }
+@keyframes live-fade-out { from { opacity: 1 } to { opacity: 0 } }
+@keyframes live-art-in   { from { opacity: 0; transform: scale(0.96) } to { opacity: 1; transform: scale(1) } }
+@keyframes live-art-out  { from { opacity: 1; transform: scale(1)    } to { opacity: 0; transform: scale(1.04) } }
+@keyframes live-text-in  { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: translateY(0) } }
+
+.live-fade-in  { animation: live-fade-in  1.2s cubic-bezier(0.23,1,0.32,1) both }
+.live-fade-out { animation: live-fade-out 1.2s cubic-bezier(0.23,1,0.32,1) both }
+.live-art-in   { animation: live-art-in   0.9s cubic-bezier(0.23,1,0.32,1) both }
+.live-art-out  { animation: live-art-out  0.9s cubic-bezier(0.23,1,0.32,1) both }
+.live-text-in  { animation: live-text-in  0.7s 0.2s cubic-bezier(0.23,1,0.32,1) both }
+
 /* Scrubber */
 .player-scrubber {
   appearance: none;

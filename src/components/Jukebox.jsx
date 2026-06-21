@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { searchTracks, logout } from '../lib/spotify'
 import { useSpotifyPlayer } from '../hooks/useSpotifyPlayer'
 import Player from './Player'
+import LiveScreen from './LiveScreen'
 
 // ─── Time helpers ─────────────────────────────────────────────────
 function msToTime(ms) {
@@ -41,6 +42,7 @@ export default function Jukebox({ onLogout }) {
   const [resultsKey, setResultsKey] = useState(0)
   const [playingId, setPlayingId] = useState(null)
   const [isPlaying, setIsPlaying] = useState(false)
+  const [showLive, setShowLive] = useState(false)
 
   const shuffleOrderRef = useRef([])
   const shuffleIdxRef = useRef(0)
@@ -131,6 +133,7 @@ export default function Jukebox({ onLogout }) {
     const song = library[order[0]]
     setPlayingId(song.id)
     setIsPlaying(true)
+    setShowLive(true)
     playTrackFn.current(song)
   }, [library])
 
@@ -138,6 +141,7 @@ export default function Jukebox({ onLogout }) {
     await player.fadeAndPause()
     setIsPlaying(false)
     setPlayingId(null)
+    setShowLive(false)
   }, [player.fadeAndPause])
 
   const handleSkip = useCallback(() => {
@@ -155,6 +159,18 @@ export default function Jukebox({ onLogout }) {
           {player.error && <span className="text-xs text-red-400/80">{player.error}</span>}
           {!player.isReady && !player.error && (
             <span className="text-xs text-white/25">Connecting…</span>
+          )}
+          {isPlaying && (
+            <button
+              onClick={() => setShowLive(v => !v)}
+              className={`text-xs font-medium transition-colors duration-150 cursor-pointer px-2.5 py-1 rounded-full ${
+                showLive
+                  ? 'text-black bg-white'
+                  : 'text-white/50 hover:text-white border border-white/[0.12] hover:border-white/30'
+              }`}
+            >
+              Live
+            </button>
           )}
           <button
             onClick={() => { logout(); onLogout() }}
@@ -238,6 +254,14 @@ export default function Jukebox({ onLogout }) {
           </div>
         )}
       </main>
+
+      {showLive && (
+        <LiveScreen
+          currentTrack={player.currentTrack}
+          isPaused={player.isPaused}
+          onClose={() => setShowLive(false)}
+        />
+      )}
 
       <Player
         player={player}
