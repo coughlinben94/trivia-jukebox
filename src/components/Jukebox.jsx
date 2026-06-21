@@ -337,6 +337,19 @@ export default function Jukebox({ onLogout }) {
         {/* Main content */}
         <main className="flex-1 overflow-y-auto">
           <div className="max-w-2xl mx-auto px-5 py-8 pb-44 space-y-6">
+            {/* Active theme banner */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-base font-bold text-white">{activeSetName}</span>
+                {library.length > 0 && (
+                  <span className="text-[11px] text-white/25 font-medium">{library.length} songs</span>
+                )}
+              </div>
+              {sets.activeId !== 'main' && (
+                <span className="text-[10px] text-[#1DB954]/60 font-medium uppercase tracking-wider">Theme Night</span>
+              )}
+            </div>
+
             {/* Tabs */}
             <div className="flex justify-center">
               <div className="flex gap-1 bg-white/[0.04] p-1 rounded-xl">
@@ -514,11 +527,12 @@ export default function Jukebox({ onLogout }) {
               </div>
             )}
 
-            {library.length === 0 && (
-              <div className="text-center py-16 text-white/[0.12] text-sm select-none">
-                {tab === 'search' && !query
-                  ? `Search or browse playlists to add songs to ${activeSetName}`
-                  : null}
+            {library.length === 0 && tab === 'search' && !query && (
+              <div className="text-center py-16 select-none space-y-2">
+                <p className="text-white/[0.15] text-sm">
+                  {sets.activeId === 'main' ? 'Your library is empty' : `${activeSetName} is empty`}
+                </p>
+                <p className="text-white/[0.08] text-xs">Search above or use Playlists to add songs</p>
               </div>
             )}
           </div>
