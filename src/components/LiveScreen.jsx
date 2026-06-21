@@ -63,25 +63,24 @@ export default function LiveScreen({ currentTrack, isPaused, onClose }) {
       <div className="relative z-10 flex flex-col items-center gap-8 px-10 text-center max-w-lg w-full">
         {shown ? (
           <>
-            {/* Album art */}
-            <div className="relative w-72 h-72 sm:w-80 sm:h-80">
-              {/* Prev art fading out */}
+            {/* Album art — overflow-hidden clips the slide so art stays inside the frame */}
+            <div className="relative w-72 h-72 sm:w-80 sm:h-80 rounded-2xl overflow-hidden"
+                 style={{ boxShadow: '0 32px 80px rgba(0,0,0,0.7)' }}>
+              {/* Prev art sliding out to left */}
               {prev && prevArtUrl && (
                 <img
                   key={prev.uri + '-art'}
                   src={prevArtUrl}
                   alt=""
-                  className="absolute inset-0 w-full h-full rounded-2xl object-cover live-art-out"
-                  style={{ boxShadow: '0 32px 80px rgba(0,0,0,0.7)' }}
+                  className="absolute inset-0 w-full h-full object-cover live-art-out"
                 />
               )}
-              {/* Current art fading in, pulses while playing */}
+              {/* Current art sliding in from right, pulses while playing */}
               <img
                 key={shown.uri + '-art'}
                 src={artUrl}
                 alt=""
-                className={`w-full h-full rounded-2xl object-cover live-art-in ${!isPaused ? 'live-playing' : ''}`}
-                style={{ boxShadow: '0 32px 80px rgba(0,0,0,0.7)' }}
+                className={`absolute inset-0 w-full h-full object-cover live-art-in ${!isPaused ? 'live-playing' : ''}`}
               />
             </div>
 
