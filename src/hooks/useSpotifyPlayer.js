@@ -22,6 +22,8 @@ export function useSpotifyPlayer({ onAdvance } = {}) {
   const seekTimerRef = useRef(null)
   const maxVolumeRef = useRef(0.8)
   const onAdvanceRef = useRef(onAdvance)
+  // Suppresses the transient isPaused=true the SDK emits during auto-advance
+  const transitioningRef = useRef(false)
 
   useEffect(() => { onAdvanceRef.current = onAdvance }, [onAdvance])
 
@@ -48,7 +50,8 @@ export function useSpotifyPlayer({ onAdvance } = {}) {
       player.addListener('player_state_changed', state => {
         if (!state) return
         setCurrentTrack(state.track_window.current_track)
-        setIsPaused(state.paused)
+        // Suppress the transient paused=true the SDK emits right after auto-advance pause()
+        if (!transitioningRef.current) setIsPaused(state.paused)
         setDuration(state.duration)
         setPosition(state.position)
       })
@@ -96,16 +99,18 @@ export function useSpotifyPlayer({ onAdvance } = {}) {
     monitorRef.current = setInterval(async () => {
       if (genRef.current !== gen) { clearInterval(monitorRef.current); return }
       const state = await playerRef.current?.getCurrentState()
-      if (!state || state.paused) return
+      if (!state) return
       if (seekingRef.current) return
       const pos = state.position
-      setPosition(pos)
+      if (!state.paused) setPosition(pos)
 
       const maxVol = maxVolumeRef.current
-      if (stopMs > 0 && pos >= stopMs - FADE_MS) {
+      // Guard !state.paused: don't trigger on Spotify's own buffering pauses near stopMs
+      if (stopMs > 0 && pos >= stopMs - FADE_MS && !state.paused) {
         clearInterval(monitorRef.current)
         await fadeVolume(maxVol, 0, gen)
         if (genRef.current !== gen) return
+        transitioningRef.current = true   // suppress isPaused during advance gap
         await playerRef.current?.pause()
         playerRef.current?.setVolume(0)
         if (!preview) onAdvanceRef.current?.()
@@ -149,6 +154,7 @@ export function useSpotifyPlayer({ onAdvance } = {}) {
       player.addListener('player_state_changed', check)
     })
 
+    transitioningRef.current = false  // new track confirmed; restore isPaused tracking
     if (genRef.current !== gen) return
 
     if (startMs > 0) {
@@ -205,6 +211,7 @@ export function useSpotifyPlayer({ onAdvance } = {}) {
   const fadeAndPause = useCallback(async () => {
     genRef.current += 1
     const gen = genRef.current
+    transitioningRef.current = false  // manual stop always restores isPaused tracking
     clearInterval(monitorRef.current)
     const maxVol = maxVolumeRef.current
     await fadeVolume(maxVol, 0, gen)

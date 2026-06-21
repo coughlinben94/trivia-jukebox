@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { searchTracks, logout } from '../lib/spotify'
+import { playCassetteClick } from '../lib/audio'
 import { useSpotifyPlayer } from '../hooks/useSpotifyPlayer'
 import Player from './Player'
 import LiveScreen from './LiveScreen'
@@ -63,19 +64,23 @@ export default function Jukebox({ onLogout }) {
   const debounceRef = useRef(null)
   const playTrackFn = useRef(null)
   const dragIdxRef = useRef(null)
+  // Always-live library ref so advanceToNext never closes over a stale snapshot
+  const libraryRef = useRef(library)
+  useEffect(() => { libraryRef.current = library }, [library])
 
   const advanceToNext = useCallback(() => {
+    const lib = libraryRef.current
     const order = shuffleOrderRef.current
     let idx = shuffleIdxRef.current + 1
     if (idx >= order.length) {
-      const newOrder = shuffleArray(library.map((_, i) => i))
+      const newOrder = shuffleArray(lib.map((_, i) => i))
       shuffleOrderRef.current = newOrder
       idx = 0
     }
     shuffleIdxRef.current = idx
-    const song = library[shuffleOrderRef.current[idx]]
+    const song = lib[shuffleOrderRef.current[idx]]
     if (song) { setPlayingId(song.id); playTrackFn.current?.(song) }
-  }, [library])
+  }, [])
 
   const player = useSpotifyPlayer({ onAdvance: advanceToNext })
 
@@ -126,6 +131,7 @@ export default function Jukebox({ onLogout }) {
 
   const startShuffle = useCallback(() => {
     if (library.length === 0) return
+    playCassetteClick()
     const order = shuffleArray(library.map((_, i) => i))
     shuffleOrderRef.current = order
     shuffleIdxRef.current = 0

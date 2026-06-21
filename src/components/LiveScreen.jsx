@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 
-const REEL_CARDS = 10
+const REEL_CARDS = 8
 
 export default function LiveScreen({ currentTrack, isPaused, onClose }) {
   const shouldReduceMotion = useReducedMotion()
@@ -88,16 +88,23 @@ export default function LiveScreen({ currentTrack, isPaused, onClose }) {
              * clipped to the rounded frame. Pulse on the outer container; spring on the art card.
              * No shared transform conflict.
              */}
+            {/*
+             * Container: dark bg fills the void while old art exits and new art hasn't
+             * appeared yet. overflow-hidden clips reel cards to the rounded frame.
+             * Reel cards: 8 cards, 100%→-100% travel (doubles in-frame time vs 105%→-105%),
+             * 180ms duration with ease-in-out for mechanical feel, 30ms stagger.
+             * Art pop: spring enters at 260ms delay (last reel card visible at ~390ms).
+             * AnimatePresence receives null (not false) when not spinning — cleaner diffing.
+             */}
             <div
               className={`relative w-72 h-72 sm:w-80 sm:h-80 rounded-2xl overflow-hidden ${!isPaused && !isSpinning && !prev ? 'live-playing' : ''}`}
-              style={{ boxShadow: '0 32px 80px rgba(0,0,0,0.7)' }}
+              style={{ boxShadow: '0 32px 80px rgba(0,0,0,0.7)', background: '#111' }}
             >
-              {/* Art card: exits fast, enters with spring pop after reel */}
+              {/* Art card */}
               <AnimatePresence mode="wait" initial={false}>
                 <motion.div
                   key={shown.uri}
                   className="absolute inset-0"
-                  // Emil: never scale below 0.90 on entry; spring for natural pop
                   initial={{ scale: 0.92, opacity: 0 }}
                   animate={{
                     scale: 1,
@@ -105,14 +112,13 @@ export default function LiveScreen({ currentTrack, isPaused, onClose }) {
                     transition: shouldReduceMotion
                       ? { duration: 0.2 }
                       : {
-                          scale:   { type: 'spring', stiffness: 380, damping: 28, delay: 0.28 },
-                          opacity: { duration: 0.04, delay: 0.28 },
+                          scale:   { type: 'spring', stiffness: 380, damping: 28, delay: 0.26 },
+                          opacity: { duration: 0.04, delay: 0.26 },
                         },
                   }}
                   exit={{
                     scale: 0.96,
                     opacity: 0,
-                    // Emil: ease-out on exit (starts immediately, never ease-in which looks sluggish)
                     transition: { duration: 0.08, ease: [0.23, 1, 0.32, 1] },
                   }}
                 >
@@ -120,25 +126,25 @@ export default function LiveScreen({ currentTrack, isPaused, onClose }) {
                 </motion.div>
               </AnimatePresence>
 
-              {/* Reel: blank white cards scroll upward, clipped by container overflow-hidden.
-                  Skipped entirely for prefers-reduced-motion. */}
+              {/* Reel: white cards cascade upward through the dark container */}
               <AnimatePresence>
-                {isSpinning && !shouldReduceMotion && Array.from({ length: REEL_CARDS }, (_, i) => (
-                  <motion.div
-                    key={`${spinKey}-${i}`}
-                    className="absolute inset-x-0 bg-white"
-                    style={{ height: '100%', top: 0, zIndex: 20 }}
-                    initial={{ y: '105%' }}
-                    animate={{ y: '-105%' }}
-                    exit={{}}
-                    transition={{
-                      delay:    i * 0.026,
-                      duration: 0.14,
-                      // Emil: explicit cubic-bezier over built-in 'linear' string
-                      ease:     [0, 0, 1, 1],
-                    }}
-                  />
-                ))}
+                {isSpinning && !shouldReduceMotion
+                  ? Array.from({ length: 8 }, (_, i) => (
+                      <motion.div
+                        key={`${spinKey}-${i}`}
+                        className="absolute inset-x-0 bg-white"
+                        style={{ height: '100%', top: 0, zIndex: 20 }}
+                        initial={{ y: '100%' }}
+                        animate={{ y: '-100%' }}
+                        exit={{}}
+                        transition={{
+                          delay:    i * 0.030,
+                          duration: 0.18,
+                          ease:     [0.4, 0, 0.6, 1],
+                        }}
+                      />
+                    ))
+                  : null}
               </AnimatePresence>
             </div>
 
@@ -157,8 +163,8 @@ export default function LiveScreen({ currentTrack, isPaused, onClose }) {
         )}
       </div>
 
-      {/* Paused pill */}
-      {isPaused && shown && (
+      {/* Paused pill — hidden during any transition (prev set, spinning, or first mount) */}
+      {isPaused && shown && !isSpinning && !prev && (
         <div className="absolute bottom-10 left-1/2 -translate-x-1/2 text-xs text-white tracking-widest uppercase">
           Paused
         </div>
