@@ -415,6 +415,10 @@ export default function Jukebox({ onLogout }) {
                       <div className="flex justify-center py-10">
                         <div className="w-4 h-4 border-[1.5px] border-white/10 border-t-[#1DB954] rounded-full animate-spin" />
                       </div>
+                    ) : playlistTracks.length === 0 ? (
+                      <div className="py-10 text-center text-white/20 text-xs">
+                        No tracks found. If this playlist is private, disconnect and reconnect Spotify to grant playlist access.
+                      </div>
                     ) : (
                       <div className="bg-[#0f0f0f] border border-white/[0.06] rounded-2xl overflow-hidden">
                         {playlistTracks.map((track, i) => (
@@ -430,7 +434,7 @@ export default function Jukebox({ onLogout }) {
                     )}
                   </div>
                 ) : (
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-5 gap-2">
                     {loadingPlaylists ? (
                       <div className="col-span-3 py-10 text-center">
                         <div className="w-4 h-4 border-[1.5px] border-white/10 border-t-[#1DB954] rounded-full animate-spin mx-auto" />
@@ -485,7 +489,7 @@ export default function Jukebox({ onLogout }) {
                     </button>
                   )}
                 </div>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-5 gap-2">
                   {library.map((track, i) => (
                     <LibraryCard
                       key={track.id}
