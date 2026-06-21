@@ -63,24 +63,29 @@ export default function LiveScreen({ currentTrack, isPaused, onClose }) {
       <div className="relative z-10 flex flex-col items-center gap-8 px-10 text-center max-w-lg w-full">
         {shown ? (
           <>
-            {/* Album art stage — overflow-hidden clips the slide to the frame */}
+            {/*
+              * Pulse lives on the container (scale + shadow together).
+              * Slides live on inner wrappers — pulse and slide never share an element.
+              * Container has overflow-hidden to clip the 32px slide offset.
+              * When prev is null (first song or Live Screen just opened), skip the
+              * directional slide and use a plain fade so nothing shoots in from nowhere.
+              */}
             <div
-              className="relative w-72 h-72 sm:w-80 sm:h-80 rounded-2xl overflow-hidden"
+              className={`relative w-72 h-72 sm:w-80 sm:h-80 rounded-2xl overflow-hidden ${!isPaused && !prev ? 'live-playing' : ''}`}
               style={{ boxShadow: '0 32px 80px rgba(0,0,0,0.7)' }}
             >
-              {/* Outgoing: wrapper slides left, image is static inside */}
+              {/* Outgoing: slides left + fades out */}
               {prev && prevArtUrl && (
-                <div key={prev.uri + '-wrap'} className="absolute inset-0 live-art-out">
+                <div key={prev.uri + '-out'} className="absolute inset-0 live-art-out">
                   <img src={prevArtUrl} alt="" className="w-full h-full object-cover" />
                 </div>
               )}
-              {/* Incoming: wrapper slides from right; image pulses ONLY after slide ends */}
-              <div key={shown.uri + '-wrap'} className="absolute inset-0 live-art-in">
-                <img
-                  src={artUrl}
-                  alt=""
-                  className={`w-full h-full object-cover ${!isPaused && !prev ? 'live-playing' : ''}`}
-                />
+              {/* Incoming: directional slide on transitions, plain fade on first song */}
+              <div
+                key={shown.uri + '-in'}
+                className={`absolute inset-0 ${prev ? 'live-art-in' : 'live-fade-in'}`}
+              >
+                <img src={artUrl} alt="" className="w-full h-full object-cover" />
               </div>
             </div>
 
