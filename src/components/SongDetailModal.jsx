@@ -1,8 +1,54 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 function fmt(ms) {
   const s = Math.floor(ms / 1000)
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+function parseMmSs(str) {
+  const parts = str.split(':').map(Number)
+  if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+    return (parts[0] * 60 + parts[1]) * 1000
+  }
+  const sec = Number(str)
+  return isNaN(sec) ? null : sec * 1000
+}
+
+function TimeInput({ value, max, onChange }) {
+  const [editing, setEditing] = useState(false)
+  const [raw, setRaw] = useState('')
+  const inputRef = useRef(null)
+
+  const start = () => { setRaw(fmt(value)); setEditing(true); setTimeout(() => inputRef.current?.select(), 0) }
+  const commit = () => {
+    const ms = parseMmSs(raw)
+    if (ms !== null) onChange(Math.max(0, Math.min(max, ms)))
+    setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="text"
+        value={raw}
+        onChange={e => setRaw(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
+        className="w-14 text-center text-xs font-mono bg-white/[0.08] text-white rounded-lg px-1.5 py-1 outline-none border border-[#1DB954]/40"
+      />
+    )
+  }
+
+  return (
+    <button
+      onClick={start}
+      className="text-xs font-mono text-[#1DB954] hover:text-white transition-colors duration-150 cursor-pointer px-1 rounded"
+      title="Click to type a time"
+    >
+      {fmt(value)}
+    </button>
+  )
 }
 
 export default function SongDetailModal({ track, player, onUpdateTimes, onClose }) {
@@ -12,7 +58,8 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose 
   const isPlaying = isActive && !isPaused
 
   const displayDuration = isActive && duration > 0 ? duration : track.duration_ms
-  const displayPosition = isActive ? position : 0
+  const [localPos, setLocalPos] = useState(track.startMs ?? 0)
+  const displayPosition = isActive ? position : localPos
 
   const [startMs, setStartMs] = useState(track.startMs ?? 0)
   const [stopMs, setStopMs] = useState(track.stopMs ?? track.duration_ms)
@@ -21,10 +68,15 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose 
   const artists = track.artists?.map(a => a.name).join(', ')
 
   const progress = displayDuration > 0 ? (displayPosition / displayDuration) * 100 : 0
-  const inPct   = displayDuration > 0 ? (startMs / displayDuration) * 100 : 0
-  const outPct  = displayDuration > 0 ? (stopMs  / displayDuration) * 100 : 0
+  const inPct    = displayDuration > 0 ? (startMs / displayDuration) * 100 : 0
+  const outPct   = displayDuration > 0 ? (stopMs  / displayDuration) * 100 : 0
 
-  const handlePlay = () => playTrack(track.uri, startMs, 0) // 0 = no auto-stop while previewing
+  const handleScrub = (ms) => {
+    if (isActive) seek(ms)
+    else setLocalPos(ms)
+  }
+
+  const handlePlay = () => playTrack(track.uri, localPos, 0)
   const handleStop = () => fadeAndPause()
 
   const handleSetIn  = () => setStartMs(Math.min(displayPosition, stopMs - 2000))
@@ -73,11 +125,11 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose 
           </button>
         </div>
 
-        {/* Scrubber + in/out overlay */}
-        <div className="mb-2">
-          <div className="relative mb-1.5">
-            {/* In/out range bar behind the scrubber */}
-            <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-[3px] rounded-full overflow-hidden pointer-events-none"
+        {/* Scrubber */}
+        <div className="mb-3">
+          <div className="relative">
+            <div
+              className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-[3px] rounded-full overflow-hidden pointer-events-none"
               style={{
                 background: `linear-gradient(to right,
                   rgba(255,255,255,0.08) 0%,
@@ -94,40 +146,55 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose 
               min={0}
               max={displayDuration || 1}
               value={displayPosition}
-              style={{ '--progress': `${progress}%`, background: 'transparent' }}
-              onChange={e => isActive && seek(Number(e.target.value))}
+              style={{ '--progress': `${progress}%` }}
+              onChange={e => handleScrub(Number(e.target.value))}
             />
           </div>
-          <div className="flex justify-between">
+          <div className="flex justify-between mt-0.5">
             <span className="text-[10px] text-white/25 tabular-nums">{fmt(displayPosition)}</span>
             <span className="text-[10px] text-white/25 tabular-nums">{fmt(displayDuration)}</span>
           </div>
         </div>
 
-        {/* In/out labels */}
-        <div className="flex justify-between mb-5 px-0.5">
-          <div>
-            <span className="text-[9px] font-semibold uppercase tracking-wider text-white/25">In</span>
-            <span className="text-xs font-mono text-[#1DB954] ml-2">{fmt(startMs)}</span>
+        {/* In/Out with editable times */}
+        <div className="flex items-center justify-between mb-5 px-0.5">
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] font-bold uppercase tracking-wider text-white/25">In</span>
+            <TimeInput
+              value={startMs}
+              max={stopMs - 2000}
+              onChange={(ms) => setStartMs(ms)}
+            />
+            <button
+              onClick={handleSetIn}
+              className="text-[9px] text-white/25 hover:text-[#1DB954] transition-colors duration-150 cursor-pointer"
+              title="Set to current position"
+            >
+              ↑ now
+            </button>
           </div>
-          <div>
-            <span className="text-xs font-mono text-[#1DB954] mr-2">{fmt(stopMs)}</span>
-            <span className="text-[9px] font-semibold uppercase tracking-wider text-white/25">Out</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleSetOut}
+              className="text-[9px] text-white/25 hover:text-[#1DB954] transition-colors duration-150 cursor-pointer"
+              title="Set to current position"
+            >
+              now ↑
+            </button>
+            <TimeInput
+              value={stopMs}
+              max={displayDuration}
+              onChange={(ms) => setStopMs(ms)}
+            />
+            <span className="text-[9px] font-bold uppercase tracking-wider text-white/25">Out</span>
           </div>
         </div>
 
-        {/* Action buttons */}
-        <div className="grid grid-cols-3 gap-2 mb-3">
-          <button
-            onClick={handleSetIn}
-            disabled={!isActive}
-            className="py-2.5 text-[11px] font-medium bg-white/[0.05] hover:bg-white/[0.09] disabled:opacity-25 rounded-xl text-white/70 transition-all duration-150 cursor-pointer active:scale-[0.97]"
-          >
-            Set In
-          </button>
+        {/* Play + save */}
+        <div className="flex gap-2">
           <button
             onClick={isPlaying ? handleStop : handlePlay}
-            className={`py-2.5 text-[11px] font-semibold rounded-xl transition-all duration-150 cursor-pointer active:scale-[0.97] ${
+            className={`flex-1 py-2.5 text-[11px] font-semibold rounded-xl transition-all duration-150 cursor-pointer active:scale-[0.97] ${
               isPlaying
                 ? 'bg-white/10 text-white'
                 : 'bg-white/[0.06] text-white/80 hover:bg-white/10'
@@ -136,20 +203,12 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose 
             {isPlaying ? '⏸ Pause' : '▶ Play'}
           </button>
           <button
-            onClick={handleSetOut}
-            disabled={!isActive}
-            className="py-2.5 text-[11px] font-medium bg-white/[0.05] hover:bg-white/[0.09] disabled:opacity-25 rounded-xl text-white/70 transition-all duration-150 cursor-pointer active:scale-[0.97]"
+            onClick={handleSave}
+            className="flex-1 py-2.5 bg-[#1DB954] text-black text-[11px] font-bold rounded-xl hover:bg-[#1ed760] active:scale-[0.97] transition-all duration-150 cursor-pointer"
           >
-            Set Out
+            Save & Close
           </button>
         </div>
-
-        <button
-          onClick={handleSave}
-          className="w-full py-3 bg-[#1DB954] text-black text-xs font-bold rounded-xl hover:bg-[#1ed760] active:scale-[0.97] transition-all duration-150 cursor-pointer"
-        >
-          Save & Close
-        </button>
       </div>
     </div>
   )

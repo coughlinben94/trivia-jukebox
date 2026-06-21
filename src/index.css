@@ -69,20 +69,23 @@
 /* Scrubber */
 .player-scrubber {
   appearance: none;
-  height: 3px;
-  border-radius: 9999px;
-  background: rgba(255,255,255,0.12);
+  -webkit-appearance: none;
+  height: 20px;          /* tall enough for the thumb — track is styled separately */
+  background: transparent;
   outline: none;
   cursor: pointer;
+  display: block;
 }
 
 .player-scrubber::-webkit-slider-thumb {
   appearance: none;
+  -webkit-appearance: none;
   width: 12px;
   height: 12px;
   border-radius: 50%;
   background: white;
   cursor: pointer;
+  margin-top: -4.5px;   /* center 12px thumb on 3px track */
   transition: transform 120ms ease-out;
 }
 
@@ -100,6 +103,8 @@
 }
 
 .player-scrubber::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 9999px;
   background: linear-gradient(
     to right,
     #1DB954 0%,
@@ -107,6 +112,10 @@
     rgba(255,255,255,0.12) var(--progress, 0%),
     rgba(255,255,255,0.12) 100%
   );
-  border-radius: 9999px;
+}
+
+.player-scrubber::-moz-range-track {
   height: 3px;
+  border-radius: 9999px;
+  background: rgba(255,255,255,0.12);
 }
