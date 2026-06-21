@@ -216,9 +216,9 @@ export default function Jukebox({ onLogout }) {
   const setOrder = Object.keys(sets.items)
 
   return (
-    <div className="h-screen bg-[#1a0808] text-white flex flex-col overflow-hidden">
+    <div className="h-screen bg-[#1c1c1e] text-white flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="sticky top-0 z-10 border-b border-white/[0.05] bg-[#1a0808]/90 backdrop-blur-md px-6 py-4 flex items-center justify-between flex-shrink-0">
+      <header className="sticky top-0 z-10 border-b border-white/[0.05] bg-[#1c1c1e]/90 backdrop-blur-md px-6 py-4 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2.5">
           <span className="text-lg">🎵</span>
           <span className="text-sm font-semibold text-white/90 tracking-tight">Trivia Jukebox</span>
@@ -251,7 +251,7 @@ export default function Jukebox({ onLogout }) {
       <div className="flex flex-1 overflow-hidden">
 
         {/* Left sidebar — trivia themes */}
-        <aside className="w-44 flex-shrink-0 border-r border-white/[0.05] bg-[#150606] flex flex-col py-4 overflow-y-auto">
+        <aside className="w-44 flex-shrink-0 border-r border-white/[0.05] bg-[#161618] flex flex-col py-4 overflow-y-auto">
           <p className="text-[9px] font-bold uppercase tracking-widest text-white/20 px-4 mb-2">Trivia Themes</p>
 
           {/* Add new theme — at top */}
@@ -294,6 +294,13 @@ export default function Jukebox({ onLogout }) {
                 renamingVal={renamingVal}
                 onSelect={() => switchSet(id)}
                 onDelete={id !== 'main' ? () => deleteSet(id) : undefined}
+                onClear={() => {
+                  const cur = sets.items[id]?.songs ?? []
+                  if (cur.length === 0) return
+                  if (!window.confirm(`Clear all ${cur.length} songs from "${sets.items[id].name}"?`)) return
+                  setSets(prev => ({ ...prev, items: { ...prev.items, [id]: { ...prev.items[id], songs: [] } } }))
+                  if (sets.activeId === id) { player.fadeAndPause(); setPlayingId(null); setIsPlaying(false) }
+                }}
                 onStartRename={() => { setRenamingId(id); setRenamingVal(sets.items[id].name) }}
                 onRenameChange={setRenamingVal}
                 onRenameCommit={() => renameSet(id)}
@@ -305,25 +312,6 @@ export default function Jukebox({ onLogout }) {
 
         {/* Library panel */}
         <div className="flex-1 flex flex-col overflow-hidden border-r border-white/[0.05]">
-          {/* Library header */}
-          {library.length > 0 && (
-            <div className="px-4 py-2 border-b border-white/[0.05] flex items-center justify-end flex-shrink-0">
-              {confirmClear ? (
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-white/40">Clear all?</span>
-                  <button onClick={clearLibrary} className="text-[11px] text-red-400 hover:text-red-300 cursor-pointer transition-colors">Yes</button>
-                  <button onClick={() => setConfirmClear(false)} className="text-[11px] text-white/30 hover:text-white/60 cursor-pointer transition-colors">Cancel</button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setConfirmClear(true)}
-                  className="text-[11px] text-white/20 hover:text-white/40 transition-colors duration-150 cursor-pointer"
-                >
-                  Clear all
-                </button>
-              )}
-            </div>
-          )}
 
           {/* Library grid */}
           <div className="flex-1 overflow-y-auto p-3 pb-32">
@@ -433,7 +421,7 @@ export default function Jukebox({ onLogout }) {
   )
 }
 
-function SetItem({ id, set, isActive, isRenaming, renamingVal, onSelect, onDelete, onStartRename, onRenameChange, onRenameCommit, onRenameCancel }) {
+function SetItem({ id, set, isActive, isRenaming, renamingVal, onSelect, onDelete, onClear, onStartRename, onRenameChange, onRenameCommit, onRenameCancel }) {
   return (
     <div className={`group flex items-center rounded-lg px-2 py-1.5 transition-all duration-150 ${
       isActive ? 'bg-white/[0.08] text-white' : 'text-white/40 hover:text-white/70 hover:bg-white/[0.04]'
@@ -463,11 +451,27 @@ function SetItem({ id, set, isActive, isRenaming, renamingVal, onSelect, onDelet
           )}
         </button>
       )}
-      {onDelete && !isRenaming && (
-        <button
-          onClick={e => { e.stopPropagation(); onDelete() }}
-          className="opacity-0 group-hover:opacity-100 text-white/25 hover:text-red-400/70 transition-all duration-150 cursor-pointer text-[10px] ml-1 flex-shrink-0"
-        >✕</button>
+      {!isRenaming && (
+        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 ml-1 flex-shrink-0 transition-all duration-150">
+          {onClear && set.songs?.length > 0 && (
+            <button
+              onClick={e => { e.stopPropagation(); onClear() }}
+              title="Clear all songs"
+              className="text-white/20 hover:text-red-400/80 transition-colors cursor-pointer p-0.5"
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+              </svg>
+            </button>
+          )}
+          {onDelete && (
+            <button
+              onClick={e => { e.stopPropagation(); onDelete() }}
+              title="Delete theme"
+              className="text-white/20 hover:text-red-400/80 transition-colors cursor-pointer text-[10px] p-0.5"
+            >✕</button>
+          )}
+        </div>
       )}
     </div>
   )

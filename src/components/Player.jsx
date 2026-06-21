@@ -13,7 +13,7 @@ export default function Player({ player, isPlaying, onPlay, onStop, onSkip, libr
   const volPct = (volume ?? 0.8) * 100
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-[#1a0808]/95 backdrop-blur-xl border-t border-white/[0.06] z-20">
+    <div className="fixed bottom-0 left-0 right-0 bg-[#1c1c1e]/95 backdrop-blur-xl border-t border-white/[0.06] z-20">
       {/* Scrubber */}
       <div className="px-5 pt-3 pb-1">
         <div className="flex items-center gap-2.5">

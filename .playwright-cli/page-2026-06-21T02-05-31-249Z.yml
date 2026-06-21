@@ -1,0 +1,8 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: 🎵
+      - heading "Trivia Jukebox" [level=1] [ref=e6]
+      - paragraph [ref=e7]: Your personal music trivia queue
+    - button "Connect Spotify" [ref=e8]
+  - iframe

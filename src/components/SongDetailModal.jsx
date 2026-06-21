@@ -105,7 +105,7 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose 
       onClick={() => { if (isPlaying) fadeAndPause(); onClose() }}
     >
       <div
-        className="bg-[#1e0b0b] border border-white/[0.07] rounded-t-3xl sm:rounded-3xl w-full max-w-md shadow-2xl animate-fade-up overflow-hidden"
+        className="bg-[#242426] border border-white/[0.07] rounded-t-3xl sm:rounded-3xl w-full max-w-md shadow-2xl animate-fade-up overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
         {/* Album art strip */}
