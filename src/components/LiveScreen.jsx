@@ -54,6 +54,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
   const [textVisible, setTextVisible]     = useState(false)
   const [spinPaused, setSpinPaused]       = useState(false)
   const [upcomingArtUrl, setUpcomingArtUrl] = useState(null)
+  const [textInstant, setTextInstant]     = useState(false)
 
   const paletteColors          = usePalette(artUrl)
   const upcomingPaletteColors  = usePalette(upcomingArtUrl)
@@ -131,7 +132,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
       return
     }
 
-    // Pause: 2600ms delay (just after 2500ms fade) → arm lifts with shuffle spring → spin stops
+    // Pause: 3000ms delay (500ms after 2500ms fade) → arm lifts with shuffle spring → spin stops
     const t1 = setTimeout(() => {
       tonearmCtrl.start({
         ...ARM_OFF,
@@ -168,9 +169,10 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
     return () => clearTimeout(t)
   }, [ending])
 
-  // Hide text immediately when a new track arrives — before runTransition fires
+  // Hide text immediately when a new track arrives — instant (no fade) before runTransition fires
   useEffect(() => {
     if (!currentTrack || !shown || currentTrack.uri === shown.uri) return
+    setTextInstant(true)
     setTextVisible(false)
   }, [currentTrack?.uri])
 
@@ -201,7 +203,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
         // Step 2 — record flies up once arm is clear
         flyCtrl.start({ y: -500, transition: { type: 'spring', stiffness: 220, damping: 22 } })
         setArtOpacity(0)
-        await Promise.all([preloadPromise, sleep(1000)])   // fly-up completes; preload runs concurrently
+        await Promise.all([preloadPromise, sleep(1200)])   // fly-up completes; preload runs concurrently
         // Old record is gone — swap track identity
         setShown(target)
 
@@ -216,6 +218,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
         }
 
         // Step 3 — load art onto record off-screen, then fly it down with art already visible
+        flyCtrl.set({ opacity: 0 })
         flyCtrl.set({ y: -500, scale: 1 })
         if (newArtUrl) setArtUrl(newArtUrl)
         setArtOpacity(1)
@@ -225,6 +228,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
         await sleep(500)
         tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 22 } })
         await sleep(200)
+        setTextInstant(false)
         setTransitioning(false)
         busyRef.current = false
         setTextVisible(true)
@@ -369,7 +373,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
             {/* Track info — hidden during transitions and before entrance completes */}
             <motion.div
               animate={{ opacity: transitioning ? 0 : (textVisible ? 1 : 0), y: transitioning ? -6 : 0 }}
-              transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
+              transition={textInstant ? { duration: 0 } : { duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
             >
               <h1 className="text-3xl sm:text-4xl font-bold text-white tracking-tight leading-tight mb-2">
                 {shown.name}
