@@ -180,7 +180,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose }) 
       flyCtrl.start({ y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 28 } })
       await sleep(500)   // record flies down
 
-      await sleep(250)
+      await sleep(500)
       tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 140, damping: 22 } })
       await sleep(200)
       setTransitioning(false)
