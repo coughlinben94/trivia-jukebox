@@ -1,6 +1,6 @@
 import { useEffect, useRef, useMemo } from 'react'
 
-const BLEND_FRAMES = 450
+const BLEND_DURATION_MS = 7500
 const NUM_CIRCLES  = 6
 const DIRECTIONS   = ['left', 'right', 'up', 'down']
 
@@ -69,7 +69,7 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
       steadyRgb:  initial.map(c => [...c]),   // live colors in steady state
       outRgb:     initial.map(c => [...c]),   // Layer A — outgoing
       inRgb:      initial.map(c => [...c]),   // Layer B — incoming
-      blendFrame: BLEND_FRAMES,               // BLEND_FRAMES = steady (no transition)
+      blendStart: -1,                          // -1 = steady state (no transition in progress)
       inOffsetX:  0,
       inOffsetY:  0,
     }
@@ -77,9 +77,10 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
 
   // Helper — snapshot current visual blend state as Layer A, start sweep toward newHex
   function startBlendTo(newHex) {
-    const s = st.current
-    if (s.blendFrame < BLEND_FRAMES) {
-      const t = easeInOut(s.blendFrame / BLEND_FRAMES)
+    const s   = st.current
+    const now = performance.now()
+    if (s.blendStart >= 0 && (now - s.blendStart) < BLEND_DURATION_MS) {
+      const t = easeInOut(Math.min((now - s.blendStart) / BLEND_DURATION_MS, 1))
       s.outRgb = s.outRgb.map((c, i) => [
         lerp(c[0], s.inRgb[i][0], t),
         lerp(c[1], s.inRgb[i][1], t),
@@ -89,10 +90,14 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
       s.outRgb = s.steadyRgb.map(c => [...c])
     }
     s.inRgb      = parseColors(newHex, NUM_CIRCLES)
-    s.blendFrame = 0
+    s.blendStart = performance.now()
     const dir   = DIRECTIONS[Math.floor(Math.random() * DIRECTIONS.length)]
     s.inOffsetX = dir === 'left' ? -1.2 : dir === 'right' ?  1.2 : 0
     s.inOffsetY = dir === 'up'   ? -1.2 : dir === 'down'  ?  1.2 : 0
+    // Restart RAF if it was stopped (active=false) so the blend always runs to completion
+    if (!rafRef.current && mountedRef.current) {
+      tickRef.current?.()
+    }
   }
 
   // shuffleKey: new session starts — snap everything to black so palette bleeds in fresh
@@ -103,7 +108,7 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
     s.outRgb    = black.map(c => [...c])
     s.inRgb     = black.map(c => [...c])
     s.steadyRgb = black.map(c => [...c])
-    s.blendFrame = BLEND_FRAMES
+    s.blendStart = -1
     pendingFromNextRef.current = false
   }, [shuffleKey])
 
@@ -189,10 +194,9 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
 
       ctx.globalCompositeOperation = 'screen'
 
-      if (s.blendFrame < BLEND_FRAMES) {
+      if (s.blendStart >= 0 && (ts - s.blendStart) < BLEND_DURATION_MS) {
         // ── Transition: two layers crossfade while Layer B sweeps in ──────────
-        if (s.blendFrame < BLEND_FRAMES) s.blendFrame++
-        const t          = easeInOut(s.blendFrame / BLEND_FRAMES)
+        const t          = easeInOut(Math.min((ts - s.blendStart) / BLEND_DURATION_MS, 1))
         const offsetFrac = 1 - t
         const ox         = s.inOffsetX * offsetFrac * W
         const oy         = s.inOffsetY * offsetFrac * H
@@ -202,20 +206,21 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
 
         // Layer B — incoming, sweeps in from edge, fades in
         paintLayer(s.inRgb, tSec, W, H, maxDim, ox, oy, 0.9 * t)
-
-        // Promote B to steady state once fully blended
-        if (s.blendFrame >= BLEND_FRAMES) {
-          s.steadyRgb = s.inRgb.map(c => [...c])
-        }
       } else {
-        // ── Steady state: single layer at full alpha ───────────────────────────
+        // ── Steady state or blend just completed ─────────────────────────────
+        if (s.blendStart >= 0) {
+          // First frame after blend ends: promote B to steady and clear the timer
+          s.steadyRgb = s.inRgb.map(c => [...c])
+          s.blendStart = -1
+        }
         paintLayer(s.steadyRgb, tSec, W, H, maxDim, 0, 0, 0.9)
       }
     }
 
     function tick(ts) {
       draw(ts)
-      if (activeRef.current && mountedRef.current) {
+      // Keep looping if active OR if a blend is still running (draw() resets blendStart to -1 when done)
+      if (mountedRef.current && (activeRef.current || st.current.blendStart >= 0)) {
         rafRef.current = requestAnimationFrame(tick)
       } else {
         rafRef.current = null
@@ -246,6 +251,8 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
         height: '100%',
         zIndex: 0,
         display: 'block',
+        willChange: 'transform',
+        transform: 'translateZ(0)',
       }}
     />
   )

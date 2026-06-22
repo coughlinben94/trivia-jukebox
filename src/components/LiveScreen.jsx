@@ -52,9 +52,11 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
   const [artUrl, setArtUrl]               = useState(currentTrack?.album?.images?.[0]?.url)
   const [textVisible, setTextVisible]     = useState(false)
   const [spinPaused, setSpinPaused]       = useState(false)
+  const [upcomingArtUrl, setUpcomingArtUrl] = useState(null)
 
   const paletteColors     = usePalette(artUrl)
   const nextPaletteColors = usePalette(nextArtUrl ?? null)
+  usePalette(upcomingArtUrl) // primes module-level palette cache as early as possible; return value unused
 
   const tonearmCtrl = useAnimation()
   const flyCtrl     = useAnimation()
@@ -123,15 +125,15 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
       return
     }
 
-    // Pause: 150ms delay → arm lifts deliberately → spin stops once arm clears record
+    // Pause: 300ms delay → arm lifts deliberately → spin stops once arm clears record
     const t1 = setTimeout(() => {
       tonearmCtrl.start({
         ...ARM_OFF,
-        transition: { type: 'spring', duration: 0.75, bounce: 0 },
+        transition: { type: 'spring', duration: 1.1, bounce: 0 },
       })
-      const t2 = setTimeout(() => setSpinPaused(true), 450)
+      const t2 = setTimeout(() => setSpinPaused(true), 600)
       pauseSeqRef.current.push(t2)
-    }, 150)
+    }, 300)
     pauseSeqRef.current = [t1]
 
     return () => {
@@ -175,6 +177,8 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
         busyRef.current = true
         setTextVisible(false)
         setTransitioning(true)
+        // Kick off palette fetch for the incoming track immediately — well before setArtUrl fires
+        setUpcomingArtUrl(target?.album?.images?.[0]?.url ?? null)
 
         // Step 1 — arm lifts alone; record stays put until arm is fully up
         tonearmCtrl.start({ ...ARM_OFF, transition: { type: 'spring', stiffness: 220, damping: 22 } })
@@ -258,7 +262,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
   return (
     <div className="fixed inset-0 bg-black z-50 overflow-hidden flex flex-col items-center justify-start">
 
-      <AlbumGradient colors={paletteColors} nextColors={nextPaletteColors} active={!isPaused} shuffleKey={shuffleKey} />
+      <AlbumGradient colors={paletteColors} nextColors={nextPaletteColors} active={!isPaused || transitioning} shuffleKey={shuffleKey} />
 
       <div className="relative z-10 flex flex-col items-center gap-8 px-10 text-center max-w-lg w-full" style={{ paddingTop: '20vh' }}>
         {shown ? (
