@@ -58,7 +58,8 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose }) 
       console.log('extractPalette called with:', url)
       try {
         const img = new Image()
-        await new Promise((resolve) => { img.onload = resolve; img.onerror = resolve; img.src = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}` })
+        img.crossOrigin = 'anonymous'
+        await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = url })
         const result = await getPalette(img, 4)
         console.log('ColorThief success:', result)
         setPalette(result.map(c => [c.r ?? c[0], c.g ?? c[1], c.b ?? c[2]]))
@@ -195,7 +196,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose }) 
       flyCtrl.start({ y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 28 } })
       await sleep(500)   // record flies down
 
-      await sleep(750)
+      await sleep(250)
       tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 140, damping: 22 } })
       await sleep(200)
       setTransitioning(false)
@@ -236,24 +237,17 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose }) 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden flex flex-col items-center justify-start">
 
-      {/* Solid black base — always present so LiveScreen is never transparent */}
-      <div className="absolute inset-0 bg-[#0a0a0a]" />
-
       {/* Palette gradient background — remounts on artUrl change to retrigger fade-in */}
-      {(
+      {palette && (
         <div
           key={artUrl}
           className="absolute inset-0 live-bg-in"
           style={{
-            background: palette
-              ? `radial-gradient(ellipse at 20% 50%, rgba(${palette[0]},1.0) 0%, transparent 60%),
-                 radial-gradient(ellipse at 80% 20%, rgba(${palette[1]},1.0) 0%, transparent 55%),
-                 radial-gradient(ellipse at 60% 80%, rgba(${palette[2]},1.0) 0%, transparent 50%),
-                 radial-gradient(ellipse at 40% 30%, rgba(${palette[3]},1.0) 0%, transparent 45%),
-                 #0a0a0a`
-              : `radial-gradient(ellipse at 20% 50%, rgba(60,40,80,0.8) 0%, transparent 60%),
-                 radial-gradient(ellipse at 80% 20%, rgba(40,60,80,0.8) 0%, transparent 55%),
-                 #0a0a0a`,
+            background: `radial-gradient(ellipse at 20% 50%, rgba(${palette[0]},1.0) 0%, transparent 60%),
+                         radial-gradient(ellipse at 80% 20%, rgba(${palette[1]},1.0) 0%, transparent 55%),
+                         radial-gradient(ellipse at 60% 80%, rgba(${palette[2]},1.0) 0%, transparent 50%),
+                         radial-gradient(ellipse at 40% 30%, rgba(${palette[3]},1.0) 0%, transparent 45%),
+                         #0a0a0a`,
             animation: 'live-bg-in 2s linear, palette-breathe 8s ease-in-out infinite',
           }}
         />
