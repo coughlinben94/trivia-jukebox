@@ -58,8 +58,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose }) 
       console.log('extractPalette called with:', url)
       try {
         const img = new Image()
-        img.crossOrigin = 'anonymous'
-        await new Promise((resolve) => { img.onload = resolve; img.onerror = resolve; img.src = url })
+        await new Promise((resolve) => { img.onload = resolve; img.onerror = resolve; img.src = `https://corsproxy.io/?${encodeURIComponent(url)}` })
         const result = await getPalette(img, 4)
         console.log('ColorThief success:', result)
         setPalette(result.map(c => [c.r ?? c[0], c.g ?? c[1], c.b ?? c[2]]))
