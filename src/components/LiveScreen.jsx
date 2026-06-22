@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { AnimatePresence, motion, useAnimation } from 'framer-motion'
-import { getPalette } from 'colorthief'
+import LavaLamp from './LavaLamp'
+import { usePalette } from '../hooks/usePalette'
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
@@ -50,25 +51,8 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose }) 
   const [artOpacity, setArtOpacity]       = useState(1)
   const [artUrl, setArtUrl]               = useState(currentTrack?.album?.images?.[0]?.url)
   const [textVisible, setTextVisible]     = useState(false)
-  const [palette, setPalette]             = useState(null)
 
-  useEffect(() => {
-    if (!artUrl) return
-    async function extractPalette(url) {
-      console.log('extractPalette called with:', url)
-      try {
-        const img = new Image()
-        img.crossOrigin = 'anonymous'
-        await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = url })
-        const result = await getPalette(img, 4)
-        console.log('ColorThief success:', result)
-        setPalette(result.map(c => [c.r ?? c[0], c.g ?? c[1], c.b ?? c[2]]))
-      } catch (err) {
-        console.error('ColorThief failed:', err)
-      }
-    }
-    extractPalette(artUrl)
-  }, [artUrl])
+  const paletteColors = usePalette(artUrl)
 
   const tonearmCtrl = useAnimation()
   const flyCtrl     = useAnimation()
@@ -237,22 +221,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose }) 
   return (
     <div className="fixed inset-0 bg-black z-50 overflow-hidden flex flex-col items-center justify-start">
 
-      {/* Palette gradient background — remounts on artUrl change to retrigger fade-in */}
-      {palette && (
-        <div
-          key={artUrl}
-          className="absolute inset-0 live-bg-in"
-          style={{
-            background: `radial-gradient(ellipse at 20% 50%, rgba(${palette[0]},1.0) 0%, transparent 60%),
-                         radial-gradient(ellipse at 80% 20%, rgba(${palette[1]},1.0) 0%, transparent 55%),
-                         radial-gradient(ellipse at 60% 80%, rgba(${palette[2]},1.0) 0%, transparent 50%),
-                         radial-gradient(ellipse at 40% 30%, rgba(${palette[3]},1.0) 0%, transparent 45%),
-                         #0a0a0a`,
-            animation: 'live-bg-in 2s linear, palette-breathe 8s ease-in-out infinite',
-          }}
-        />
-      )}
-      <div className="absolute inset-0 bg-black/0" />
+      <LavaLamp colors={paletteColors} active={!isPaused} />
 
       <div className="relative z-10 flex flex-col items-center gap-8 px-10 text-center max-w-lg w-full" style={{ paddingTop: '20vh' }}>
         {shown ? (
