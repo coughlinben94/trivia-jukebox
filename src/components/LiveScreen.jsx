@@ -166,65 +166,75 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
     if (!currentTrack || !shown || currentTrack.uri === shown.uri) return
 
     async function runTransition(target, prevTrack = shown) {
-      if (busyRef.current) {
-        pendingRef.current = target
-        return
-      }
-      pendingRef.current = null
-      busyRef.current = true
-      setTextVisible(false)
-      setTransitioning(true)
-
-      // Step 1 — arm lifts alone; record stays put until arm is fully up
-      tonearmCtrl.start({ ...ARM_OFF, transition: { type: 'spring', stiffness: 220, damping: 22 } })
-      // Kick off preload during the arm lift so it has more time
-      const newArtUrl = target?.album?.images?.[0]?.url
-      const preloadPromise = newArtUrl ? preloadImage(newArtUrl) : Promise.resolve()
-      setPrev(prevTrack)
-      await sleep(400)   // arm fully lifted
-
-      // Step 2 — record flies up slowly once arm is clear
-      flyCtrl.start({ y: -500, transition: { duration: 0.9, ease: [0.4, 0, 1, 1] } })
-      setArtOpacity(0)
-      await Promise.all([preloadPromise, sleep(1000)])   // fly-up completes; preload runs concurrently
-      // Old record is gone — swap track identity
-      setShown(target)
-
-      // If another skip arrived during this window, bail before flying the new record in
-      if (pendingRef.current && pendingRef.current.uri !== target.uri) {
-        const pending = pendingRef.current
+      try {
+        if (busyRef.current) {
+          pendingRef.current = target
+          return
+        }
         pendingRef.current = null
+        busyRef.current = true
+        setTextVisible(false)
+        setTransitioning(true)
+
+        // Step 1 — arm lifts alone; record stays put until arm is fully up
+        tonearmCtrl.start({ ...ARM_OFF, transition: { type: 'spring', stiffness: 220, damping: 22 } })
+        // Kick off preload during the arm lift so it has more time
+        const newArtUrl = target?.album?.images?.[0]?.url
+        const preloadPromise = newArtUrl ? preloadImage(newArtUrl) : Promise.resolve()
+        setPrev(prevTrack)
+        await sleep(400)   // arm fully lifted
+
+        // Step 2 — record flies up slowly once arm is clear
+        flyCtrl.start({ y: -500, transition: { duration: 0.9, ease: [0.4, 0, 1, 1] } })
+        setArtOpacity(0)
+        await Promise.all([preloadPromise, sleep(1000)])   // fly-up completes; preload runs concurrently
+        // Old record is gone — swap track identity
+        setShown(target)
+
+        // If another skip arrived during this window, bail before flying the new record in
+        if (pendingRef.current && pendingRef.current.uri !== target.uri) {
+          const pending = pendingRef.current
+          pendingRef.current = null
+          setTransitioning(false)
+          busyRef.current = false
+          runTransition(pending, target)
+          return
+        }
+
+        // Step 3 — load art onto record off-screen, then fly it down with art already visible
+        flyCtrl.set({ y: -500, scale: 1 })
+        if (newArtUrl) setArtUrl(newArtUrl)
+        setArtOpacity(1)
+        flyCtrl.start({ y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 28 } })
+        await sleep(500)   // record flies down
+
+        await sleep(500)
+        tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 140, damping: 22 } })
+        await sleep(200)
         setTransitioning(false)
         busyRef.current = false
-        runTransition(pending, target)
-        return
-      }
+        setTextVisible(true)
 
-      // Step 3 — load art onto record off-screen, then fly it down with art already visible
-      flyCtrl.set({ y: -500, scale: 1 })
-      if (newArtUrl) setArtUrl(newArtUrl)
-      setArtOpacity(1)
-      flyCtrl.start({ y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 28 } })
-      await sleep(500)   // record flies down
+        // Re-sync arm in case isPaused changed while busy
+        tonearmCtrl.start({
+          ...(isPausedRef.current ? ARM_OFF : ARM_ON),
+          transition: { type: 'spring', stiffness: 180, damping: 26 },
+        })
 
-      await sleep(500)
-      tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 140, damping: 22 } })
-      await sleep(200)
-      setTransitioning(false)
-      busyRef.current = false
-      setTextVisible(true)
+        // Let the re-sync animation start before any recursive call fires ARM_OFF
+        await new Promise(r => setTimeout(r, 50))
 
-      // Re-sync arm in case isPaused changed while busy
-      tonearmCtrl.start({
-        ...(isPausedRef.current ? ARM_OFF : ARM_ON),
-        transition: { type: 'spring', stiffness: 180, damping: 26 },
-      })
-
-      // Drain any skip that arrived mid-transition
-      if (pendingRef.current && pendingRef.current.uri !== target.uri) {
-        const pending = pendingRef.current
-        pendingRef.current = null
-        runTransition(pending, target)
+        // Drain any skip that arrived mid-transition
+        if (pendingRef.current && pendingRef.current.uri !== target.uri) {
+          const pending = pendingRef.current
+          pendingRef.current = null
+          runTransition(pending, target)
+        }
+      } catch (err) {
+        console.error('[runTransition]', err)
+        busyRef.current = false
+        setTransitioning(false)
+        tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 26 } })
       }
     }
 

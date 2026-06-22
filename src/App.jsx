@@ -5,6 +5,7 @@ import Jukebox from './components/Jukebox'
 export default function App() {
   const [token, setToken] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -14,6 +15,7 @@ export default function App() {
       window.history.replaceState({}, '', '/')
       handleCallback(code)
         .then(() => getToken().then(setToken))
+        .catch(err => { console.error('OAuth error:', err); setError('Login failed — please try again.') })
         .finally(() => setLoading(false))
     } else {
       getToken().then(setToken).finally(() => setLoading(false))
@@ -42,6 +44,7 @@ export default function App() {
         >
           Connect Spotify
         </button>
+        {error && <p className="text-sm text-red-400">{error}</p>}
       </div>
     )
   }

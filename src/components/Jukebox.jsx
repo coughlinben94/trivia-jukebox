@@ -121,6 +121,9 @@ export default function Jukebox({ onLogout }) {
         const tracks = await searchTracks(q)
         setResults(tracks)
         setResultsKey(k => k + 1)
+      } catch (err) {
+        console.error('[search]', err)
+        setResults([])
       } finally { setSearching(false) }
     }, 280)
   }, [])

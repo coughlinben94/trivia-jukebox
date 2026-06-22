@@ -158,6 +158,10 @@ export function useSpotifyPlayer({ onAdvance } = {}) {
     setIsPaused(false)
 
     const token = await getToken()
+    if (!token) {
+      console.error('[playTrack] token refresh failed — aborting play')
+      return false
+    }
     await fetch(
       `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
       {
@@ -169,7 +173,10 @@ export function useSpotifyPlayer({ onAdvance } = {}) {
     dbg('play fetch sent')
 
     await new Promise(resolve => {
-      const timeout = setTimeout(resolve, 4000)
+      const timeout = setTimeout(() => {
+        player.removeListener('player_state_changed', check)
+        resolve()
+      }, 4000)
       const check = (state) => {
         if (state?.track_window?.current_track?.uri === uri) {
           clearTimeout(timeout)
