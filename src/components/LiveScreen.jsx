@@ -237,6 +237,9 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose }) 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden flex flex-col items-center justify-start">
 
+      {/* Solid black base — always present so LiveScreen is never transparent */}
+      <div className="absolute inset-0 bg-[#0a0a0a]" />
+
       {/* Palette gradient background — remounts on artUrl change to retrigger fade-in */}
       {palette && (
         <div
