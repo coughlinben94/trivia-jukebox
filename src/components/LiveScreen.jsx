@@ -98,7 +98,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
       await sleep(1200)
       tonearmCtrl.start({
         ...(isPausedRef.current ? ARM_OFF : ARM_ON),
-        transition: { type: 'spring', stiffness: 160, damping: 22 },
+        transition: { type: 'spring', stiffness: 180, damping: 22 },
       })
 
       await sleep(200)
@@ -126,7 +126,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
       setSpinPaused(false)
       tonearmCtrl.start({
         ...ARM_ON,
-        transition: { type: 'spring', stiffness: 100, damping: 28 },
+        transition: { type: 'spring', stiffness: 160, damping: 22 },
       })
       return
     }
@@ -162,7 +162,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
     busyRef.current = true
     setTransitioning(true)
     tonearmCtrl.start({ ...ARM_OFF, transition: { type: 'spring', stiffness: 220, damping: 22 } })
-    flyCtrl.start({ y: -500, transition: { duration: 0.44, ease: [0.4, 0, 1, 1] } })
+    flyCtrl.start({ y: -500, transition: { type: 'spring', stiffness: 220, damping: 22 } })
     setArtOpacity(0)
     const t = setTimeout(onClose, 520)
     return () => clearTimeout(t)
@@ -223,7 +223,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
         await sleep(500)   // record flies down
 
         await sleep(500)
-        tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 140, damping: 22 } })
+        tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 22 } })
         await sleep(200)
         setTransitioning(false)
         busyRef.current = false
