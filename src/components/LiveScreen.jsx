@@ -105,6 +105,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
       })
 
       await sleep(200)
+      setTextInstant(false)
       setTextVisible(true)
       busyRef.current = false
 
@@ -381,6 +382,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
 
             {/* Track info — hidden during transitions and before entrance completes */}
             <motion.div
+              initial={{ opacity: 0, y: 0 }}
               animate={{ opacity: transitioning ? 0 : (textVisible ? 1 : 0), y: transitioning ? -6 : 0 }}
               transition={textInstant ? { duration: 0 } : { duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
             >
