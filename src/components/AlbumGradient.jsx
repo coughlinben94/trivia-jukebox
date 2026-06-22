@@ -1,6 +1,6 @@
 import { useEffect, useRef, useMemo } from 'react'
 
-const BLEND_FRAMES = 300
+const BLEND_FRAMES = 450
 const NUM_CIRCLES  = 6
 const DIRECTIONS   = ['left', 'right', 'up', 'down']
 
@@ -16,7 +16,7 @@ function hexToRgb(hex) {
 }
 
 function parseColors(hexArr, n) {
-  const src = hexArr.length ? hexArr : ['#111111']
+  const src = hexArr.length ? hexArr : ['#080808']
   return Array.from({ length: n }, (_, i) => [...hexToRgb(src[i % src.length])])
 }
 

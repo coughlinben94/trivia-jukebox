@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 const cache = new Map();
 
 // Fallback: deep blue/purple — looks good if palette fails
-const FALLBACK = ['#1a1a2e', '#16213e', '#533483', '#e94560', '#0f3460', '#f5a623'];
+const FALLBACK = ['#080808', '#080808', '#080808', '#080808', '#080808', '#080808'];
 
 export function usePalette(albumArtUrl) {
   const [colors, setColors] = useState(FALLBACK);

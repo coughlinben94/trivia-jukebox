@@ -51,15 +51,17 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
   const [artOpacity, setArtOpacity]       = useState(1)
   const [artUrl, setArtUrl]               = useState(currentTrack?.album?.images?.[0]?.url)
   const [textVisible, setTextVisible]     = useState(false)
+  const [spinPaused, setSpinPaused]       = useState(false)
 
   const paletteColors     = usePalette(artUrl)
   const nextPaletteColors = usePalette(nextArtUrl ?? null)
 
   const tonearmCtrl = useAnimation()
   const flyCtrl     = useAnimation()
-  const busyRef     = useRef(false)
-  const mountedRef  = useRef(false)
-  const pendingRef  = useRef(null)
+  const busyRef      = useRef(false)
+  const mountedRef   = useRef(false)
+  const pendingRef   = useRef(null)
+  const pauseSeqRef  = useRef([])
   // Always-current isPaused so async functions don't read a stale closure value
   const isPausedRef = useRef(isPaused)
   useEffect(() => { isPausedRef.current = isPaused }, [isPaused])
@@ -108,10 +110,34 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
   // Play/pause tonearm nudge when not mid-transition or entrance
   useEffect(() => {
     if (busyRef.current) return
-    tonearmCtrl.start({
-      ...(isPaused ? ARM_OFF : ARM_ON),
-      transition: { type: 'spring', stiffness: 100, damping: 28 },
-    })
+
+    if (!isPaused) {
+      // Resume: cancel any pending pause sequence, spin immediately, arm down (unchanged)
+      pauseSeqRef.current.forEach(clearTimeout)
+      pauseSeqRef.current = []
+      setSpinPaused(false)
+      tonearmCtrl.start({
+        ...ARM_ON,
+        transition: { type: 'spring', stiffness: 100, damping: 28 },
+      })
+      return
+    }
+
+    // Pause: 150ms delay → arm lifts deliberately → spin stops once arm clears record
+    const t1 = setTimeout(() => {
+      tonearmCtrl.start({
+        ...ARM_OFF,
+        transition: { type: 'spring', duration: 0.75, bounce: 0 },
+      })
+      const t2 = setTimeout(() => setSpinPaused(true), 450)
+      pauseSeqRef.current.push(t2)
+    }, 150)
+    pauseSeqRef.current = [t1]
+
+    return () => {
+      pauseSeqRef.current.forEach(clearTimeout)
+      pauseSeqRef.current = []
+    }
   }, [isPaused])
 
   // Populate shown/artUrl when currentTrack first arrives (SDK delivers it async after mount)
@@ -280,7 +306,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
                     className="absolute inset-0 rounded-full overflow-hidden"
                     style={{
                       animation: 'live-spin 12s linear infinite',
-                      animationPlayState: isPaused ? 'paused' : 'running',
+                      animationPlayState: spinPaused ? 'paused' : 'running',
                       willChange: 'transform',
                       transform: 'translateZ(0)',
                     }}
