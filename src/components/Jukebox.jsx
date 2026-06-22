@@ -64,6 +64,7 @@ const [newSetName, setNewSetName] = useState('')
   const shuffleIdxRef = useRef(0)
   const debounceRef = useRef(null)
   const playTrackFn = useRef(null)
+  const onUpcomingTrackRef = useRef(null)
   const dragIdxRef = useRef(null)
   // Set true by startShuffle; consumed by the currentTrack watcher to open the live screen
   // only after the SDK has confirmed the track — avoids the race that caused missing art
@@ -89,10 +90,15 @@ const [newSetName, setNewSetName] = useState('')
     shuffleIdxRef.current = idx
     setNextSong(lib[shuffleOrderRef.current[idx + 1]] ?? null)
     const song = lib[shuffleOrderRef.current[idx]]
+    onUpcomingTrackRef.current?.(song)
     if (song) { setPlayingId(song.id); playTrackFn.current?.(song) }
   }, [])
 
   const player = useSpotifyPlayer({ onAdvance: advanceToNext })
+
+  const registerUpcomingTrackHandler = useCallback(fn => {
+    onUpcomingTrackRef.current = fn
+  }, [])
 
   useEffect(() => {
     playTrackFn.current = (song) =>
@@ -431,6 +437,7 @@ const [newSetName, setNewSetName] = useState('')
           onClose={() => { setShowLive(false); setLiveEnding(false) }}
           nextArtUrl={nextSong?.album?.images?.[0]?.url ?? null}
           shuffleKey={shuffleKey}
+          onUpcomingTrack={registerUpcomingTrackHandler}
         />
       )}
 

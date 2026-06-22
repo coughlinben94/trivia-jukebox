@@ -43,7 +43,7 @@ function Tonearm({ controls }) {
 }
 
 // ── LiveScreen ─────────────────────────────────────────────────────────────────
-export default function LiveScreen({ currentTrack, isPaused, ending, onClose, nextArtUrl, shuffleKey }) {
+export default function LiveScreen({ currentTrack, isPaused, ending, onClose, nextArtUrl, shuffleKey, onUpcomingTrack }) {
   const [shown, setShown]                 = useState(currentTrack)
   const [prev,  setPrev]                  = useState(null)
   const [transitioning, setTransitioning] = useState(false)
@@ -66,6 +66,12 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
   // Always-current isPaused so async functions don't read a stale closure value
   const isPausedRef = useRef(isPaused)
   useEffect(() => { isPausedRef.current = isPaused }, [isPaused])
+
+  // Register palette-prefetch handler with Jukebox so advanceToNext can notify us
+  useEffect(() => {
+    onUpcomingTrack?.((song) => setUpcomingArtUrl(song?.album?.images?.[0]?.url ?? null))
+    return () => onUpcomingTrack?.(null)
+  }, [onUpcomingTrack])
 
   // Arm starts lifted; this runs once on mount before anything else renders
   useEffect(() => {
@@ -124,15 +130,15 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
       return
     }
 
-    // Pause: 1800ms delay → arm lifts deliberately → spin stops once arm clears record
+    // Pause: 2600ms delay (just after 2500ms fade) → arm lifts with shuffle spring → spin stops
     const t1 = setTimeout(() => {
       tonearmCtrl.start({
         ...ARM_OFF,
-        transition: { type: 'spring', duration: 2.0, bounce: 0 },
+        transition: { type: 'spring', stiffness: 220, damping: 22 },
       })
       const t2 = setTimeout(() => setSpinPaused(true), 1600)
       pauseSeqRef.current.push(t2)
-    }, 1800)
+    }, 2600)
     pauseSeqRef.current = [t1]
 
     return () => {
@@ -176,8 +182,6 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
         busyRef.current = true
         setTextVisible(false)
         setTransitioning(true)
-        // Kick off palette fetch for the incoming track immediately — well before setArtUrl fires
-        setUpcomingArtUrl(target?.album?.images?.[0]?.url ?? null)
 
         // Step 1 — arm lifts alone; record stays put until arm is fully up
         tonearmCtrl.start({ ...ARM_OFF, transition: { type: 'spring', stiffness: 220, damping: 22 } })
