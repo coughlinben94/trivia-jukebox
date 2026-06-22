@@ -135,7 +135,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
     const t1 = setTimeout(() => {
       tonearmCtrl.start({
         ...ARM_OFF,
-        transition: { type: 'spring', stiffness: 220, damping: 22 },
+        transition: { type: 'spring', stiffness: 35, damping: 18 },
       })
       const t2 = setTimeout(() => setSpinPaused(true), 1600)
       pauseSeqRef.current.push(t2)
@@ -167,6 +167,12 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
     const t = setTimeout(onClose, 520)
     return () => clearTimeout(t)
   }, [ending])
+
+  // Hide text immediately when a new track arrives — before runTransition fires
+  useEffect(() => {
+    if (!currentTrack || !shown || currentTrack.uri === shown.uri) return
+    setTextVisible(false)
+  }, [currentTrack?.uri])
 
   // Song change → coordinated transition.
   // Guard: !shown skips the very first track (handled by entrance above).
