@@ -38,8 +38,7 @@ export default function Jukebox({ onLogout }) {
   const [showLive, setShowLive] = useState(false)
   const [liveEnding, setLiveEnding] = useState(false)
   const [modalTrack, setModalTrack] = useState(null)
-  const [confirmClear, setConfirmClear] = useState(false)
-  const [newSetName, setNewSetName] = useState('')
+const [newSetName, setNewSetName] = useState('')
   const [addingSet, setAddingSet] = useState(false)
   const [renamingId, setRenamingId] = useState(null)
   const [renamingVal, setRenamingVal] = useState('')
@@ -142,14 +141,7 @@ export default function Jukebox({ onLogout }) {
     setLibrary(prev => prev.map(t => t.id === id ? { ...t, startMs, stopMs } : t))
   }, [setLibrary])
 
-  const clearLibrary = () => {
-    setLibrary([])
-    handleStop()
-    setConfirmClear(false)
-  }
-
   const startShuffle = useCallback(async () => {
-    console.log('🔵 startShuffle CALLED — library.length:', library.length)
     if (library.length === 0) return
     setShuffleKey(k => k + 1)
     const order = shuffleArray(library.map((_, i) => i))
@@ -161,7 +153,6 @@ export default function Jukebox({ onLogout }) {
     setIsPlaying(true)
     pendingLiveOpenRef.current = true   // live screen opens when SDK confirms the track
     const started = await playTrackFn.current?.(song)
-    console.log('🔵 startShuffle DONE — started:', started)
     if (!started) {
       pendingLiveOpenRef.current = false
       setIsPlaying(false)

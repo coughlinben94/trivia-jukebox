@@ -49,7 +49,6 @@ export function useSpotifyPlayer({ onAdvance } = {}) {
       player.addListener('not_ready', () => setIsReady(false))
       player.addListener('player_state_changed', state => {
         if (!state) return
-        console.log('SDK state_changed → paused:', state.paused, '| transitioningRef:', transitioningRef.current, '| track:', state.track_window.current_track?.name)
         setCurrentTrack(state.track_window.current_track)
         // Suppress the transient paused=true the SDK emits right after auto-advance pause()
         if (!transitioningRef.current) setIsPaused(state.paused)
@@ -147,14 +146,8 @@ export function useSpotifyPlayer({ onAdvance } = {}) {
     const gen = genRef.current
     clearInterval(monitorRef.current)
 
-    const t0 = Date.now()
-    const dbg = (...args) => console.log(`[jukebox +${Date.now()-t0}ms]`, ...args)
-
-    dbg(`playTrack start — startMs=${startMs}, stopMs=${stopMs}`)
-
     // Await the volume-zero so Spotify can't start audibly before the seek
     await player.setVolume(0)
-    dbg('vol=0')
     setIsPaused(false)
 
     const token = await getToken()
@@ -170,7 +163,6 @@ export function useSpotifyPlayer({ onAdvance } = {}) {
         body: JSON.stringify({ uris: [uri] }),
       }
     )
-    dbg('play fetch sent')
 
     await new Promise(resolve => {
       const timeout = setTimeout(() => {
@@ -186,7 +178,6 @@ export function useSpotifyPlayer({ onAdvance } = {}) {
       }
       player.addListener('player_state_changed', check)
     })
-    dbg('track confirmed by SDK')
 
     transitioningRef.current = false  // new track confirmed; restore isPaused tracking
     if (genRef.current !== gen) return
@@ -199,12 +190,10 @@ export function useSpotifyPlayer({ onAdvance } = {}) {
       const doSeek = async () => {
         // REST API seek only — more reliable than SDK seek; using both caused a double-seek glitch
         const t = await getToken()
-        dbg(`REST seek → ${startMs}ms`)
         await fetch(
           `https://api.spotify.com/v1/me/player/seek?position_ms=${startMs}&device_id=${deviceId}`,
           { method: 'PUT', headers: { Authorization: `Bearer ${t}` } }
         )
-        dbg('REST seek done')
       }
 
       await doSeek()
@@ -217,11 +206,9 @@ export function useSpotifyPlayer({ onAdvance } = {}) {
         const poll = setInterval(async () => {
           const s = await player.getCurrentState()
           if (!s) return
-          dbg(`poll pos=${s.position} (target ${startMs}, diff ${s.position - startMs})`)
           if (s.position >= startMs - 300 && s.position <= startMs + 5000) {
             clearInterval(poll)
             clearTimeout(deadline)
-            dbg(`poll resolved at pos=${s.position}`)
             resolve(true)
           }
         }, 100)
@@ -229,7 +216,6 @@ export function useSpotifyPlayer({ onAdvance } = {}) {
 
       // If first seek timed out, try once more
       if (!landed && genRef.current === gen) {
-        dbg('seek timed out — retrying')
         await doSeek()
         await sleep(800)
       }

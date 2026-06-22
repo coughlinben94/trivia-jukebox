@@ -61,12 +61,6 @@
 @keyframes live-fade-in  { from { opacity: 0 } to { opacity: 1 } }
 @keyframes live-fade-out { from { opacity: 1 } to { opacity: 0 } }
 
-/* AlbumGradient drift animations — move background-position on a 400% 400% canvas */
-@keyframes gradientDriftH  { from { background-position: 0%   50% } to { background-position: 100% 50%  } }
-@keyframes gradientDriftV  { from { background-position: 50%  0%  } to { background-position: 50%  100% } }
-@keyframes gradientDriftD1 { from { background-position: 0%   0%  } to { background-position: 100% 100% } }
-@keyframes gradientDriftD2 { from { background-position: 100% 0%  } to { background-position: 0%   100% } }
-
 @keyframes live-spin {
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }

@@ -124,15 +124,15 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
       return
     }
 
-    // Pause: 1300ms delay → arm lifts deliberately → spin stops once arm clears record
+    // Pause: 1800ms delay → arm lifts deliberately → spin stops once arm clears record
     const t1 = setTimeout(() => {
       tonearmCtrl.start({
         ...ARM_OFF,
-        transition: { type: 'spring', duration: 1.1, bounce: 0 },
+        transition: { type: 'spring', duration: 2.0, bounce: 0 },
       })
-      const t2 = setTimeout(() => setSpinPaused(true), 600)
+      const t2 = setTimeout(() => setSpinPaused(true), 1600)
       pauseSeqRef.current.push(t2)
-    }, 1300)
+    }, 1800)
     pauseSeqRef.current = [t1]
 
     return () => {

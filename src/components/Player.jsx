@@ -68,7 +68,7 @@ export default function Player({ player, isPlaying, onPlay, onStop, onSkip, libr
           )}
 
           <button
-            onClick={isPlaying ? onStop : () => { console.log('🟢 Player play button clicked'); onPlay() }}
+            onClick={isPlaying ? onStop : onPlay}
             className="w-10 h-10 rounded-full bg-white flex items-center justify-center hover:scale-[1.05] active:scale-[0.95] transition-transform duration-150 cursor-pointer flex-shrink-0"
             aria-label={isPlaying ? 'Fade out' : 'Shuffle play'}
           >
