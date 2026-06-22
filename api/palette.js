@@ -11,7 +11,10 @@ export default async function handler(req, res) {
   }
 
   try {
-    const palette = await Vibrant.from(url).getPalette();
+    const response = await fetch(url);
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const palette = await Vibrant.from(buffer).getPalette();
 
     const colors = [
       palette.Vibrant?.hex,
