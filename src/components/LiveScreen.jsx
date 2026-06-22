@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { AnimatePresence, motion, useAnimation } from 'framer-motion'
-import LavaLamp from './LavaLamp'
+import AlbumGradient from './AlbumGradient'
 import { usePalette } from '../hooks/usePalette'
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -221,7 +221,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose }) 
   return (
     <div className="fixed inset-0 bg-black z-50 overflow-hidden flex flex-col items-center justify-start">
 
-      <LavaLamp colors={paletteColors} active={!isPaused} />
+      <AlbumGradient colors={paletteColors} active={!isPaused} />
 
       <div className="relative z-10 flex flex-col items-center gap-8 px-10 text-center max-w-lg w-full" style={{ paddingTop: '20vh' }}>
         {shown ? (
