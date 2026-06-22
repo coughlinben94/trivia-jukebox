@@ -43,7 +43,7 @@ function Tonearm({ controls }) {
 }
 
 // ── LiveScreen ─────────────────────────────────────────────────────────────────
-export default function LiveScreen({ currentTrack, isPaused, ending, onClose }) {
+export default function LiveScreen({ currentTrack, isPaused, ending, onClose, nextArtUrl }) {
   const [shown, setShown]                 = useState(currentTrack)
   const [prev,  setPrev]                  = useState(null)
   const [transitioning, setTransitioning] = useState(false)
@@ -52,7 +52,8 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose }) 
   const [artUrl, setArtUrl]               = useState(currentTrack?.album?.images?.[0]?.url)
   const [textVisible, setTextVisible]     = useState(false)
 
-  const paletteColors = usePalette(artUrl)
+  const paletteColors     = usePalette(artUrl)
+  const nextPaletteColors = usePalette(nextArtUrl ?? null)
 
   const tonearmCtrl = useAnimation()
   const flyCtrl     = useAnimation()
@@ -221,7 +222,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose }) 
   return (
     <div className="fixed inset-0 bg-black z-50 overflow-hidden flex flex-col items-center justify-start">
 
-      <AlbumGradient colors={paletteColors} active={!isPaused} />
+      <AlbumGradient colors={paletteColors} nextColors={nextPaletteColors} active={!isPaused} />
 
       <div className="relative z-10 flex flex-col items-center gap-8 px-10 text-center max-w-lg w-full" style={{ paddingTop: '20vh' }}>
         {shown ? (
@@ -320,7 +321,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose }) 
               <h1 className="text-3xl sm:text-4xl font-bold text-white tracking-tight leading-tight mb-2">
                 {shown.name}
               </h1>
-              <p className="text-lg text-white/70 font-medium">
+              <p className="text-lg text-white font-medium">
                 {shown.artists?.map(a => a.name).join(', ')}
               </p>
             </motion.div>

@@ -43,6 +43,7 @@ export default function Jukebox({ onLogout }) {
   const [addingSet, setAddingSet] = useState(false)
   const [renamingId, setRenamingId] = useState(null)
   const [renamingVal, setRenamingVal] = useState('')
+  const [nextSong, setNextSong] = useState(null)
 
   const library = sets.items[sets.activeId]?.songs ?? []
   const activeSetName = sets.items[sets.activeId]?.name ?? 'Library'
@@ -86,6 +87,7 @@ export default function Jukebox({ onLogout }) {
       idx = 0
     }
     shuffleIdxRef.current = idx
+    setNextSong(lib[shuffleOrderRef.current[idx + 1]] ?? null)
     const song = lib[shuffleOrderRef.current[idx]]
     if (song) { setPlayingId(song.id); playTrackFn.current?.(song) }
   }, [])
@@ -148,6 +150,7 @@ export default function Jukebox({ onLogout }) {
     const order = shuffleArray(library.map((_, i) => i))
     shuffleOrderRef.current = order
     shuffleIdxRef.current = 0
+    setNextSong(library[order[1]] ?? null)
     const song = library[order[0]]
     setPlayingId(song.id)
     setIsPlaying(true)
@@ -430,6 +433,7 @@ export default function Jukebox({ onLogout }) {
           isPaused={player.isPaused}
           ending={liveEnding}
           onClose={() => { setShowLive(false); setLiveEnding(false) }}
+          nextArtUrl={nextSong?.album?.images?.[0]?.url ?? null}
         />
       )}
 

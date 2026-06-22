@@ -49,14 +49,16 @@ function makeCircleParams() {
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
-export default function AlbumGradient({ colors = [], active = true }) {
-  const canvasRef    = useRef(null)
-  const activeRef    = useRef(active)
-  const mountedRef   = useRef(true)
-  const rafRef       = useRef(null)
-  const tickRef      = useRef(null)
-  const isFirst      = useRef(true)
-  const circleParams = useMemo(makeCircleParams, [])
+export default function AlbumGradient({ colors = [], nextColors = [], active = true }) {
+  const canvasRef         = useRef(null)
+  const activeRef         = useRef(active)
+  const mountedRef        = useRef(true)
+  const rafRef            = useRef(null)
+  const tickRef           = useRef(null)
+  const isFirst           = useRef(true)
+  const isFirstNext       = useRef(true)
+  const pendingFromNextRef = useRef(false)
+  const circleParams      = useMemo(makeCircleParams, [])
 
   // All mutable animation state in one ref
   const st = useRef(null)
@@ -72,13 +74,10 @@ export default function AlbumGradient({ colors = [], active = true }) {
     }
   }
 
-  // New palette → snapshot current visual as Layer A, set Layer B target + direction
-  useEffect(() => {
-    if (isFirst.current) { isFirst.current = false; return }
+  // Helper — snapshot current visual blend state as Layer A, start sweep toward newHex
+  function startBlendTo(newHex) {
     const s = st.current
-
     if (s.blendFrame < BLEND_FRAMES) {
-      // Interrupted mid-transition: blend current A+B state into new Layer A
       const t = easeInOut(s.blendFrame / BLEND_FRAMES)
       s.outRgb = s.outRgb.map((c, i) => [
         lerp(c[0], s.inRgb[i][0], t),
@@ -88,13 +87,33 @@ export default function AlbumGradient({ colors = [], active = true }) {
     } else {
       s.outRgb = s.steadyRgb.map(c => [...c])
     }
-
-    s.inRgb      = parseColors(colors, NUM_CIRCLES)
+    s.inRgb      = parseColors(newHex, NUM_CIRCLES)
     s.blendFrame = 0
-
     const dir   = DIRECTIONS[Math.floor(Math.random() * DIRECTIONS.length)]
     s.inOffsetX = dir === 'left' ? -1.2 : dir === 'right' ?  1.2 : 0
     s.inOffsetY = dir === 'up'   ? -1.2 : dir === 'down'  ?  1.2 : 0
+  }
+
+  // nextColors: pre-transition 1 second before the song officially switches
+  useEffect(() => {
+    if (isFirstNext.current) { isFirstNext.current = false; return }
+    if (!nextColors.length) return
+    startBlendTo(nextColors)
+    pendingFromNextRef.current = true
+  }, [nextColors])
+
+  // colors: official song change — snap the target to match (blend already running)
+  useEffect(() => {
+    if (isFirst.current) { isFirst.current = false; return }
+    if (pendingFromNextRef.current) {
+      // nextColors blend in progress — just realign targets to official colors, keep blending
+      pendingFromNextRef.current = false
+      const s = st.current
+      s.inRgb     = parseColors(colors, NUM_CIRCLES)
+      s.steadyRgb = parseColors(colors, NUM_CIRCLES)
+    } else {
+      startBlendTo(colors)
+    }
   }, [colors])
 
   // Keep active ref in sync; restart loop if it was paused
