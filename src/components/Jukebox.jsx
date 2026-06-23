@@ -42,7 +42,6 @@ const [newSetName, setNewSetName] = useState('')
   const [addingSet, setAddingSet] = useState(false)
   const [renamingId, setRenamingId] = useState(null)
   const [renamingVal, setRenamingVal] = useState('')
-  const [confirmClear, setConfirmClear] = useState(false)
   const [shuffleKey, setShuffleKey] = useState(0)
 
   const library = sets.items[sets.activeId]?.songs ?? []
@@ -115,7 +114,7 @@ const [newSetName, setNewSetName] = useState('')
 
   useEffect(() => {
     if (player.currentTrack) {
-      const match = library.find(t => t.uri === player.currentTrack.uri)
+      const match = libraryRef.current.find(t => t.uri === player.currentTrack.uri)
       if (match) setPlayingId(match.id)
       if (pendingLiveOpenRef.current) {
         if (player.currentTrack.uri === pendingUriRef.current) {
@@ -182,6 +181,7 @@ const [newSetName, setNewSetName] = useState('')
   }, [library])
 
   const handleStop = useCallback(() => {
+    clearTimeout(shuffleDebounceRef.current)
     player.fadeAndPause()
     setIsPlaying(false)
     setPlayingId(null)
@@ -196,7 +196,6 @@ const [newSetName, setNewSetName] = useState('')
     if (id === sets.activeId) return
     if (isPlaying) handleStop()
     setPlayingId(null)
-    setConfirmClear(false)
     setSets(prev => ({ ...prev, activeId: id }))
   }
 
@@ -470,8 +469,6 @@ const [newSetName, setNewSetName] = useState('')
         onStop={handleStop}
         onSkip={advanceToNext}
         library={library}
-        playingId={playingId}
-        onUpdateTimes={updateTimes}
       />
     </div>
   )

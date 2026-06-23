@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { AnimatePresence, motion, useAnimation } from 'framer-motion'
+import { motion, useAnimation } from 'framer-motion'
 import AlbumGradient from './AlbumGradient'
 import { usePalette } from '../hooks/usePalette'
 
@@ -48,7 +48,6 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, sh
   const [shown, setShown]                 = useState(currentTrack)
   const [prev,  setPrev]                  = useState(null)
   const [transitioning, setTransitioning] = useState(false)
-  const [showBlank, setShowBlank]         = useState(false)
   const [artOpacity, setArtOpacity]       = useState(1)
   const [artUrl, setArtUrl]               = useState(currentTrack?.album?.images?.[0]?.url)
   const [textVisible, setTextVisible]     = useState(false)
@@ -311,27 +310,6 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, sh
                   zIndex: 0,
                 }}
               />
-
-              {/* Layer 1 – blank white record (drops in during transition).
-                   zIndex 1 keeps it below the fly wrapper (zIndex 2),
-                   so new art fades in on top of it. */}
-              <AnimatePresence>
-                {showBlank && (
-                  <motion.div
-                    key="blank"
-                    className="absolute inset-0 rounded-full"
-                    style={{
-                      background: 'rgba(238,238,238,0.96)',
-                      boxShadow: '0 32px 80px rgba(0,0,0,0.7)',
-                      zIndex: 1,
-                    }}
-                    initial={{ y: -300, rotate: -20, scale: 0.85 }}
-                    animate={{ y: 0, rotate: 0, scale: 1 }}
-                    exit={{ opacity: 0, transition: { duration: 0.18 } }}
-                    transition={{ type: 'spring', stiffness: 250, damping: 26 }}
-                  />
-                )}
-              </AnimatePresence>
 
               {/* Layer 2 – fly wrapper: drops in on entrance, flies straight up on exit.
                    Never rotated — fly-up is always vertical regardless of spin angle. */}
