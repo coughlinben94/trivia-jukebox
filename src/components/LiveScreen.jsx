@@ -23,21 +23,21 @@ function Tonearm({ controls }) {
   return (
     <motion.div
       className="absolute pointer-events-none select-none"
-      style={{ top: -8, right: -24, width: 92, height: 154,
-               transformOrigin: '78px 18px', zIndex: 20, willChange: 'transform' }}
+      style={{ top: -9, right: -28, width: 106, height: 177,
+               transformOrigin: '90px 21px', zIndex: 20, willChange: 'transform' }}
       initial={ARM_OFF}
       animate={controls}
     >
-      <svg width="92" height="154" viewBox="0 0 92 154" fill="none">
-        <circle cx="78" cy="18" r="12" fill="#e8e4dc" stroke="#ccc9c0" strokeWidth="1.5"/>
-        <circle cx="78" cy="18" r="5"  fill="#b0aca4"/>
-        <rect x="72" y="16" width="7" height="108" rx="3.5" fill="#f0ece4"/>
-        <rect x="53" y="116" width="24" height="6" rx="3" fill="#e8e4dc"/>
-        <rect x="41" y="116" width="20" height="14" rx="3"
+      <svg width="106" height="177" viewBox="0 0 106 177" fill="none">
+        <circle cx="90" cy="21" r="14" fill="#e8e4dc" stroke="#ccc9c0" strokeWidth="1.5"/>
+        <circle cx="90" cy="21" r="6"  fill="#b0aca4"/>
+        <rect x="83" y="18" width="8" height="124" rx="4" fill="#f0ece4"/>
+        <rect x="61" y="133" width="28" height="7" rx="3" fill="#e8e4dc"/>
+        <rect x="47" y="133" width="23" height="16" rx="3"
               fill="#ece8e0" stroke="#d4d0c8" strokeWidth="1"/>
-        <line x1="51" y1="130" x2="48" y2="144"
+        <line x1="59" y1="150" x2="55" y2="166"
               stroke="#a0a0a0" strokeWidth="1.5" strokeLinecap="round"/>
-        <circle cx="48" cy="145" r="2" fill="#c8c4bc"/>
+        <circle cx="55" cy="167" r="2" fill="#c8c4bc"/>
       </svg>
     </motion.div>
   )
@@ -295,13 +295,13 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
         {shown ? (
           <>
             {/* Record + tonearm scene */}
-            <div className="relative w-72 h-72 sm:w-80 sm:h-80">
+            <div className="relative w-[330px] h-[330px] sm:w-[368px] sm:h-[368px]">
 
               {/* Layer 0 – turntable platter: static, never flies or spins */}
               <div
                 className="absolute rounded-full"
                 style={{
-                  inset: '-8px',
+                  inset: '-9px',
                   background: 'radial-gradient(circle at 40% 35%, #2a2a2a, #111)',
                   zIndex: 0,
                 }}
@@ -386,10 +386,10 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
               animate={{ opacity: transitioning ? 0 : (textVisible ? 1 : 0), y: transitioning ? -6 : 0 }}
               transition={textInstant ? { duration: 0 } : { duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
             >
-              <h1 className="text-3xl sm:text-4xl font-bold text-white tracking-tight leading-tight mb-2">
+              <h1 className="text-4xl sm:text-5xl font-bold text-white tracking-tight leading-tight mb-2">
                 {shown.name}
               </h1>
-              <p className="text-lg text-white font-medium">
+              <p className="text-xl text-white font-medium">
                 {shown.artists?.map(a => a.name).join(', ')}
               </p>
             </motion.div>
@@ -397,12 +397,12 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, ne
         ) : (
           /* Waiting state — track hasn't arrived from SDK yet. Show an empty turntable
              so the screen isn't black. Once shown populates, the entrance animation plays. */
-          <div className="relative w-72 h-72 sm:w-80 sm:h-80">
+          <div className="relative w-[330px] h-[330px] sm:w-[368px] sm:h-[368px]">
             {/* Platter */}
             <div
               className="absolute rounded-full"
               style={{
-                inset: '-8px',
+                inset: '-9px',
                 background: 'radial-gradient(circle at 40% 35%, #2a2a2a, #111)',
                 zIndex: 0,
               }}
