@@ -105,7 +105,11 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose 
 
   const displayDuration = isActive && duration > 0 ? duration : (track.duration_ms || 0)
   const [localPos, setLocalPos] = useState(track.startMs ?? 0)
-  const displayPosition = isActive ? position : localPos
+  const [dragMs, setDragMs]     = useState(null)
+  const draggingRef             = useRef(false)
+  const displayPosition = draggingRef.current || dragMs !== null
+    ? dragMs
+    : (isActive ? position : localPos)
 
   const [startMs, setStartMs] = useState(track.startMs ?? 0)
   const [stopMs, setStopMs]   = useState(track.stopMs  ?? track.duration_ms ?? 0)
@@ -123,11 +127,6 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose 
   const pct    = displayDuration > 0 ? (displayPosition / displayDuration) * 100 : 0
   const inPct  = displayDuration > 0 ? (startMs          / displayDuration) * 100 : 0
   const outPct = displayDuration > 0 ? (stopMs           / displayDuration) * 100 : 0
-
-  const handleScrub = (ms) => {
-    if (isActive) seek(ms)
-    else setLocalPos(ms)
-  }
 
   // Preview: plays from In to Out, does NOT auto-advance to next song
   const handlePlay = () => playTrack(track.uri, startMs, stopMs, true)
@@ -236,7 +235,20 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose 
               max={displayDuration || 1}
               value={displayPosition}
               style={{ '--progress': `${pct}%` }}
-              onChange={e => handleScrub(Number(e.target.value))}
+              onPointerDown={() => {
+                draggingRef.current = true
+                setDragMs(isActive ? position : localPos)
+              }}
+              onChange={e => {
+                if (draggingRef.current) setDragMs(Number(e.target.value))
+              }}
+              onPointerUp={e => {
+                const final = Number(e.target.value)
+                if (isActive) seek(final)
+                else setLocalPos(final)
+                draggingRef.current = false
+                setDragMs(null)
+              }}
             />
           </div>
           <div className="flex justify-between mb-4">
