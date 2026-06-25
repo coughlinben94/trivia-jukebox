@@ -263,29 +263,19 @@ const [newSetName, setNewSetName] = useState('')
     return () => window.removeEventListener('keydown', handler)
   }, [isPlaying, handleStop, startShuffle, modalTrack])
 
-  // Hold-to-duck: lowers music to 20% while key is held — for talking over music during trivia.
-  // Change DUCK_KEY to remap (Stream Deck can send any key).
-  const DUCK_KEY = 'd'
+  // Stream Deck duck controls — discrete keypresses, no hold required.
+  // 'd' = Stream Deck "Duck" button   → lowers music to 20%
+  // 'f' = Stream Deck "Restore" button → restores music to full volume
   useEffect(() => {
     const onDown = (e) => {
-      if (e.key !== DUCK_KEY) return
       if (e.repeat) return
       if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return
       if (e.target.isContentEditable) return
-      player.duck()
-    }
-    const onUp = (e) => {
-      if (e.key !== DUCK_KEY) return
-      if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return
-      if (e.target.isContentEditable) return
-      player.unduck()
+      if (e.key === 'd') player.duck()
+      else if (e.key === 'f') player.unduck()
     }
     window.addEventListener('keydown', onDown)
-    window.addEventListener('keyup', onUp)
-    return () => {
-      window.removeEventListener('keydown', onDown)
-      window.removeEventListener('keyup', onUp)
-    }
+    return () => window.removeEventListener('keydown', onDown)
   }, [player.duck, player.unduck])
 
   const handleDragStart = (i) => { dragIdxRef.current = i }
