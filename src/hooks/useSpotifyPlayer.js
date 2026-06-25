@@ -26,6 +26,8 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
   // Suppresses the transient isPaused=true the SDK emits during auto-advance
   const transitioningRef = useRef(false)
   const fadingRef = useRef(false)
+  const duckRef = useRef(false)
+  const duckRampRef = useRef(null)  // { cancel: () => void } | null
 
   useEffect(() => { onAdvanceRef.current = onAdvance }, [onAdvance])
   useEffect(() => { onFadeStartRef.current = onFadeStart }, [onFadeStart])
@@ -236,6 +238,11 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
 
     if (genRef.current !== gen) return
 
+    // If duck key is still held through the transition, snap back to ducked level
+    if (duckRef.current) {
+      playerRef.current?.setVolume(maxVolumeRef.current * 0.20)
+    }
+
     startMonitor(stopMs > startMs ? stopMs : 0, gen, preview)
     return true
   }, [startMonitor])
@@ -267,12 +274,58 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     maxVolumeRef.current = v
     setVolumeState(v)
     if (fadingRef.current) return
-    playerRef.current?.setVolume(v)
+    // While ducked, apply the ducked level so the user's real volume is preserved
+    playerRef.current?.setVolume(duckRef.current ? v * 0.20 : v)
+  }, [])
+
+  // ─── Duck / unduck (hold-to-talk-over-music) ─────────────────────
+  // 10 steps × 25 ms = 250 ms ramp; cancel { cancel() } ref stops any in-flight ramp
+  const duck = useCallback(() => {
+    if (duckRef.current) return
+    duckRef.current = true
+    if (duckRampRef.current) { duckRampRef.current.cancel(); duckRampRef.current = null }
+    if (fadingRef.current) return  // fade owns the volume; intent recorded in duckRef
+    const player = playerRef.current
+    if (!player) return
+    const from = maxVolumeRef.current
+    const to   = maxVolumeRef.current * 0.20
+    let cancelled = false, step = 0
+    duckRampRef.current = { cancel: () => { cancelled = true } }
+    const tick = () => {
+      if (cancelled) return
+      step++
+      player.setVolume(Math.max(0, from + (to - from) * step / 10))
+      if (step < 10) setTimeout(tick, 25)
+      else duckRampRef.current = null
+    }
+    setTimeout(tick, 25)
+  }, [])
+
+  const unduck = useCallback(() => {
+    if (!duckRef.current) return
+    duckRef.current = false
+    if (duckRampRef.current) { duckRampRef.current.cancel(); duckRampRef.current = null }
+    if (fadingRef.current) return  // fade owns the volume; intent recorded in duckRef
+    const player = playerRef.current
+    if (!player) return
+    const from = maxVolumeRef.current * 0.20
+    const to   = maxVolumeRef.current
+    let cancelled = false, step = 0
+    duckRampRef.current = { cancel: () => { cancelled = true } }
+    const tick = () => {
+      if (cancelled) return
+      step++
+      player.setVolume(Math.min(1, from + (to - from) * step / 10))
+      if (step < 10) setTimeout(tick, 25)
+      else duckRampRef.current = null
+    }
+    setTimeout(tick, 25)
   }, [])
 
   return {
     isReady, isPaused, currentTrack, position, duration, error,
     volume, setVolume,
     playTrack, fadeAndPause, seek,
+    duck, unduck,
   }
 }

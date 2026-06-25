@@ -263,6 +263,31 @@ const [newSetName, setNewSetName] = useState('')
     return () => window.removeEventListener('keydown', handler)
   }, [isPlaying, handleStop, startShuffle, modalTrack])
 
+  // Hold-to-duck: lowers music to 20% while key is held — for talking over music during trivia.
+  // Change DUCK_KEY to remap (Stream Deck can send any key).
+  const DUCK_KEY = 'd'
+  useEffect(() => {
+    const onDown = (e) => {
+      if (e.key !== DUCK_KEY) return
+      if (e.repeat) return
+      if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return
+      if (e.target.isContentEditable) return
+      player.duck()
+    }
+    const onUp = (e) => {
+      if (e.key !== DUCK_KEY) return
+      if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return
+      if (e.target.isContentEditable) return
+      player.unduck()
+    }
+    window.addEventListener('keydown', onDown)
+    window.addEventListener('keyup', onUp)
+    return () => {
+      window.removeEventListener('keydown', onDown)
+      window.removeEventListener('keyup', onUp)
+    }
+  }, [player.duck, player.unduck])
+
   const handleDragStart = (i) => { dragIdxRef.current = i }
   const handleDragOver = (e, i) => {
     e.preventDefault()
