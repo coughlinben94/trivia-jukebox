@@ -250,7 +250,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, sh
         setTransitioning(true)
 
         // Step 1 — arm lifts alone; record stays put until arm is fully up
-        tonearmCtrl.start({ ...ARM_OFF, transition: { type: 'spring', stiffness: 220, damping: 22 } })
+        tonearmCtrl.start({ ...ARM_OFF, transition: { type: 'spring', stiffness: 220, damping: 30 } })
         // Kick off preload during the arm lift so it has more time
         const newArtUrl = target?.album?.images?.[0]?.url
         const preloadPromise = newArtUrl ? preloadImage(newArtUrl) : Promise.resolve()
