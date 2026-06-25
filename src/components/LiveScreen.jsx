@@ -55,6 +55,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, sh
   const [upcomingArtUrl, setUpcomingArtUrl] = useState(null)
   const [textInstant, setTextInstant]     = useState(false)
   const [closing, setClosing]             = useState(false)
+  const [entranceActive, setEntranceActive] = useState(true)
 
   const titleRef                          = useRef(null)
   const titleBasePxRef                    = useRef(null)
@@ -124,36 +125,41 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, sh
     mountedRef.current = true
 
     async function runEntrance() {
-      setTextInstant(true)
-      busyRef.current = true
-      setTextVisible(false)
+      try {
+        setTextInstant(true)
+        busyRef.current = true
+        setTextVisible(false)
 
-      flyCtrl.start({
-        y: 0, opacity: 1, scale: 1,
-        transition: { type: 'spring', stiffness: 120, damping: 28 },
-      })
+        flyCtrl.start({
+          y: 0, opacity: 1, scale: 1,
+          transition: { type: 'spring', stiffness: 120, damping: 28 },
+        })
 
-      await sleep(1200)
-      tonearmCtrl.start({
-        ...(isPausedRef.current ? ARM_OFF : ARM_ON),
-        transition: { type: 'spring', stiffness: 180, damping: 22 },
-      })
+        await sleep(1200)
+        tonearmCtrl.start({
+          ...(isPausedRef.current ? ARM_OFF : ARM_ON),
+          transition: { type: 'spring', stiffness: 180, damping: 22 },
+        })
 
-      await sleep(200)
-      setTextInstant(false)
-      setTextVisible(true)
-      busyRef.current = false
+        await sleep(200)
+        setTextInstant(false)
+        setTextVisible(true)
+        busyRef.current = false
 
-      // Bug 3: re-sync arm now that busyRef is clear, in case isPaused changed mid-entrance
-      tonearmCtrl.start({
-        ...(isPausedRef.current ? ARM_OFF : ARM_ON),
-        transition: { type: 'spring', stiffness: 180, damping: 26 },
-      })
+        // Bug 3: re-sync arm now that busyRef is clear, in case isPaused changed mid-entrance
+        tonearmCtrl.start({
+          ...(isPausedRef.current ? ARM_OFF : ARM_ON),
+          transition: { type: 'spring', stiffness: 180, damping: 26 },
+        })
 
-      if (pendingRef.current && pendingRef.current.uri !== shown?.uri) {
-        const pending = pendingRef.current
-        pendingRef.current = null
-        runTransitionRef.current?.(pending)
+        if (pendingRef.current && pendingRef.current.uri !== shown?.uri) {
+          const pending = pendingRef.current
+          pendingRef.current = null
+          runTransitionRef.current?.(pending)
+        }
+      } finally {
+        setEntranceActive(false)
+        busyRef.current = false
       }
     }
 
@@ -328,7 +334,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, sh
   return (
     <div className={`fixed inset-0 bg-black z-50 overflow-hidden flex flex-col items-center justify-start transition-opacity duration-200 ${closing ? 'opacity-0' : 'opacity-100'}`}>
 
-      <AlbumGradient colors={paletteColors} nextColors={upcomingPaletteColors} active={!isPaused || transitioning} shuffleKey={shuffleKey} />
+      <AlbumGradient colors={paletteColors} nextColors={upcomingPaletteColors} active={!isPaused || transitioning} shuffleKey={shuffleKey} entranceActive={entranceActive} />
 
       <div className="relative z-10 flex flex-col items-center gap-8 px-10 text-center max-w-lg w-full" style={{ paddingTop: '20vh' }}>
         {shown ? (

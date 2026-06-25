@@ -49,21 +49,23 @@ function makeCircleParams() {
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
-export default function AlbumGradient({ colors = [], nextColors = [], active = true, shuffleKey = 0 }) {
-  const canvasRef         = useRef(null)
-  const activeRef         = useRef(active)
-  const mountedRef        = useRef(true)
-  const rafRef            = useRef(null)
-  const tickRef           = useRef(null)
-  const isFirst           = useRef(true)
-  const isFirstNext       = useRef(true)
-  const isFirstKey        = useRef(true)
-  const pendingFromNextRef = useRef(false)
-  const circleParams      = useMemo(makeCircleParams, [])
+export default function AlbumGradient({ colors = [], nextColors = [], active = true, shuffleKey = 0, entranceActive = false }) {
+  const canvasRef          = useRef(null)
+  const activeRef          = useRef(active)
+  const mountedRef         = useRef(true)
+  const rafRef             = useRef(null)
+  const tickRef            = useRef(null)
+  const isFirst            = useRef(true)
+  const isFirstNext        = useRef(true)
+  const isFirstKey         = useRef(true)
+  const pendingFromNextRef  = useRef(false)
+  const circleParams       = useMemo(makeCircleParams, [])
   // Cached CanvasGradient objects for the steady-state draw path.
   // Gradients are created at origin (0,0); ctx.setTransform repositions them each frame.
   // { maxDim: number, entries: Array<{ grad: CanvasGradient, r: number }> } | null
-  const gradCacheRef      = useRef(null)
+  const gradCacheRef       = useRef(null)
+  const entranceActiveRef  = useRef(entranceActive)
+  const pendingBlendRef    = useRef(null)
 
   // All mutable animation state in one ref
   const st = useRef(null)
@@ -121,6 +123,7 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
   useEffect(() => {
     if (isFirstNext.current) { isFirstNext.current = false; return }
     if (!nextColors.length) return
+    if (entranceActiveRef.current) { pendingBlendRef.current = nextColors; return }
     startBlendTo(nextColors)
     pendingFromNextRef.current = true
   }, [nextColors])
@@ -136,9 +139,20 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
       s.steadyRgb = parseColors(colors, NUM_CIRCLES)
       gradCacheRef.current = null
     } else {
+      if (entranceActiveRef.current) { pendingBlendRef.current = colors; return }
       startBlendTo(colors)
     }
   }, [colors])
+
+  // entranceActive: keep ref current; fire any queued blend once entrance ends
+  useEffect(() => {
+    entranceActiveRef.current = entranceActive
+    if (!entranceActive && pendingBlendRef.current) {
+      const pending = pendingBlendRef.current
+      pendingBlendRef.current = null
+      startBlendTo(pending)
+    }
+  }, [entranceActive])
 
   // Keep active ref in sync; restart loop if it was paused
   useEffect(() => {
