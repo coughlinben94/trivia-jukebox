@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { searchTracks, logout } from '../lib/spotify'
+import { supabase } from '../lib/supabase'
 import { useSpotifyPlayer } from '../hooks/useSpotifyPlayer'
 import Player from './Player'
 import LiveScreen from './LiveScreen'
@@ -78,9 +79,99 @@ const [newSetName, setNewSetName] = useState('')
     })
   }, [])
 
+  // Stable session ID — embedded in every Supabase write so the realtime handler can
+  // detect its own echoes without touching the sets payload shape.
+  const sessionIdRef            = useRef(uid())
+  const supabaseDebounceRef     = useRef(null)
+  // Set true before setSets(sbSets) on initial Supabase load so the write effect
+  // doesn't immediately write the data back to Supabase (one wasted round-trip).
+  const justLoadedFromSupabaseRef = useRef(false)
+
+  // Persist to localStorage immediately; debounce Supabase write 500ms so rapid
+  // successive edits don't spam the network.
   useEffect(() => {
     localStorage.setItem('trivia_sets', JSON.stringify(sets))
+    if (justLoadedFromSupabaseRef.current) {
+      justLoadedFromSupabaseRef.current = false
+      return
+    }
+    clearTimeout(supabaseDebounceRef.current)
+    supabaseDebounceRef.current = setTimeout(async () => {
+      supabaseDebounceRef.current = null
+      try {
+        await supabase.from('jukebox_state').upsert({
+          id: 'singleton',
+          sets,
+          last_writer: sessionIdRef.current,
+          updated_at: new Date().toISOString(),
+        })
+      } catch { /* silent — localStorage is the fallback */ }
+    }, 500)
   }, [sets])
+
+  // On mount: fetch the authoritative sets from Supabase.
+  // Migration guard: only push localStorage→Supabase when Supabase is empty AND
+  // localStorage has songs — never let an empty local state clobber a populated row.
+  useEffect(() => {
+    async function syncFromSupabase() {
+      try {
+        const { data, error } = await supabase
+          .from('jukebox_state')
+          .select('sets')
+          .eq('id', 'singleton')
+          .single()
+        if (error || !data?.sets) return
+        const sbSets = data.sets
+        const totalSbSongs = Object.values(sbSets.items ?? {})
+          .reduce((sum, s) => sum + (s.songs?.length ?? 0), 0)
+        if (totalSbSongs === 0) {
+          // Supabase is empty — migrate localStorage up if it has songs
+          const lsSets = loadSets()
+          const totalLsSongs = Object.values(lsSets.items ?? {})
+            .reduce((sum, s) => sum + (s.songs?.length ?? 0), 0)
+          if (totalLsSongs > 0) {
+            try {
+              await supabase.from('jukebox_state').upsert({
+                id: 'singleton',
+                sets: lsSets,
+                last_writer: sessionIdRef.current,
+                updated_at: new Date().toISOString(),
+              })
+            } catch { /* migration failed silently — localStorage remains the truth */ }
+          }
+        } else {
+          // Supabase has data — use it as the source of truth
+          justLoadedFromSupabaseRef.current = true
+          setSets(sbSets)
+          localStorage.setItem('trivia_sets', JSON.stringify(sbSets))
+        }
+      } catch { /* Supabase unreachable — already rendering from localStorage */ }
+    }
+    syncFromSupabase()
+    return () => clearTimeout(supabaseDebounceRef.current)
+  }, [])
+
+  // Realtime: apply remote changes from other devices.
+  // Guard 1 — own echo: skip if last_writer matches this session.
+  // Guard 2 — in-flight local edit: skip if a local write is pending (debounce active).
+  useEffect(() => {
+    const channel = supabase
+      .channel('jukebox_state_changes')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'jukebox_state', filter: 'id=eq.singleton' },
+        (payload) => {
+          if (payload.new?.last_writer === sessionIdRef.current) return
+          if (supabaseDebounceRef.current !== null) return
+          const incoming = payload.new?.sets
+          if (!incoming) return
+          setSets(incoming)
+          localStorage.setItem('trivia_sets', JSON.stringify(incoming))
+        }
+      )
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [])
 
   const shuffleOrderRef = useRef([])
   const shuffleIdxRef = useRef(0)
