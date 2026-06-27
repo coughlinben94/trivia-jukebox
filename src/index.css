@@ -56,8 +56,6 @@
   to   { transform: rotate(360deg); }
 }
 
-.art-fade-in  { transition: opacity 0.35s cubic-bezier(0.23, 1, 0.32, 1); }
-.art-fade-out { transition: opacity 0.2s cubic-bezier(0.23, 1, 0.32, 1) 0.25s; }
 
 /* Scrubber */
 .player-scrubber {

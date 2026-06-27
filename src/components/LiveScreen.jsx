@@ -362,10 +362,14 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, sh
                 animate={flyCtrl}
               >
                 {/* Content wrapper: art + groove rings + shadow all fade together via artOpacity.
-                     transition-delay 0.25s on exit keeps art opaque while record is ~60% of the way up. */}
-                <div
-                  className={`absolute inset-0 ${artOpacity === 0 ? 'art-fade-out' : 'art-fade-in'}`}
-                  style={{ opacity: artOpacity }}
+                     Transition delay on exit (0.25s) keeps art opaque while record is ~60% of the way up. */}
+                <motion.div
+                  className="absolute inset-0"
+                  style={{ willChange: 'opacity' }}
+                  animate={{ opacity: artOpacity }}
+                  transition={artOpacity === 1
+                    ? { duration: 0.35, ease: [0.23, 1, 0.32, 1] }
+                    : { duration: 0.2, delay: 0.25, ease: [0.23, 1, 0.32, 1] }}
                 >
                   {/* Spin layer: art img + groove rings rotate together */}
                   <div
@@ -390,7 +394,7 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, sh
                     className="absolute inset-0 rounded-full pointer-events-none"
                     style={{ boxShadow: '0 32px 80px rgba(0,0,0,0.7)' }}
                   />
-                </div>
+                </motion.div>
               </motion.div>
 
               {/* Layer 3 – center hole/spindle: static, outside fly wrapper — never moves */}
