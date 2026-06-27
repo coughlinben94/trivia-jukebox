@@ -616,7 +616,7 @@ function LibraryCard({ track, isPlaying, isPaused, onRemove, onClick, onDragStar
             <div className="flex items-end gap-[3px] h-5">
               {[0, 1, 2].map(i => (
                 <div key={i} className="w-[3px] bg-accent rounded-full origin-bottom"
-                  style={{ height: '100%', animation: `equalizer 0.8s ${i * 0.13}s ease-in-out infinite alternate` }} />
+                  style={{ height: '100%', willChange: 'transform', animation: `equalizer 0.8s ${i * 0.13}s ease-in-out infinite alternate` }} />
               ))}
             </div>
           </div>
