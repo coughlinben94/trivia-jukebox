@@ -16,6 +16,22 @@ function shuffleArray(arr) {
 
 function uid() { return Math.random().toString(36).slice(2) }
 
+function calcRuntime(songs) {
+  let ms = 0
+  for (const s of songs) {
+    const start = s.startMs ?? 0
+    const stop = (s.stopMs != null && s.stopMs > start) ? s.stopMs : (s.duration_ms ?? 0)
+    ms += stop - start
+  }
+  return ms
+}
+
+function fmtRuntime(ms) {
+  const s = Math.floor(ms / 1000)
+  if (s < 60) return `${s}s`
+  return `${Math.floor(s / 60)}m`
+}
+
 function loadSets() {
   try {
     const stored = JSON.parse(localStorage.getItem('trivia_sets') ?? 'null')
@@ -43,6 +59,13 @@ const [newSetName, setNewSetName] = useState('')
   const [renamingId, setRenamingId] = useState(null)
   const [renamingVal, setRenamingVal] = useState('')
   const [shuffleKey, setShuffleKey] = useState(0)
+  const [toasts, setToasts] = useState([])
+
+  const addToast = useCallback((msg) => {
+    const id = uid()
+    setToasts(prev => [...prev, { id, msg }])
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 2500)
+  }, [])
 
   const library = sets.items[sets.activeId]?.songs ?? []
   const activeSetName = sets.items[sets.activeId]?.name ?? 'Library'
@@ -145,11 +168,13 @@ const [newSetName, setNewSetName] = useState('')
   const addToLibrary = (track) => {
     if (!track || library.some(t => t.id === track.id)) return
     setLibrary(prev => [{ ...track, startMs: 0, stopMs: track.duration_ms }, ...prev])
+    addToast(`Added to ${activeSetName}`)
   }
 
   const removeFromLibrary = (id) => {
     setLibrary(prev => prev.filter(t => t.id !== id))
     if (playingId === id) { player.fadeAndPause(); setPlayingId(null); setIsPlaying(false) }
+    addToast('Removed')
   }
 
   const updateTimes = useCallback((id, startMs, stopMs) => {
@@ -372,9 +397,9 @@ const [newSetName, setNewSetName] = useState('')
                 onClear={() => {
                   const cur = sets.items[id]?.songs ?? []
                   if (cur.length === 0) return
-                  if (!window.confirm(`Clear all ${cur.length} songs from "${sets.items[id].name}"?`)) return
                   setSets(prev => ({ ...prev, items: { ...prev.items, [id]: { ...prev.items[id], songs: [] } } }))
                   if (sets.activeId === id) { player.fadeAndPause(); setPlayingId(null); setIsPlaying(false) }
+                  addToast(`Cleared ${sets.items[id].name}`)
                 }}
                 onStartRename={() => { setRenamingId(id); setRenamingVal(sets.items[id].name) }}
                 onRenameChange={setRenamingVal}
@@ -495,6 +520,7 @@ const [newSetName, setNewSetName] = useState('')
           moveOrCopySong={moveOrCopySong}
           sets={sets}
           activeId={sets.activeId}
+          onToast={addToast}
         />
       )}
 
@@ -505,12 +531,49 @@ const [newSetName, setNewSetName] = useState('')
         onStop={handleStop}
         onSkip={advanceToNext}
         library={library}
+        runtime={fmtRuntime(calcRuntime(library))}
       />
+
+      {/* Toast notifications */}
+      {toasts.length > 0 && (
+        <div className="fixed bottom-24 right-4 z-50 flex flex-col gap-2 pointer-events-none">
+          {toasts.map(t => (
+            <div
+              key={t.id}
+              className="animate-fade-up bg-surface-raised border-l-2 border-accent text-white text-xs font-medium px-4 py-2.5 rounded-xl shadow-xl"
+            >
+              {t.msg}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
 function SetItem({ id, set, isActive, isRenaming, renamingVal, onSelect, onDelete, onClear, onStartRename, onRenameChange, onRenameCommit, onRenameCancel }) {
+  const [clearPending, setClearPending] = useState(false)
+  const clearTimerRef = useRef(null)
+
+  const handleClearClick = (e) => {
+    e.stopPropagation()
+    setClearPending(true)
+    clearTimerRef.current = setTimeout(() => setClearPending(false), 4000)
+  }
+  const handleClearConfirm = (e) => {
+    e.stopPropagation()
+    clearTimeout(clearTimerRef.current)
+    setClearPending(false)
+    onClear()
+  }
+  const handleClearCancel = (e) => {
+    e.stopPropagation()
+    clearTimeout(clearTimerRef.current)
+    setClearPending(false)
+  }
+
+  useEffect(() => () => clearTimeout(clearTimerRef.current), [])
+
   return (
     <div className={`group flex items-center rounded-lg transition-colors duration-150 ${
       isActive
@@ -538,24 +601,27 @@ function SetItem({ id, set, isActive, isRenaming, renamingVal, onSelect, onDelet
         >
           {set.name}
           {set.songs?.length > 0 && (
-            <span className="ml-1.5 text-[11px] text-ink-muted">{set.songs.length}</span>
+            <span className="ml-1.5 text-[11px] text-ink-muted">{set.songs.length} · {fmtRuntime(calcRuntime(set.songs))}</span>
           )}
         </button>
       )}
       {!isRenaming && (
-        <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 ml-1 flex-shrink-0 transition-opacity duration-150">
+        <div className={`flex items-center gap-0.5 ml-1 flex-shrink-0 transition-opacity duration-150 ${clearPending ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
           {onClear && set.songs?.length > 0 && (
-            <button
-              onClick={e => { e.stopPropagation(); onClear() }}
-              title="Clear all songs"
-              className="text-white hover:text-red-400/80 transition-colors cursor-pointer p-0.5"
-            >
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
-              </svg>
-            </button>
+            clearPending ? (
+              <>
+                <button onClick={handleClearConfirm} className="text-red-400/90 hover:text-red-400 text-[10px] font-semibold cursor-pointer transition-colors px-0.5">Sure?</button>
+                <button onClick={handleClearCancel} className="text-ink-muted hover:text-white text-[10px] cursor-pointer transition-colors px-0.5">✕</button>
+              </>
+            ) : (
+              <button onClick={handleClearClick} title="Clear all songs" className="text-white hover:text-red-400/80 transition-colors cursor-pointer p-0.5">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                </svg>
+              </button>
+            )
           )}
-          {onDelete && (
+          {onDelete && !clearPending && (
             <button
               onClick={e => { e.stopPropagation(); onDelete() }}
               title="Delete theme"

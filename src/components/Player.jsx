@@ -3,7 +3,7 @@ function fmt(ms) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-export default function Player({ player, isPlaying, onPlay, onStop, onSkip, library }) {
+export default function Player({ player, isPlaying, onPlay, onStop, onSkip, library, runtime }) {
   const { currentTrack, position, duration, seek, volume, setVolume } = player
 
   if (library.length === 0) return null
@@ -48,7 +48,7 @@ export default function Player({ player, isPlaying, onPlay, onStop, onSkip, libr
                 </p>
               </>
             ) : (
-              <p className="text-xs text-white">{library.length} songs ready · shuffle play</p>
+              <p className="text-xs text-white">{library.length} songs ready · <span className="text-ink-muted">{runtime}</span> · shuffle play</p>
             )}
           </div>
         </div>

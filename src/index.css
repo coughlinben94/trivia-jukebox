@@ -4,12 +4,12 @@
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 
-  --color-base:           #140c08;
-  --color-surface:        #160e0a;
-  --color-surface-inset:  #120a07;
-  --color-surface-raised: #241510;
-  --color-accent:         #e07028;
-  --color-accent-hover:   #f5853a;
+  --color-base:           #0b0d16;
+  --color-surface:        #10131f;
+  --color-surface-inset:  #0c0e18;
+  --color-surface-raised: #1a1e30;
+  --color-accent:         #7b8cff;
+  --color-accent-hover:   #94a3ff;
   --color-ink:            #ffffff;
   --color-ink-muted:      rgb(255 255 255 / 0.55);
 }

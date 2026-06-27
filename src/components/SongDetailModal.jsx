@@ -97,7 +97,7 @@ function SetMarkerButton({ label, position, savedMs, onClick }) {
   )
 }
 
-export default function SongDetailModal({ track, player, onUpdateTimes, onClose, moveOrCopySong, sets, activeId }) {
+export default function SongDetailModal({ track, player, onUpdateTimes, onClose, moveOrCopySong, sets, activeId, onToast }) {
   const { position, duration, seek, playTrack, fadeAndPause, currentTrack, isPaused } = player
 
   const isActive = currentTrack?.uri === track.uri
@@ -152,7 +152,9 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose,
 
   const handleMoveOrCopy = (destSetId, destSetName) => {
     moveOrCopySong(track.id, destSetId, selectedMode)
-    setConfirmMsg(`${selectedMode === 'move' ? 'Moved' : 'Copied'} to ${destSetName}`)
+    const msg = `${selectedMode === 'move' ? 'Moved' : 'Copied'} to ${destSetName}`
+    setConfirmMsg(msg)
+    onToast?.(msg)
     if (selectedMode === 'move') {
       setTimeout(() => { setMoveCopyOpen(false); handleCloseRef.current() }, 900)
     } else {
