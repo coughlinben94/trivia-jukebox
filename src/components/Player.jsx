@@ -13,7 +13,7 @@ export default function Player({ player, isPlaying, onPlay, onStop, onSkip, libr
   const volPct = (volume ?? 0.8) * 100
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-[#272729]/95 backdrop-blur-xl border-t border-white/[0.06] z-20">
+    <div className="fixed bottom-0 left-0 right-0 bg-surface/95 backdrop-blur-xl border-t border-white/[0.06] z-20">
       {/* Scrubber */}
       <div className="px-5 pt-3 pb-1">
         <div className="flex items-center gap-2.5">
@@ -73,8 +73,8 @@ export default function Player({ player, isPlaying, onPlay, onStop, onSkip, libr
             aria-label={isPlaying ? 'Fade out' : 'Shuffle play'}
           >
             {isPlaying
-              ? <svg width="14" height="14" viewBox="0 0 24 24" fill="#0a0a0a"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
-              : <svg width="14" height="14" viewBox="0 0 24 24" fill="#0a0a0a">
+              ? <svg width="14" height="14" viewBox="0 0 24 24" className="fill-base"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+              : <svg width="14" height="14" viewBox="0 0 24 24" className="fill-base">
                   <path d="M10.59 9.17 5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/>
                 </svg>
             }

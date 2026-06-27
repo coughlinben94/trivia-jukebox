@@ -24,15 +24,15 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center">
-        <div className="w-5 h-5 border-[1.5px] border-white/10 border-t-[#1DB954] rounded-full animate-spin" />
+      <div className="min-h-screen bg-base flex items-center justify-center">
+        <div className="w-5 h-5 border-[1.5px] border-white/10 border-t-accent rounded-full animate-spin" />
       </div>
     )
   }
 
   if (!token) {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col items-center justify-center gap-8">
+      <div className="min-h-screen bg-base text-white flex flex-col items-center justify-center gap-8">
         <div className="text-center space-y-2">
           <div className="text-5xl mb-4">🎵</div>
           <h1 className="text-2xl font-semibold tracking-tight">Trivia Jukebox</h1>
@@ -40,7 +40,7 @@ export default function App() {
         </div>
         <button
           onClick={login}
-          className="bg-[#1DB954] hover:bg-[#1ed760] text-black text-sm font-semibold px-7 py-3 rounded-full transition-all duration-150 active:scale-[0.97]"
+          className="bg-accent hover:bg-accent-hover text-black text-sm font-semibold px-7 py-3 rounded-full transition-all duration-150 active:scale-[0.97]"
         >
           Connect Spotify
         </button>

@@ -293,9 +293,9 @@ const [newSetName, setNewSetName] = useState('')
   const setOrder = Object.keys(sets.items)
 
   return (
-    <div className="h-screen bg-[#272729] text-white flex flex-col overflow-hidden">
+    <div className="h-screen bg-surface text-white flex flex-col overflow-hidden">
       {/* Header */}
-      <header className="sticky top-0 z-10 border-b border-white/[0.05] bg-[#272729]/90 backdrop-blur-md px-6 py-4 flex items-center justify-between flex-shrink-0">
+      <header className="sticky top-0 z-10 border-b border-white/[0.05] bg-surface/90 backdrop-blur-md px-6 py-4 flex items-center justify-between flex-shrink-0">
         <div className="flex items-center gap-2.5">
           <span className="text-lg">🎵</span>
           <span className="text-sm font-semibold text-white tracking-tight">Trivia Jukebox</span>
@@ -328,7 +328,7 @@ const [newSetName, setNewSetName] = useState('')
       <div className="flex flex-1 overflow-hidden">
 
         {/* Left sidebar — trivia themes */}
-        <aside className="w-44 flex-shrink-0 border-r border-white/[0.05] bg-[#212123] flex flex-col py-4 overflow-y-auto">
+        <aside className="w-44 flex-shrink-0 border-r border-white/[0.05] bg-surface-inset flex flex-col py-4 overflow-y-auto">
           <p className="text-[9px] font-bold uppercase tracking-widest text-white px-4 mb-2">Trivia Themes</p>
 
           {/* Add new theme — at top */}
@@ -345,14 +345,14 @@ const [newSetName, setNewSetName] = useState('')
                     if (e.key === 'Escape') { setAddingSet(false); setNewSetName('') }
                   }}
                   placeholder="Theme name…"
-                  className="flex-1 bg-white/[0.06] text-white text-[11px] rounded-lg px-2 py-1.5 outline-none border border-[#1DB954]/40 placeholder-white/20 min-w-0"
+                  className="flex-1 bg-white/[0.06] text-white text-[11px] rounded-lg px-2 py-1.5 outline-none border border-accent/40 placeholder-white/20 min-w-0"
                 />
-                <button onClick={createSet} className="text-[#1DB954] text-xs px-1.5 cursor-pointer hover:opacity-80">✓</button>
+                <button onClick={createSet} className="text-accent text-xs px-1.5 cursor-pointer hover:opacity-80">✓</button>
               </div>
             ) : (
               <button
                 onClick={() => setAddingSet(true)}
-                className="w-full text-[11px] font-semibold text-[#1DB954] border border-[#1DB954]/30 hover:border-[#1DB954]/60 hover:bg-[#1DB954]/[0.07] transition-colors duration-150 cursor-pointer px-2 py-2 rounded-lg flex items-center justify-center gap-1.5 active:scale-[0.97]"
+                className="w-full text-[11px] font-semibold text-accent border border-accent/30 hover:border-accent/60 hover:bg-accent/7 transition-colors duration-150 cursor-pointer px-2 py-2 rounded-lg flex items-center justify-center gap-1.5 active:scale-[0.97]"
               >
                 <span className="text-sm leading-none">+</span>
                 <span>Add Theme</span>
@@ -434,11 +434,11 @@ const [newSetName, setNewSetName] = useState('')
                 placeholder="Search for a song…"
                 value={query}
                 onChange={e => { setQuery(e.target.value); search(e.target.value) }}
-                className="w-full bg-white/[0.04] border border-white/[0.06] rounded-xl pl-9 pr-4 py-2.5 text-white placeholder-white/20 outline-none focus:border-[#1DB954]/35 focus:bg-white/[0.06] transition-colors duration-200 text-sm"
+                className="w-full bg-white/[0.04] border border-white/[0.06] rounded-xl pl-9 pr-4 py-2.5 text-white placeholder-white/20 outline-none focus:border-accent/35 focus:bg-white/[0.06] transition-colors duration-200 text-sm"
               />
               {searching && (
                 <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                  <div className="w-3 h-3 border-[1.5px] border-white/10 border-t-[#1DB954] rounded-full animate-spin" />
+                  <div className="w-3 h-3 border-[1.5px] border-white/10 border-t-accent rounded-full animate-spin" />
                 </div>
               )}
             </div>
@@ -583,8 +583,8 @@ function TrackRow({ track, index, inLibrary, onAdd }) {
         disabled={inLibrary}
         className={`flex-shrink-0 text-[10px] font-semibold px-2.5 py-1 rounded-full transition-colors duration-150 cursor-pointer active:scale-[0.97] ${
           inLibrary
-            ? 'text-[#1DB954]/40 bg-[#1DB954]/[0.07] cursor-default'
-            : 'text-[#1DB954] bg-[#1DB954]/[0.1] hover:bg-[#1DB954]/[0.18]'
+            ? 'text-accent/40 bg-accent/7 cursor-default'
+            : 'text-accent bg-accent/10 hover:bg-accent/18'
         }`}
       >
         {inLibrary ? '✓' : '+'}
@@ -600,7 +600,7 @@ function LibraryCard({ track, isPlaying, isPaused, onRemove, onClick, onDragStar
   return (
     <div
       className={`relative group rounded-xl overflow-hidden transition-shadow duration-200 cursor-pointer select-none ${
-        isPlaying ? 'ring-1 ring-[#1DB954]/40' : isPaused ? 'ring-1 ring-white/15' : ''
+        isPlaying ? 'ring-1 ring-accent/40' : isPaused ? 'ring-1 ring-white/15' : ''
       }`}
       draggable
       onDragStart={onDragStart}
@@ -617,7 +617,7 @@ function LibraryCard({ track, isPlaying, isPaused, onRemove, onClick, onDragStar
           <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
             <div className="flex items-end gap-[3px] h-5">
               {[0, 1, 2].map(i => (
-                <div key={i} className="w-[3px] bg-[#1DB954] rounded-full origin-bottom"
+                <div key={i} className="w-[3px] bg-accent rounded-full origin-bottom"
                   style={{ height: '100%', animation: `equalizer 0.8s ${i * 0.13}s ease-in-out infinite alternate` }} />
               ))}
             </div>
@@ -629,7 +629,7 @@ function LibraryCard({ track, isPlaying, isPaused, onRemove, onClick, onDragStar
           </div>
         )}
         {hasTrim && !isPlaying && !isPaused && (
-          <div className="absolute bottom-1.5 left-1.5 w-1.5 h-1.5 rounded-full bg-[#1DB954]/60" />
+          <div className="absolute bottom-1.5 left-1.5 w-1.5 h-1.5 rounded-full bg-accent/60" />
         )}
         <button
           onClick={e => { e.stopPropagation(); onRemove() }}
@@ -637,7 +637,7 @@ function LibraryCard({ track, isPlaying, isPaused, onRemove, onClick, onDragStar
         >✕</button>
       </div>
       <div className="p-2 bg-white/[0.03] text-center">
-        <p className={`text-[11px] font-semibold truncate ${isPlaying ? 'text-[#1DB954]' : 'text-white'}`}>{track.name}</p>
+        <p className={`text-[11px] font-semibold truncate ${isPlaying ? 'text-accent' : 'text-white'}`}>{track.name}</p>
         <p className="text-[10px] text-white truncate mt-0.5">{artists}</p>
       </div>
     </div>

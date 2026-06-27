@@ -40,12 +40,12 @@ function TimeField({ label, value, maxMs, onChange }) {
           onChange={e => setRaw(e.target.value)}
           onBlur={commit}
           onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
-          className="w-16 text-center text-sm font-mono font-bold bg-white/[0.08] text-white rounded-lg px-2 py-1.5 outline-none border border-[#1DB954]/50"
+          className="w-16 text-center text-sm font-mono font-bold bg-white/[0.08] text-white rounded-lg px-2 py-1.5 outline-none border border-accent/50"
         />
       ) : (
         <button
           onClick={start}
-          className="text-sm font-mono font-bold text-[#1DB954] hover:text-white transition-colors duration-150 cursor-pointer px-2 py-1 rounded-lg hover:bg-white/[0.05]"
+          className="text-sm font-mono font-bold text-accent hover:text-white transition-colors duration-150 cursor-pointer px-2 py-1 rounded-lg hover:bg-white/[0.05]"
           title="Click to type a time"
         >
           {fmt(value)}
@@ -77,7 +77,7 @@ function SetMarkerButton({ label, position, savedMs, onClick }) {
       style={{ transition: 'transform 160ms cubic-bezier(0.23,1,0.32,1), background 200ms cubic-bezier(0.23,1,0.32,1)' }}
       className={`py-3 rounded-xl flex flex-col items-center gap-0.5 cursor-pointer active:scale-[0.97]
         ${isConfirmed
-          ? 'bg-[#1DB954]/15 ring-1 ring-[#1DB954]/25'
+          ? 'bg-accent/15 ring-1 ring-accent/25'
           : 'bg-white/[0.05] hover:bg-white/[0.09]'
         }`}
     >
@@ -86,7 +86,7 @@ function SetMarkerButton({ label, position, savedMs, onClick }) {
         style={{ transition: 'color 200ms cubic-bezier(0.23,1,0.32,1)' }}
       >
         {isConfirmed
-          ? <span className="text-[#1DB954]">✓ {label}</span>
+          ? <span className="text-accent">✓ {label}</span>
           : <span className="text-white">{label}</span>
         }
       </span>
@@ -191,7 +191,7 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose,
       onClick={handleClose}
     >
       <div
-        className="bg-[#303032] border border-white/[0.07] rounded-t-3xl sm:rounded-3xl w-full max-w-md shadow-2xl animate-fade-up overflow-hidden"
+        className="bg-surface-raised border border-white/[0.07] rounded-t-3xl sm:rounded-3xl w-full max-w-md shadow-2xl animate-fade-up overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
         {/* Album art strip */}
@@ -236,8 +236,8 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose,
                 background: `linear-gradient(to right,
                   rgba(255,255,255,0.07) 0%,
                   rgba(255,255,255,0.07) ${inPct}%,
-                  #1DB954 ${inPct}%,
-                  #1DB954 ${outPct}%,
+                  var(--color-accent) ${inPct}%,
+                  var(--color-accent) ${outPct}%,
                   rgba(255,255,255,0.07) ${outPct}%,
                   rgba(255,255,255,0.07) 100%)`,
               }}
@@ -293,7 +293,7 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose,
           <div className="flex items-center justify-between px-1 mb-5">
             <TimeField label="In"  value={startMs} maxMs={stopMs}          onChange={v => { setStartMs(v); startMsRef.current = v }} />
             <div className="flex flex-col items-center gap-1">
-              <div className="w-24 h-[1px] bg-[#1DB954]/20" />
+              <div className="w-24 h-[1px] bg-accent/20" />
               <button
                 onClick={handleReset}
                 className="text-[10px] text-white hover:text-white cursor-pointer transition-colors duration-150"
@@ -321,7 +321,7 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose,
                     key={m}
                     onClick={() => setSelectedMode(m)}
                     className={`flex-1 py-2 text-xs font-semibold transition-colors duration-150 cursor-pointer ${
-                      selectedMode === m ? 'bg-[#1DB954]/15 text-[#1DB954]' : 'text-white hover:bg-white/[0.05]'
+                      selectedMode === m ? 'bg-accent/15 text-accent' : 'text-white hover:bg-white/[0.05]'
                     }`}
                   >
                     {m === 'move' ? 'Move' : 'Copy'}
@@ -329,7 +329,7 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose,
                 ))}
               </div>
               {confirmMsg ? (
-                <p className="text-xs text-[#1DB954] text-center py-4 font-medium">{confirmMsg}</p>
+                <p className="text-xs text-accent text-center py-4 font-medium">{confirmMsg}</p>
               ) : otherSets.length === 0 ? (
                 <p className="text-xs text-white text-center py-4">No other libraries — create one first</p>
               ) : (
@@ -352,7 +352,7 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose,
           <button
             onClick={handleClose}
             style={{ transition: 'transform 160ms cubic-bezier(0.23,1,0.32,1)' }}
-            className="w-full py-3 bg-[#1DB954] text-black text-sm font-bold rounded-xl hover:bg-[#1ed760] active:scale-[0.97] cursor-pointer"
+            className="w-full py-3 bg-accent text-black text-sm font-bold rounded-xl hover:bg-accent-hover active:scale-[0.97] cursor-pointer"
           >
             Done
           </button>
