@@ -64,6 +64,7 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
   // Gradients are created at origin (0,0); ctx.setTransform repositions them each frame.
   // { maxDim: number, entries: Array<{ grad: CanvasGradient, r: number }> } | null
   const gradCacheRef       = useRef(null)
+  const blendCacheRef      = useRef(null)
   const entranceActiveRef  = useRef(entranceActive)
   const pendingBlendRef    = useRef(null)
 
@@ -97,6 +98,7 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
     }
     s.inRgb      = parseColors(newHex, NUM_CIRCLES)
     s.blendStart = performance.now()
+    blendCacheRef.current = null
     const dir   = DIRECTIONS[Math.floor(Math.random() * DIRECTIONS.length)]
     s.inOffsetX = dir === 'left' ? -1.2 : dir === 'right' ?  1.2 : 0
     s.inOffsetY = dir === 'up'   ? -1.2 : dir === 'down'  ?  1.2 : 0
@@ -116,7 +118,8 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
     s.steadyRgb = black.map(c => [...c])
     s.blendStart = -1
     pendingFromNextRef.current = false
-    gradCacheRef.current = null
+    gradCacheRef.current  = null
+    blendCacheRef.current = null
   }, [shuffleKey])
 
   // nextColors: pre-transition 1 second before the song officially switches
@@ -137,7 +140,8 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
       const s = st.current
       s.inRgb     = parseColors(colors, NUM_CIRCLES)
       s.steadyRgb = parseColors(colors, NUM_CIRCLES)
-      gradCacheRef.current = null
+      gradCacheRef.current  = null
+      blendCacheRef.current = null
     } else {
       if (entranceActiveRef.current) { pendingBlendRef.current = colors; return }
       startBlendTo(colors)
@@ -177,28 +181,6 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
     resize()
     window.addEventListener('resize', resize)
 
-    // Draws one circle layer — skips entirely when alpha is at or below zero
-    function paintLayer(rgbArr, tSec, W, H, maxDim, ox, oy, alpha) {
-      if (alpha <= 0) return
-      for (let i = 0; i < NUM_CIRCLES; i++) {
-        const p  = circleParams[i]
-        const cx = (p.baseX + p.xAmp * Math.sin(tSec * p.xFreq * Math.PI * 2 + p.xPhase)) * W + ox
-        const cy = (p.baseY + p.yAmp * Math.sin(tSec * p.yFreq * Math.PI * 2 + p.yPhase)) * H + oy
-        const r  = p.radius * maxDim
-        const [R, G, B] = rgbArr[i]
-        const a  = alpha.toFixed(3)
-
-        const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r)
-        grad.addColorStop(0, `rgba(${R|0},${G|0},${B|0},${a})`)
-        grad.addColorStop(1, `rgba(${R|0},${G|0},${B|0},0)`)
-
-        ctx.fillStyle = grad
-        ctx.beginPath()
-        ctx.arc(cx, cy, r, 0, Math.PI * 2)
-        ctx.fill()
-      }
-    }
-
     function draw(ts) {
       const W = canvas.width
       const H = canvas.height
@@ -216,17 +198,55 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
       ctx.globalCompositeOperation = 'screen'
 
       if (s.blendStart >= 0 && (ts - s.blendStart) < BLEND_DURATION_MS) {
-        // ── Transition: two layers crossfade while Layer B sweeps in ──────────
+        // ── Transition: two layers crossfade while Layer B sweeps in ─────────
+        // Gradients cached at origin; ctx.setTransform positions them per-frame.
+        // Per-layer alpha (0.9*(1-t) and 0.9*t) applied via globalAlpha — NOT baked
+        // into the cache — so the crossfade curve stays fully per-frame.
         const t          = easeInOut(Math.min((ts - s.blendStart) / BLEND_DURATION_MS, 1))
         const offsetFrac = 1 - t
         const ox         = s.inOffsetX * offsetFrac * W
         const oy         = s.inOffsetY * offsetFrac * H
 
-        // Layer A — outgoing, natural positions, fades out
-        paintLayer(s.outRgb, tSec, W, H, maxDim, 0, 0, 0.9 * (1 - t))
+        if (!blendCacheRef.current || blendCacheRef.current.maxDim !== maxDim) {
+          const buildLayer = (rgbArr) => rgbArr.map(([R, G, B], i) => {
+            const r = circleParams[i].radius * maxDim
+            const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r)
+            g.addColorStop(0, `rgba(${R},${G},${B},0.9)`)
+            g.addColorStop(1, `rgba(${R},${G},${B},0)`)
+            return { grad: g, r }
+          })
+          blendCacheRef.current = { maxDim, out: buildLayer(s.outRgb), in: buildLayer(s.inRgb) }
+        }
+        const { out: outE, in: inE } = blendCacheRef.current
 
-        // Layer B — incoming, sweeps in from edge, fades in
-        paintLayer(s.inRgb, tSec, W, H, maxDim, ox, oy, 0.9 * t)
+        // Layer A — outgoing, natural positions
+        if (t < 1) {
+          ctx.globalAlpha = 1 - t
+          for (let i = 0; i < NUM_CIRCLES; i++) {
+            const p  = circleParams[i]
+            const cx = (p.baseX + p.xAmp * Math.sin(tSec * p.xFreq * Math.PI * 2 + p.xPhase)) * W
+            const cy = (p.baseY + p.yAmp * Math.sin(tSec * p.yFreq * Math.PI * 2 + p.yPhase)) * H
+            ctx.setTransform(1, 0, 0, 1, cx, cy)
+            ctx.fillStyle = outE[i].grad
+            ctx.beginPath(); ctx.arc(0, 0, outE[i].r, 0, Math.PI * 2); ctx.fill()
+          }
+        }
+
+        // Layer B — incoming, sweeps in from edge
+        if (t > 0) {
+          ctx.globalAlpha = t
+          for (let i = 0; i < NUM_CIRCLES; i++) {
+            const p  = circleParams[i]
+            const cx = (p.baseX + p.xAmp * Math.sin(tSec * p.xFreq * Math.PI * 2 + p.xPhase)) * W + ox
+            const cy = (p.baseY + p.yAmp * Math.sin(tSec * p.yFreq * Math.PI * 2 + p.yPhase)) * H + oy
+            ctx.setTransform(1, 0, 0, 1, cx, cy)
+            ctx.fillStyle = inE[i].grad
+            ctx.beginPath(); ctx.arc(0, 0, inE[i].r, 0, Math.PI * 2); ctx.fill()
+          }
+        }
+
+        ctx.globalAlpha = 1
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
       } else {
         // ── Steady state or blend just completed ─────────────────────────────
         if (s.blendStart >= 0) {
