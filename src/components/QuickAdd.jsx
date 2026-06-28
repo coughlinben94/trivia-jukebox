@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { searchTracks } from '../lib/spotify'
 import { supabase } from '../lib/supabase'
-import { fmt, TimeField, SetMarkerButton } from './ScrubberControls'
 
 function uid() { return Math.random().toString(36).slice(2) }
 
@@ -10,35 +9,24 @@ function totalSongs(sets) {
 }
 
 export default function QuickAdd() {
-  const sessionIdRef  = useRef(uid())
-  const searchRef     = useRef(null)
+  const sessionIdRef = useRef(uid())
+  const searchRef    = useRef(null)
 
-  // Library sets loaded from Supabase
   const [sets, setSets]           = useState(null)
   const [setsError, setSetsError] = useState(false)
 
-  // Search
   const [query, setQuery]         = useState('')
   const [results, setResults]     = useState([])
   const [searching, setSearching] = useState(false)
 
-  // Flow step: 'search' | 'trim'
+  // 'search' | 'confirm'
   const [step, setStep]           = useState('search')
   const [track, setTrack]         = useState(null)
 
-  // Trim state — refs mirror state so closures in handleAdd always see current values
-  const [scrubPos, setScrubPos]   = useState(0)
-  const [startMs, setStartMs]     = useState(0)
-  const [stopMs, setStopMs]       = useState(0)
-  const startMsRef                = useRef(0)
-  const stopMsRef                 = useRef(0)
-
-  // Library picker
   const [destSetId, setDestSetId] = useState('')
 
-  // Save
-  const [saveState, setSaveState] = useState('idle') // 'idle'|'saving'|'saved'|'error'
-  const [errorMsg, setErrorMsg]   = useState('')
+  const [saveState, setSaveState]     = useState('idle') // 'idle'|'saving'|'saved'|'error'
+  const [errorMsg, setErrorMsg]       = useState('')
   const [savedToName, setSavedToName] = useState('')
 
   // Load sets from Supabase on mount
@@ -61,7 +49,7 @@ export default function QuickAdd() {
     if (step === 'search') searchRef.current?.focus()
   }, [step])
 
-  // Debounced search — cleanup clears the previous timer on each query change
+  // Debounced search
   useEffect(() => {
     if (!query.trim()) { setResults([]); setSearching(false); return }
     setSearching(true)
@@ -76,14 +64,10 @@ export default function QuickAdd() {
   }, [query])
 
   const handleSelectTrack = (t) => {
-    const dur = t.duration_ms ?? 0
     setTrack(t)
-    setScrubPos(0)
-    setStartMs(0);  startMsRef.current = 0
-    setStopMs(dur); stopMsRef.current  = dur
     setSaveState('idle')
     setErrorMsg('')
-    setStep('trim')
+    setStep('confirm')
   }
 
   const handleBack = () => {
@@ -96,7 +80,7 @@ export default function QuickAdd() {
     setSaveState('saving')
     setErrorMsg('')
     try {
-      // Always fetch fresh sets so we don't overwrite concurrent changes from the laptop
+      // Always fetch fresh sets to avoid overwriting concurrent laptop changes
       const { data, error } = await supabase
         .from('jukebox_state')
         .select('sets')
@@ -104,8 +88,8 @@ export default function QuickAdd() {
         .single()
       if (error) throw error
 
-      const currentSets   = data.sets
-      const currentSongs  = currentSets.items[destSetId]?.songs ?? []
+      const currentSets  = data.sets
+      const currentSongs = currentSets.items[destSetId]?.songs ?? []
 
       if (currentSongs.some(s => s.id === track.id)) {
         setSaveState('error')
@@ -113,7 +97,7 @@ export default function QuickAdd() {
         return
       }
 
-      const song = { ...track, startMs: startMsRef.current, stopMs: stopMsRef.current }
+      const song = { ...track, startMs: 0, stopMs: track.duration_ms ?? 0 }
       const updatedSets = {
         ...currentSets,
         items: {
@@ -125,13 +109,11 @@ export default function QuickAdd() {
         },
       }
 
-      // Guard 3 — QuickAdd only ever appends; it must never write empty or default sets.
-      // This should be structurally impossible (we always add song above), but abort
-      // explicitly rather than risk clobbering the row if logic changes in future.
+      // Guard: never write empty sets (structurally impossible here, but enforced explicitly)
       if (totalSongs(updatedSets) === 0) throw new Error('Write aborted: would produce empty library')
 
-      // sessionIdRef is unique to this phone session — NOT the laptop's sessionId.
-      // The laptop's realtime handler will see last_writer !== laptopSessionId and apply it live.
+      // Phone sessionId is independent from the laptop's — laptop realtime handler
+      // sees last_writer !== its own sessionId and applies this as a remote change.
       const { error: writeError } = await supabase
         .from('jukebox_state')
         .upsert({
@@ -144,7 +126,7 @@ export default function QuickAdd() {
 
       const name = currentSets.items[destSetId]?.name ?? 'Library'
       setSavedToName(name)
-      setSets(updatedSets)  // keep local sets fresh for the next add
+      setSets(updatedSets)
       setSaveState('saved')
 
       setTimeout(() => {
@@ -160,13 +142,6 @@ export default function QuickAdd() {
     }
   }
 
-  // Derived scrubber values for the clip range overlay
-  const dur    = track?.duration_ms ?? 0
-  const inPct  = dur > 0 ? (startMs  / dur) * 100 : 0
-  const outPct = dur > 0 ? (stopMs   / dur) * 100 : 100
-  const posPct = dur > 0 ? (scrubPos / dur) * 100 : 0
-
-  // ── Error: couldn't load libraries ─────────────────────────────────────────
   if (setsError) {
     return (
       <div className="min-h-screen bg-base text-white flex flex-col items-center justify-center gap-4 px-6">
@@ -184,9 +159,9 @@ export default function QuickAdd() {
   return (
     <div className="min-h-screen bg-base text-white">
 
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      {/* Header */}
       <div className="flex items-center gap-2 px-5 pt-14 pb-5">
-        {step === 'trim' && (
+        {step === 'confirm' && (
           <button
             onClick={handleBack}
             className="text-accent text-sm font-medium py-2 pr-3 -ml-1 cursor-pointer flex-shrink-0"
@@ -195,11 +170,11 @@ export default function QuickAdd() {
           </button>
         )}
         <h1 className="text-base font-semibold text-white">
-          {step === 'search' ? 'Add a Song' : 'Trim & Add'}
+          {step === 'search' ? 'Add a Song' : 'Add to Library'}
         </h1>
       </div>
 
-      {/* ── Search step ────────────────────────────────────────────────────── */}
+      {/* Search step */}
       {step === 'search' && (
         <div className="px-5">
           <div className="relative mb-5">
@@ -249,84 +224,21 @@ export default function QuickAdd() {
         </div>
       )}
 
-      {/* ── Trim step ──────────────────────────────────────────────────────── */}
-      {step === 'trim' && track && (
+      {/* Confirm step */}
+      {step === 'confirm' && track && (
         <div className="px-5 pb-10">
 
           {/* Track identity */}
-          <div className="flex items-center gap-4 mb-7">
-            {track.album?.images?.[0]?.url && (
-              <img src={track.album.images[0].url} alt="" className="w-16 h-16 rounded-2xl object-cover flex-shrink-0 shadow-lg" />
-            )}
+          <div className="flex items-center gap-4 mb-8">
+            {track.album?.images?.[0]?.url
+              ? <img src={track.album.images[0].url} alt="" className="w-16 h-16 rounded-2xl object-cover flex-shrink-0 shadow-lg" />
+              : <div className="w-16 h-16 rounded-2xl bg-surface-raised flex-shrink-0" />
+            }
             <div className="min-w-0">
               <p className="font-semibold text-white leading-snug truncate">{track.name}</p>
               <p className="text-xs text-ink-muted mt-0.5 truncate">{track.artists?.map(a => a.name).join(', ')}</p>
+              <p className="text-xs text-ink-muted/60 mt-1 truncate">{track.album?.name}</p>
             </div>
-          </div>
-
-          {/* Scrubber with clip range overlay */}
-          <div className="mb-1.5 relative">
-            <div
-              className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-[3px] rounded-full pointer-events-none"
-              style={{
-                background: `linear-gradient(to right,
-                  rgba(255,255,255,0.07) 0%,
-                  rgba(255,255,255,0.07) ${inPct}%,
-                  var(--color-accent) ${inPct}%,
-                  var(--color-accent) ${outPct}%,
-                  rgba(255,255,255,0.07) ${outPct}%,
-                  rgba(255,255,255,0.07) 100%)`,
-              }}
-            />
-            <input
-              type="range"
-              min={0}
-              max={dur || 1}
-              value={scrubPos}
-              onChange={e => setScrubPos(Number(e.target.value))}
-              className="player-scrubber w-full relative"
-              style={{ '--progress': `${posPct}%` }}
-            />
-          </div>
-          <div className="flex justify-between mb-2">
-            <span className="text-[10px] text-ink-muted tabular-nums">{fmt(scrubPos)}</span>
-            <span className="text-[10px] text-ink-muted tabular-nums">{fmt(dur)}</span>
-          </div>
-          <p className="text-[10px] text-ink-muted/70 text-center mb-6">
-            Drag to set position · no preview on mobile
-          </p>
-
-          {/* Set In / Set Out */}
-          <div className="grid grid-cols-2 gap-3 mb-5">
-            <SetMarkerButton
-              label="Set In"
-              position={scrubPos}
-              savedMs={startMs}
-              onClick={() => { setStartMs(scrubPos); startMsRef.current = scrubPos }}
-            />
-            <SetMarkerButton
-              label="Set Out"
-              position={scrubPos}
-              savedMs={stopMs}
-              onClick={() => { setStopMs(scrubPos); stopMsRef.current = scrubPos }}
-            />
-          </div>
-
-          {/* Typed time fields */}
-          <div className="flex items-center justify-between px-2 mb-7">
-            <TimeField
-              label="In"
-              value={startMs}
-              maxMs={stopMs}
-              onChange={v => { setStartMs(v); startMsRef.current = v }}
-            />
-            <div className="flex-1 mx-4 h-[1px] bg-accent/20" />
-            <TimeField
-              label="Out"
-              value={stopMs}
-              maxMs={dur}
-              onChange={v => { setStopMs(v); stopMsRef.current = v }}
-            />
           </div>
 
           {/* Library picker */}
@@ -354,7 +266,7 @@ export default function QuickAdd() {
             <div className="mb-6 h-14 bg-surface rounded-2xl animate-pulse" />
           )}
 
-          {/* Add button / success state */}
+          {/* Add button / success */}
           {saveState === 'saved' ? (
             <div className="w-full py-4 text-center bg-accent/10 border border-accent/25 rounded-2xl">
               <p className="text-accent font-semibold text-sm">Added to {savedToName} ✓</p>
