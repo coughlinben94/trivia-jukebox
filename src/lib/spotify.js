@@ -32,7 +32,9 @@ async function generateChallenge(verifier) {
 export async function login() {
   const verifier = base64url(randomBytes(32))
   const challenge = await generateChallenge(verifier)
-  sessionStorage.setItem('pkce_verifier', verifier)
+  // localStorage survives cross-tab redirects; sessionStorage is wiped when iOS
+  // opens the Spotify native app and redirects back in a new Safari tab.
+  localStorage.setItem('pkce_verifier', verifier)
 
   const params = new URLSearchParams({
     client_id: CLIENT_ID,
@@ -41,15 +43,14 @@ export async function login() {
     scope: SCOPES,
     code_challenge_method: 'S256',
     code_challenge: challenge,
-    show_dialog: 'true',
   })
 
   window.location.href = `https://accounts.spotify.com/authorize?${params}`
 }
 
 export async function handleCallback(code) {
-  const verifier = sessionStorage.getItem('pkce_verifier')
-  sessionStorage.removeItem('pkce_verifier')
+  const verifier = localStorage.getItem('pkce_verifier')
+  localStorage.removeItem('pkce_verifier')
 
   const res = await fetch('https://accounts.spotify.com/api/token', {
     method: 'POST',
@@ -66,7 +67,7 @@ export async function handleCallback(code) {
   const data = await res.json()
   if (data.access_token) {
     localStorage.setItem('spotify_token', data.access_token)
-    localStorage.setItem('spotify_refresh_token', data.refresh_token)
+    if (data.refresh_token) localStorage.setItem('spotify_refresh_token', data.refresh_token)
     localStorage.setItem('spotify_token_expiry', Date.now() + data.expires_in * 1000)
   }
   return data
