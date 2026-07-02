@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { getToken } from '../lib/spotify'
+import { getToken, refreshToken } from '../lib/spotify'
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 const FADE_STEPS = 24
@@ -161,14 +161,29 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
       console.error('[playTrack] token refresh failed — aborting play')
       return false
     }
-    await fetch(
+    const doPlay = (tok) => fetch(
       `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
       {
         method: 'PUT',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ uris: [uri] }),
       }
     )
+    let playRes = await doPlay(token)
+    if (playRes.status === 401) {
+      // getToken() thought this token was fresh — Spotify disagrees. Force a
+      // refresh once and retry before giving up.
+      const freshToken = await refreshToken()
+      if (!freshToken) {
+        console.error('[playTrack] 401 on play and token refresh failed')
+        return false
+      }
+      playRes = await doPlay(freshToken)
+    }
+    if (!playRes.ok) {
+      console.error('[playTrack] play request failed', playRes.status)
+      return false
+    }
 
     await new Promise(resolve => {
       const timeout = setTimeout(() => {

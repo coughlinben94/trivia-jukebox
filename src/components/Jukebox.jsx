@@ -303,11 +303,30 @@ const [newSetName, setNewSetName] = useState('')
   }, [syncDone])  // eslint-disable-line react-hooks/exhaustive-deps
 
   const advanceToNext = useCallback(() => {
-    const lib = libraryRef.current
-    const { order, idx, song } = resolveNext(shuffleOrderRef.current, shuffleIdxRef.current, lib)
-    shuffleOrderRef.current = order
-    shuffleIdxRef.current = idx
-    if (song) { setPlayingId(song.id); playTrackFn.current?.(song) }
+    // isRetry closes over this call only — advanceToNext itself stays
+    // argument-free since it's also wired directly to the skip button's
+    // onClick, which would otherwise pass the click event as an arg.
+    const tryPlay = (isRetry) => {
+      const lib = libraryRef.current
+      const { order, idx, song } = resolveNext(shuffleOrderRef.current, shuffleIdxRef.current, lib)
+      shuffleOrderRef.current = order
+      shuffleIdxRef.current = idx
+      if (!song) return
+      setPlayingId(song.id)
+      playTrackFn.current?.(song)?.then(started => {
+        if (started !== false) return
+        if (!isRetry) {
+          // Single retry — skip the one bad track, don't loop the whole set.
+          tryPlay(true)
+        } else {
+          // Retry also failed — stop lying about playback state.
+          setIsPlaying(false)
+          setShowLive(false)
+          setPlayingId(null)
+        }
+      })
+    }
+    tryPlay(false)
   }, [])
 
   const onFadeStart = useCallback(() => {
