@@ -288,7 +288,9 @@ const [newSetName, setNewSetName] = useState('')
     pendingLiveOpenRef.current = true
     pendingUriRef.current = song.uri
     playTrackFn.current?.(song)?.then(started => {
-      if (!started) {
+      // started === undefined means a newer play superseded this one — that
+      // newer play owns the UI now, so only a genuine failure (false) resets it.
+      if (started === false) {
         pendingLiveOpenRef.current = false
         pendingUriRef.current = null
         setIsPlaying(false)
@@ -407,7 +409,9 @@ const [newSetName, setNewSetName] = useState('')
       pendingLiveOpenRef.current = true
       pendingUriRef.current = song.uri
       const started = await playTrackFn.current?.(song)
-      if (!started) {
+      // started === undefined means a newer play superseded this one — only
+      // a genuine failure (false) should reset the UI.
+      if (started === false) {
         pendingLiveOpenRef.current = false
         pendingUriRef.current = null
         setIsPlaying(false)

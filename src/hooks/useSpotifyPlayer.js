@@ -186,12 +186,15 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     })
 
     transitioningRef.current = false  // new track confirmed; restore isPaused tracking
-    if (genRef.current !== gen) return
+    // A newer playTrack call superseded this one — bail without reporting
+    // failure. Callers must treat `undefined` (superseded) differently from
+    // `false` (genuine failure): only a real failure should reset the UI.
+    if (genRef.current !== gen) return undefined
 
     if (startMs > 0) {
       // Give Spotify 400ms to buffer the start of the track before seeking
       await sleep(400)
-      if (genRef.current !== gen) return
+      if (genRef.current !== gen) return undefined
 
       const doSeek = async () => {
         // REST API seek only — more reliable than SDK seek; using both caused a double-seek glitch
@@ -229,12 +232,12 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
       await sleep(200)
     }
 
-    if (genRef.current !== gen) return
+    if (genRef.current !== gen) return undefined
 
     const maxVol = maxVolumeRef.current
     await fadeVolume(0, maxVol, gen)
 
-    if (genRef.current !== gen) return
+    if (genRef.current !== gen) return undefined
 
     startMonitor(stopMs > startMs ? stopMs : 0, gen, preview)
     return true
