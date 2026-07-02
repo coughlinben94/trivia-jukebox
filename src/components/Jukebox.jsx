@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { searchTracks, logout } from '../lib/spotify'
 import { supabase } from '../lib/supabase'
+import { slimTrack, songNeedsSlim } from '../lib/track'
 import { useSpotifyPlayer } from '../hooks/useSpotifyPlayer'
 import Player from './Player'
 import LiveScreen from './LiveScreen'
@@ -223,6 +224,26 @@ const [newSetName, setNewSetName] = useState('')
   const setsRef = useRef(sets)
   useEffect(() => { setsRef.current = sets }, [sets])
 
+  // One-time migration: slim any songs still carrying the raw Spotify payload
+  // (available_markets etc.) down to the compact shape. Runs once the initial
+  // sync settles, so it operates on whichever sets ended up authoritative
+  // (remote or local). No-ops (no re-render) if nothing needs slimming.
+  useEffect(() => {
+    if (!syncDone) return
+    setSets(prev => {
+      const anyNeedsSlim = Object.values(prev.items).some(set => (set.songs ?? []).some(songNeedsSlim))
+      if (!anyNeedsSlim) return prev
+      const items = {}
+      for (const [id, set] of Object.entries(prev.items)) {
+        items[id] = {
+          ...set,
+          songs: (set.songs ?? []).map(s => ({ ...slimTrack(s), startMs: s.startMs, stopMs: s.stopMs })),
+        }
+      }
+      return { ...prev, items }
+    })
+  }, [syncDone])
+
   // ?lib= URL param handler — Trivia OS between-rounds handoff.
   // Runs once, after the initial Supabase sync completes (syncDone flips true).
   useEffect(() => {
@@ -357,7 +378,7 @@ const [newSetName, setNewSetName] = useState('')
 
   const addToLibrary = (track) => {
     if (!track || library.some(t => t.id === track.id)) return
-    setLibrary(prev => [{ ...track, startMs: 0, stopMs: track.duration_ms }, ...prev])
+    setLibrary(prev => [{ ...slimTrack(track), startMs: 0, stopMs: track.duration_ms }, ...prev])
     addToast(`Added to ${activeSetName}`)
   }
 
@@ -380,7 +401,10 @@ const [newSetName, setNewSetName] = useState('')
       if (destSongs.some(t => t.id === songId)) return prev
       const newItems = {
         ...prev.items,
-        [destSetId]: { ...prev.items[destSetId], songs: [{ ...song }, ...destSongs] },
+        [destSetId]: {
+          ...prev.items[destSetId],
+          songs: [{ ...slimTrack(song), startMs: song.startMs, stopMs: song.stopMs }, ...destSongs],
+        },
       }
       if (mode === 'move') {
         newItems[prev.activeId] = { ...prev.items[prev.activeId], songs: activeSongs.filter(t => t.id !== songId) }

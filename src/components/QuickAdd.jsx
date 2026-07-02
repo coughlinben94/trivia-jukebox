@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { searchTracks } from '../lib/spotify'
 import { supabase } from '../lib/supabase'
+import { slimTrack } from '../lib/track'
 
 function uid() { return Math.random().toString(36).slice(2) }
 
@@ -91,7 +92,7 @@ export default function QuickAdd() {
         return
       }
 
-      const song = { ...track, startMs: 0, stopMs: track.duration_ms ?? 0 }
+      const song = { ...slimTrack(track), startMs: 0, stopMs: track.duration_ms ?? 0 }
       const updatedSets = {
         ...currentSets,
         items: {
