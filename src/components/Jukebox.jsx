@@ -2,19 +2,11 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { searchTracks, logout } from '../lib/spotify'
 import { supabase } from '../lib/supabase'
 import { slimTrack, songNeedsSlim } from '../lib/track'
+import { shuffleArray, resolveNext, resolveUpcoming } from '../lib/shuffle'
 import { useSpotifyPlayer } from '../hooks/useSpotifyPlayer'
 import Player from './Player'
 import LiveScreen from './LiveScreen'
 import SongDetailModal from './SongDetailModal'
-
-function shuffleArray(arr) {
-  const a = [...arr]
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]]
-  }
-  return a
-}
 
 function uid() { return Math.random().toString(36).slice(2) }
 
@@ -286,10 +278,10 @@ const [newSetName, setNewSetName] = useState('')
     // first and startShuffle immediately after would shuffle the OLD active set.
     // Capturing targetSongs from setsRef before any state update sidesteps that race.
     clearTimeout(shuffleDebounceRef.current)
-    const order = shuffleArray(targetSongs.map((_, i) => i))
+    const order = shuffleArray(targetSongs.map(t => t.id))
     shuffleOrderRef.current = order
     shuffleIdxRef.current = 0
-    const song = targetSongs[order[0]]
+    const song = targetSongs.find(t => t.id === order[0])
     setShuffleKey(k => k + 1)
     setPlayingId(song.id)
     setIsPlaying(true)
@@ -310,28 +302,16 @@ const [newSetName, setNewSetName] = useState('')
 
   const advanceToNext = useCallback(() => {
     const lib = libraryRef.current
-    const order = shuffleOrderRef.current
-    let idx = shuffleIdxRef.current + 1
-    if (idx >= order.length) {
-      const lastLibIdx = order[order.length - 1]
-      const newOrder = shuffleArray(lib.map((_, i) => i))
-      if (newOrder[0] === lastLibIdx && newOrder.length > 1) {
-        const swapIdx = 1 + Math.floor(Math.random() * (newOrder.length - 1))
-        ;[newOrder[0], newOrder[swapIdx]] = [newOrder[swapIdx], newOrder[0]]
-      }
-      shuffleOrderRef.current = newOrder
-      idx = 0
-    }
+    const { order, idx, song } = resolveNext(shuffleOrderRef.current, shuffleIdxRef.current, lib)
+    shuffleOrderRef.current = order
     shuffleIdxRef.current = idx
-    const song = lib[shuffleOrderRef.current[idx]]
     if (song) { setPlayingId(song.id); playTrackFn.current?.(song) }
   }, [])
 
   const onFadeStart = useCallback(() => {
     const lib = libraryRef.current
-    const order = shuffleOrderRef.current
-    const idx = shuffleIdxRef.current
-    onUpcomingTrackRef.current?.(lib[order[idx + 1]] ?? null)
+    const upcoming = resolveUpcoming(shuffleOrderRef.current, shuffleIdxRef.current, lib)
+    onUpcomingTrackRef.current?.(upcoming)
   }, [])
 
   const player = useSpotifyPlayer({ onAdvance: advanceToNext, onFadeStart })
@@ -418,10 +398,10 @@ const [newSetName, setNewSetName] = useState('')
     shuffleDebounceRef.current = setTimeout(async () => {
       if (library.length === 0) return
       setShuffleKey(k => k + 1)
-      const order = shuffleArray(library.map((_, i) => i))
+      const order = shuffleArray(library.map(t => t.id))
       shuffleOrderRef.current = order
       shuffleIdxRef.current = 0
-      const song = library[order[0]]
+      const song = library.find(t => t.id === order[0])
       setPlayingId(song.id)
       setIsPlaying(true)
       pendingLiveOpenRef.current = true
