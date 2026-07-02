@@ -89,6 +89,11 @@ const [newSetName, setNewSetName] = useState('')
   // race where the 500ms debounce fires before we know what the remote row contains.
   const syncCompletedRef          = useRef(false)
   const libParamHandledRef        = useRef(false)
+  // Set by the realtime handler when an incoming update is dropped because a
+  // local write is in-flight. The debounced writer merges any songs in here
+  // that aren't already local (e.g. a QuickAdd) before it upserts, so a
+  // same-window remote write doesn't get last-write-wins clobbered.
+  const stashedIncomingSetsRef    = useRef(null)
 
   // Persist to localStorage immediately; debounce Supabase write 500ms.
   useEffect(() => {
@@ -107,10 +112,31 @@ const [newSetName, setNewSetName] = useState('')
       // Guard 1a — never write before the initial sync has confirmed the remote state.
       // This is the primary protection against the first-render empty-default race.
       if (!syncCompletedRef.current) return
+
+      // Merge in any songs from an incoming realtime update that arrived
+      // while this write was pending and don't exist locally yet (e.g. a
+      // QuickAdd from another device), so this write doesn't clobber them.
+      let outgoing = sets
+      const stashed = stashedIncomingSetsRef.current
+      if (stashed) {
+        stashedIncomingSetsRef.current = null
+        const items = { ...outgoing.items }
+        for (const [setId, stashedSet] of Object.entries(stashed.items ?? {})) {
+          const localSongs = items[setId]?.songs ?? []
+          const localIds = new Set(localSongs.map(s => s.id))
+          const missing = (stashedSet.songs ?? []).filter(s => !localIds.has(s.id))
+          if (missing.length > 0) {
+            items[setId] = { ...(items[setId] ?? stashedSet), songs: [...localSongs, ...missing] }
+          }
+        }
+        outgoing = { ...outgoing, items }
+        if (outgoing !== sets) setSets(outgoing)
+      }
+
       // Guard 1b — if we're about to write an empty state, verify the remote is also
       // empty. Catches any edge-case that bypasses Guard 1a (e.g. sync completes but
       // local state is still empty before the user adds anything).
-      if (totalSongs(sets) === 0) {
+      if (totalSongs(outgoing) === 0) {
         try {
           const { data } = await supabase
             .from('jukebox_state').select('sets').eq('id', 'singleton').single()
@@ -120,7 +146,7 @@ const [newSetName, setNewSetName] = useState('')
       try {
         await supabase.from('jukebox_state').upsert({
           id: 'singleton',
-          sets,
+          sets: outgoing,
           last_writer: sessionIdRef.current,
           updated_at: new Date().toISOString(),
         })
@@ -184,9 +210,15 @@ const [newSetName, setNewSetName] = useState('')
         { event: 'UPDATE', schema: 'public', table: 'jukebox_state', filter: 'id=eq.singleton' },
         (payload) => {
           if (payload.new?.last_writer === sessionIdRef.current) return  // own echo
-          if (supabaseDebounceRef.current !== null) return               // local edit in-flight
           const incoming = payload.new?.sets
           if (!incoming) return
+          if (supabaseDebounceRef.current !== null) {
+            // Local edit in-flight — don't clobber it here, but stash the
+            // incoming sets so the pending debounced write can merge in any
+            // songs it doesn't have locally before it overwrites Supabase.
+            stashedIncomingSetsRef.current = incoming
+            return
+          }
           // Guard 2 — never let an empty/default incoming state wipe a populated local library
           if (totalSongs(incoming) === 0 && totalSongs(setsRef.current) > 0) return
           setSets(incoming)
@@ -510,11 +542,12 @@ const [newSetName, setNewSetName] = useState('')
       if (e.repeat) return
       if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return
       if (e.target.isContentEditable) return
+      if (modalTrack) return
       if (e.key === 'b') window.location.href = 'https://trivia-os.vercel.app/display?from=jukebox'
     }
     window.addEventListener('keydown', onDown)
     return () => window.removeEventListener('keydown', onDown)
-  }, [])
+  }, [modalTrack])
 
   const handleDragStart = (i) => { dragIdxRef.current = i }
   const handleDragOver = (e, i) => {

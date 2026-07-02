@@ -5,8 +5,15 @@ export default async function handler(req, res) {
 
   if (!url) return res.status(400).json({ error: 'Missing url param' });
 
-  // Only allow Spotify CDN images
-  if (!url.includes('i.scdn.co') && !url.includes('mosaic.scdn.co')) {
+  // Only allow Spotify CDN images — check the actual hostname, not a
+  // substring match (which a query string like ?x=i.scdn.co could spoof).
+  let hostname;
+  try {
+    hostname = new URL(url).hostname;
+  } catch {
+    return res.status(400).json({ error: 'Invalid image source' });
+  }
+  if (hostname !== 'i.scdn.co' && hostname !== 'mosaic.scdn.co') {
     return res.status(400).json({ error: 'Invalid image source' });
   }
 
