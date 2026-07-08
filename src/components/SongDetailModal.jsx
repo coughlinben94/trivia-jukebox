@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { fmt, TimeField, SetMarkerButton } from './ScrubberControls'
 
 export default function SongDetailModal({ track, player, onUpdateTimes, onClose, moveOrCopySong, sets, activeId, onToast }) {
-  const { position, duration, seek, playTrack, fadeAndPause, currentTrack, isPaused } = player
+  const { position, duration, seek, playTrack, pause, currentTrack, isPaused } = player
 
   const isActive = currentTrack?.uri === track.uri
   const isPlaying = isActive && !isPaused
@@ -38,7 +38,7 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose,
 
   // Preview: plays from In to Out, does NOT auto-advance to next song
   const handlePlay = () => playTrack(track.uri, startMs, stopMs, true)
-  const handleStop = () => fadeAndPause()
+  const handleStop = () => pause()
 
   // Set In/Out: capture current scrubber position AND immediately save to library
   const handleSetIn = () => {
@@ -80,7 +80,7 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose,
   // Close: always save current times (catches TimeField edits), then stop preview if active
   const handleClose = () => {
     onUpdateTimes(track.id, startMsRef.current, stopMsRef.current)
-    if (isPlaying) fadeAndPause()
+    if (isPlaying) pause()
     onClose()
   }
   handleCloseRef.current = handleClose  // keep ref fresh so Escape handler always calls latest

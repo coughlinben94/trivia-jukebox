@@ -258,7 +258,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     return true
   }, [startMonitor])
 
-  // ─── Fade out and pause ──────────────────────────────────────────
+  // ─── Fade out and pause — live screen playback only ───────────────
   const fadeAndPause = useCallback(async () => {
     genRef.current += 1
     const gen = genRef.current
@@ -269,6 +269,14 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     if (genRef.current !== gen) return
     await playerRef.current?.pause()
     playerRef.current?.setVolume(0)
+  }, [])
+
+  // ─── Pause immediately, no fade — preview/scrubber (SongDetailModal) ──
+  const pause = useCallback(async () => {
+    genRef.current += 1
+    transitioningRef.current = false
+    clearInterval(monitorRef.current)
+    await playerRef.current?.pause()
   }, [])
 
   // ─── Manual scrub ────────────────────────────────────────────────
@@ -301,6 +309,6 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
   return {
     isReady, isPaused, currentTrack, position, duration, error,
     volume, setVolume,
-    playTrack, fadeAndPause, seek,
+    playTrack, fadeAndPause, pause, seek,
   }
 }

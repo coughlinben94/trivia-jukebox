@@ -22,7 +22,7 @@ function makePlayer(overrides = {}) {
     duration:     0,
     seek:         vi.fn(),
     playTrack:    vi.fn(),
-    fadeAndPause: vi.fn(),
+    pause:        vi.fn(),
     currentTrack: null,
     isPaused:     true,
     ...overrides,
@@ -255,7 +255,7 @@ describe('Close (Done button + backdrop)', () => {
   })
 
   it('Done button stops preview playback when song is active and playing', () => {
-    const fadeAndPause = vi.fn()
+    const pause = vi.fn()
     renderModal(
       {},
       {
@@ -263,31 +263,31 @@ describe('Close (Done button + backdrop)', () => {
         position: 50000,
         duration: 240000,
         isPaused: false,
-        fadeAndPause,
+        pause,
       }
     )
 
     fireEvent.click(screen.getByText('Done'))
 
-    expect(fadeAndPause).toHaveBeenCalled()
+    expect(pause).toHaveBeenCalled()
   })
 
-  it('Done button does NOT call fadeAndPause when song is not playing', () => {
-    const fadeAndPause = vi.fn()
-    renderModal({}, { currentTrack: null, isPaused: true, fadeAndPause })
+  it('Done button does NOT call pause when song is not playing', () => {
+    const pause = vi.fn()
+    renderModal({}, { currentTrack: null, isPaused: true, pause })
 
     fireEvent.click(screen.getByText('Done'))
 
-    expect(fadeAndPause).not.toHaveBeenCalled()
+    expect(pause).not.toHaveBeenCalled()
   })
 
   // ── THE BUG: Escape key uses stale closure ───────────────────────────────────
   // When the modal opens with song paused, the Escape useEffect captures
   // handleClose from the first render where isPlaying=false. If the user then
   // presses ▶ (song starts playing) and hits Escape, the stale handleClose
-  // has isPlaying=false so fadeAndPause() is never called — preview keeps playing.
+  // has isPlaying=false so pause() is never called — preview keeps playing.
   it('Escape key stops preview playback when song started playing after modal opened', () => {
-    const fadeAndPause = vi.fn()
+    const pause = vi.fn()
     const onClose = vi.fn()
 
     // Initially not playing
@@ -296,7 +296,7 @@ describe('Close (Done button + backdrop)', () => {
       position: 10000,
       duration: 240000,
       isPaused: true,
-      fadeAndPause,
+      pause,
     })
 
     const { rerender } = render(
@@ -322,7 +322,7 @@ describe('Close (Done button + backdrop)', () => {
     // Press Escape — must stop the preview
     fireEvent.keyDown(window, { key: 'Escape' })
 
-    expect(fadeAndPause).toHaveBeenCalled()
+    expect(pause).toHaveBeenCalled()
     expect(onClose).toHaveBeenCalled()
   })
 })
@@ -460,15 +460,15 @@ describe('Play / Stop preview', () => {
     expect(playTrack).toHaveBeenCalledWith(TRACK.uri, TRACK.startMs, TRACK.stopMs, true)
   })
 
-  it('stop button calls fadeAndPause when song is playing', () => {
-    const fadeAndPause = vi.fn()
+  it('stop button pauses immediately (no fade) when song is playing', () => {
+    const pause = vi.fn()
     renderModal(
       {},
-      { currentTrack: { uri: TRACK.uri }, position: 20000, duration: 240000, isPaused: false, fadeAndPause }
+      { currentTrack: { uri: TRACK.uri }, position: 20000, duration: 240000, isPaused: false, pause }
     )
 
     fireEvent.click(screen.getByText('⏸'))
 
-    expect(fadeAndPause).toHaveBeenCalled()
+    expect(pause).toHaveBeenCalled()
   })
 })
