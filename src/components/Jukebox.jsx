@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { searchTracks, logout } from '../lib/spotify'
 import { supabase } from '../lib/supabase'
 import { slimTrack, songNeedsSlim } from '../lib/track'
@@ -51,6 +51,7 @@ export default function Jukebox({ onLogout }) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [showLive, setShowLive] = useState(false)
   const [liveEnding, setLiveEnding] = useState(false)
+  const closeLive = useCallback(() => { setShowLive(false); setLiveEnding(false) }, [])
   const [modalTrack, setModalTrack] = useState(null)
 const [newSetName, setNewSetName] = useState('')
   const [addingSet, setAddingSet] = useState(false)
@@ -68,6 +69,9 @@ const [newSetName, setNewSetName] = useState('')
 
   const library = sets.items[sets.activeId]?.songs ?? []
   const activeSetName = sets.items[sets.activeId]?.name ?? 'Library'
+  // Recomputed only when the library's songs actually change, not on every
+  // 300ms position tick from playback (Jukebox re-renders on every tick).
+  const libraryRuntime = useMemo(() => fmtRuntime(calcRuntime(library)), [library])
 
   const setLibrary = useCallback((updater) => {
     setSets(prev => {
@@ -755,7 +759,7 @@ const [newSetName, setNewSetName] = useState('')
           currentTrack={player.currentTrack}
           isPaused={player.isPaused}
           ending={liveEnding}
-          onClose={() => { setShowLive(false); setLiveEnding(false) }}
+          onClose={closeLive}
           shuffleKey={shuffleKey}
           onUpcomingTrack={registerUpcomingTrackHandler}
         />
@@ -781,7 +785,7 @@ const [newSetName, setNewSetName] = useState('')
         onStop={handleStop}
         onSkip={advanceToNext}
         library={library}
-        runtime={fmtRuntime(calcRuntime(library))}
+        runtime={libraryRuntime}
       />
 
       {/* Toast notifications */}
@@ -824,6 +828,8 @@ function SetItem({ id, set, isActive, isRenaming, renamingVal, onSelect, onDelet
 
   useEffect(() => () => clearTimeout(clearTimerRef.current), [])
 
+  const runtime = useMemo(() => fmtRuntime(calcRuntime(set.songs ?? [])), [set.songs])
+
   return (
     <div className={`group flex items-center rounded-lg transition-colors duration-150 ${
       isActive
@@ -851,7 +857,7 @@ function SetItem({ id, set, isActive, isRenaming, renamingVal, onSelect, onDelet
         >
           {set.name}
           {set.songs?.length > 0 && (
-            <span className="ml-1.5 text-[11px] text-ink-muted">{set.songs.length} · {fmtRuntime(calcRuntime(set.songs))}</span>
+            <span className="ml-1.5 text-[11px] text-ink-muted">{set.songs.length} · {runtime}</span>
           )}
         </button>
       )}

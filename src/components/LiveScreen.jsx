@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, memo } from 'react'
 import { motion, useAnimation } from 'framer-motion'
 import AlbumGradient from './AlbumGradient'
 import { usePalette } from '../hooks/usePalette'
@@ -44,7 +44,11 @@ function Tonearm({ controls }) {
 }
 
 // ── LiveScreen ─────────────────────────────────────────────────────────────────
-export default function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpcomingTrack }) {
+// Position updates every 300ms during playback via the Jukebox-owned player hook,
+// forcing a re-render of everything under Jukebox. None of this component's props
+// change on that cadence, so memo() keeps it from redoing its render work — title-fit
+// measurement, palette lookups, the whole record/tonearm JSX tree — 3.3x/second for nothing.
+function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpcomingTrack }) {
   const [shown, setShown]                 = useState(currentTrack)
   const [prev,  setPrev]                  = useState(null)
   const [transitioning, setTransitioning] = useState(false)
@@ -499,3 +503,5 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, sh
     </div>
   )
 }
+
+export default memo(LiveScreen)
