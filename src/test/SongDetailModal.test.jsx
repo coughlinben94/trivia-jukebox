@@ -423,14 +423,23 @@ describe('TimeField', () => {
 // ─── Scrubber ──────────────────────────────────────────────────────────────────
 
 describe('Scrubber', () => {
-  it('calls seek() when track is active', () => {
+  // Since 5375a5a the scrubber commits on pointer release: onChange only moves
+  // a local drag value while a pointerDown-initiated drag is active, and
+  // seek()/localPos fire on pointerUp. Tests must walk the full lifecycle.
+  const drag = (slider, value) => {
+    fireEvent.pointerDown(slider)
+    fireEvent.change(slider, { target: { value: String(value) } })
+    fireEvent.pointerUp(slider, { target: { value: String(value) } })
+  }
+
+  it('calls seek() on release when track is active', () => {
     const seek = vi.fn()
     renderModal(
       {},
       { currentTrack: { uri: TRACK.uri }, position: 10000, duration: 240000, isPaused: true, seek }
     )
 
-    fireEvent.change(screen.getByRole('slider'), { target: { value: '60000' } })
+    drag(screen.getByRole('slider'), 60000)
 
     expect(seek).toHaveBeenCalledWith(60000)
   })
@@ -439,7 +448,7 @@ describe('Scrubber', () => {
     const seek = vi.fn()
     renderModal({}, { seek })
 
-    fireEvent.change(screen.getByRole('slider'), { target: { value: '60000' } })
+    drag(screen.getByRole('slider'), 60000)
 
     expect(seek).not.toHaveBeenCalled()
     // Scrubber position label (the left time display) should update to 1:00
