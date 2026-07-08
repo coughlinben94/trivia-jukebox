@@ -11,7 +11,12 @@ const ARM_OFF = { rotate: -30, y: -5 } // lifted and rotated back
 function preloadImage(url) {
   return new Promise(resolve => {
     const img = new Image()
-    img.onload = resolve
+    // decode() pushes the JPEG decode off the paint path — without it the
+    // decode lands on the first painted frame, i.e. mid-spring.
+    img.onload = () => {
+      if (img.decode) img.decode().catch(() => {}).then(resolve)
+      else resolve()
+    }
     img.onerror = resolve
     img.src = url
     setTimeout(resolve, 800)
@@ -134,6 +139,13 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         setTextInstant(true)
         busyRef.current = true
         setTextVisible(false)
+
+        // First-song art may not be in browser cache yet — decode it before the
+        // record drops, or the JPEG decode lands mid-spring and drops frames.
+        // runTransition already does this for every subsequent song; the
+        // entrance was the gap (2bd5194 only covered the gradient, not the art).
+        const entranceArt = shown?.album?.images?.[0]?.url
+        if (entranceArt) await preloadImage(entranceArt)
 
         flyCtrl.start({
           y: 0, opacity: 1, scale: 1,
@@ -412,7 +424,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                       transform: 'translateZ(0)',
                     }}
                   >
-                    <img src={artUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                    <img src={artUrl} alt="" decoding="async" className="absolute inset-0 w-full h-full object-cover" />
                     <div
                       className="absolute inset-0 rounded-full pointer-events-none"
                       style={{
