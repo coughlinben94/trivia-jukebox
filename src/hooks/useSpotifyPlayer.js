@@ -56,7 +56,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
         // Suppress the transient paused=true the SDK emits right after auto-advance pause()
         if (!transitioningRef.current) setIsPaused(state.paused)
         setDuration(state.duration)
-        setPosition(state.position)
+        if (!seekingRef.current) setPosition(state.position)
       })
       player.addListener('account_error', () =>
         setError('Spotify Premium required for in-browser playback.')
@@ -116,7 +116,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
         if (!preview) onFadeStartRef.current?.()
         await fadeVolume(maxVol, 0, gen)
         if (genRef.current !== gen) return
-        transitioningRef.current = true   // suppress isPaused during advance gap
+        if (!preview) transitioningRef.current = true   // suppress isPaused during advance gap
         await playerRef.current?.pause()
         playerRef.current?.setVolume(0)
         if (!preview) onAdvanceRef.current?.()
@@ -276,7 +276,17 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     seekingRef.current = true
     clearTimeout(seekTimerRef.current)
     setPosition(ms)
-    playerRef.current?.seek(ms)
+    const deviceId = deviceIdRef.current
+    // REST API seek only — more reliable than the SDK's player.seek(), same as playTrack's doSeek
+    if (deviceId) {
+      getToken().then(token => {
+        if (!token) return
+        fetch(
+          `https://api.spotify.com/v1/me/player/seek?position_ms=${ms}&device_id=${deviceId}`,
+          { method: 'PUT', headers: { Authorization: `Bearer ${token}` } }
+        )
+      })
+    }
     seekTimerRef.current = setTimeout(() => { seekingRef.current = false }, 700)
   }, [])
 
