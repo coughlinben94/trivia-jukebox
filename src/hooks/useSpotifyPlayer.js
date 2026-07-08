@@ -52,7 +52,11 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
       player.addListener('not_ready', () => setIsReady(false))
       player.addListener('player_state_changed', state => {
         if (!state) return
-        setCurrentTrack(state.track_window.current_track)
+        // The SDK hands us a fresh track object on every state event (buffer,
+        // seek, pause…). Keep the previous reference while the URI is unchanged
+        // so consumers comparing by identity (memo'd LiveScreen) don't re-render.
+        const next = state.track_window.current_track
+        setCurrentTrack(prev => (prev?.uri === next?.uri ? prev : next))
         // Suppress the transient paused=true the SDK emits right after auto-advance pause()
         if (!transitioningRef.current) setIsPaused(state.paused)
         setDuration(state.duration)

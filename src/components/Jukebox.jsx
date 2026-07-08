@@ -568,8 +568,45 @@ const [newSetName, setNewSetName] = useState('')
   }
   const handleDragEnd = () => { dragIdxRef.current = null }
 
-  const inLibrary = (id) => library.some(t => t.id === id)
   const setOrder = Object.keys(sets.items)
+
+  // Jukebox re-renders every 300ms during playback (position ticks). Memoize the
+  // two big lists so React skips reconciling them by element identity — dozens of
+  // cards with images shouldn't rebuild 3.3x/sec. Handlers close over playingId
+  // etc., but every value they read is in the dep list, so closures stay fresh.
+  const libraryGrid = useMemo(() => (
+    <div className="grid grid-cols-4 gap-2">
+      {library.map((track, i) => (
+        <LibraryCard
+          key={track.id}
+          track={track}
+          isPlaying={track.id === playingId && !player.isPaused}
+          isPaused={track.id === playingId && player.isPaused}
+          onRemove={() => removeFromLibrary(track.id)}
+          onClick={() => setModalTrack(track)}
+          onDragStart={() => handleDragStart(i)}
+          onDragOver={(e) => handleDragOver(e, i)}
+          onDragEnd={handleDragEnd}
+        />
+      ))}
+    </div>
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [library, playingId, player.isPaused])
+
+  const resultsList = useMemo(() => (
+    <div key={resultsKey}>
+      {results.map((track, i) => (
+        <TrackRow
+          key={track.id}
+          track={track}
+          index={i}
+          inLibrary={library.some(t => t.id === track.id)}
+          onAdd={addToLibrary}
+        />
+      ))}
+    </div>
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [results, resultsKey, library, activeSetName])
 
   return (
     <div className="h-screen bg-surface text-white flex flex-col overflow-hidden">
@@ -670,21 +707,7 @@ const [newSetName, setNewSetName] = useState('')
           {/* Library grid */}
           <div className="flex-1 overflow-y-auto p-3 pb-32">
             {library.length > 0 ? (
-              <div className="grid grid-cols-4 gap-2">
-                {library.map((track, i) => (
-                  <LibraryCard
-                    key={track.id}
-                    track={track}
-                    isPlaying={track.id === playingId && !player.isPaused}
-                    isPaused={track.id === playingId && player.isPaused}
-                    onRemove={() => removeFromLibrary(track.id)}
-                    onClick={() => setModalTrack(track)}
-                    onDragStart={() => handleDragStart(i)}
-                    onDragOver={(e) => handleDragOver(e, i)}
-                    onDragEnd={handleDragEnd}
-                  />
-                ))}
-              </div>
+              libraryGrid
             ) : (
               <div className="flex flex-col items-center justify-center h-full text-center select-none pb-16">
                 <p className="text-white text-sm">
@@ -724,17 +747,7 @@ const [newSetName, setNewSetName] = useState('')
           {/* Search results */}
           <div className="flex-1 overflow-y-auto pb-32">
             {results.length > 0 ? (
-              <div key={resultsKey}>
-                {results.map((track, i) => (
-                  <TrackRow
-                    key={track.id}
-                    track={track}
-                    index={i}
-                    inLibrary={inLibrary(track.id)}
-                    onAdd={addToLibrary}
-                  />
-                ))}
-              </div>
+              resultsList
             ) : searching ? null : !query ? (
               <div className="flex flex-col items-center justify-center h-full gap-4 px-6 pb-16 select-none">
                 <svg width="44" height="44" viewBox="0 0 24 24" fill="none" className="text-accent/20">
@@ -930,7 +943,6 @@ function LibraryCard({ track, isPlaying, isPaused, onRemove, onClick, onDragStar
       className={`relative group rounded-xl overflow-hidden cursor-pointer select-none transition-[transform,box-shadow] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:scale-[1.02] hover:shadow-xl ${
         isPlaying ? 'ring-1 ring-accent/40' : isPaused ? 'ring-1 ring-white/15' : ''
       }`}
-      style={{ willChange: 'transform' }}
       draggable
       onDragStart={onDragStart}
       onDragOver={onDragOver}
