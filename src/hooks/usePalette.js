@@ -5,6 +5,19 @@ const cache = new Map();
 // Fallback: deep blue/purple — looks good if palette fails
 const FALLBACK = ['#080808', '#080808', '#080808', '#080808', '#080808', '#080808'];
 
+// Warm the cache ahead of need (e.g. the upcoming song's art the moment the
+// current song starts) so the fade-out blend gets a cache hit and the full
+// encroachment window, instead of losing it to a cold serverless fetch.
+export function prefetchPalette(albumArtUrl) {
+  if (!albumArtUrl || cache.has(albumArtUrl)) return;
+  fetch(`/api/palette?url=${encodeURIComponent(albumArtUrl)}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.colors?.length >= 2) cache.set(albumArtUrl, data.colors);
+    })
+    .catch(() => {});
+}
+
 export function usePalette(albumArtUrl) {
   const [colors, setColors] = useState(FALLBACK);
   const abortRef = useRef(null);

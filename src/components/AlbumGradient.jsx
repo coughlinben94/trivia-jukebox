@@ -130,6 +130,9 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
   useEffect(() => {
     if (isFirstNext.current) { isFirstNext.current = false; return }
     if (!nextColors.length) return
+    // usePalette emits its all-black fallback before a fetch resolves — never
+    // encroach black; wait for the real palette (a real one is never all #080808).
+    if (nextColors.every(c => c === '#080808')) return
     if (entranceActiveRef.current) { pendingBlendRef.current = nextColors; return }
     startBlendTo(nextColors)
     pendingFromNextRef.current = true

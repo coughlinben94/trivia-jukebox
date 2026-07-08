@@ -174,6 +174,12 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           pendingRef.current = null
           runTransitionRef.current?.(pending)
         }
+
+        // Let the record + tonearm springs fully settle before entranceActive
+        // flips — that flip releases the gradient's deferred first blend, which
+        // doubles canvas layer work at onset and was landing exactly as the
+        // record lays onto the platter (the reported settle-moment chop).
+        await sleep(600)
       } finally {
         setEntranceActive(false)
         busyRef.current = false

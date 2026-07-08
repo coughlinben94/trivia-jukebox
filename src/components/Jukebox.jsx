@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { slimTrack, songNeedsSlim } from '../lib/track'
 import { shuffleArray, resolveNext, resolveUpcoming } from '../lib/shuffle'
 import { useSpotifyPlayer } from '../hooks/useSpotifyPlayer'
+import { prefetchPalette } from '../hooks/usePalette'
 import Player from './Player'
 import LiveScreen from './LiveScreen'
 import SongDetailModal from './SongDetailModal'
@@ -318,6 +319,7 @@ const [newSetName, setNewSetName] = useState('')
     shuffleOrderRef.current = order
     shuffleIdxRef.current = 0
     const song = targetSongs.find(t => t.id === order[0])
+    prefetchPalette(song.album?.images?.[0]?.url)
     setShuffleKey(k => k + 1)
     setPlayingId(song.id)
     setIsPlaying(true)
@@ -394,6 +396,11 @@ const [newSetName, setNewSetName] = useState('')
           setShowLive(true)
         }
       }
+      // Warm the upcoming song's palette now, not at fade start — a cold
+      // /api/palette fetch (0.5-1.5s) otherwise eats most of the 2.5s
+      // encroachment window the gradient gets before the song switches.
+      const upcoming = resolveUpcoming(shuffleOrderRef.current, shuffleIdxRef.current, libraryRef.current)
+      prefetchPalette(upcoming?.album?.images?.[0]?.url)
     }
   }, [player.currentTrack?.uri])
 
@@ -459,6 +466,9 @@ const [newSetName, setNewSetName] = useState('')
       shuffleOrderRef.current = order
       shuffleIdxRef.current = 0
       const song = library.find(t => t.id === order[0])
+      // Warm the first song's palette during play startup so LiveScreen's
+      // usePalette hits cache at mount instead of re-rendering mid-entrance.
+      prefetchPalette(song.album?.images?.[0]?.url)
       setPlayingId(song.id)
       setIsPlaying(true)
       pendingLiveOpenRef.current = true
