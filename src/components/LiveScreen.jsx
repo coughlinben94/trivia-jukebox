@@ -171,6 +171,18 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, sh
   useEffect(() => {
     if (busyRef.current) return
 
+    // Tab is backgrounded — settle instantly instead of animating. rAF-driven
+    // springs stall while hidden and visibly catch up on refocus, and a
+    // backgrounded tab can also get a transient isPaused blip as playback
+    // re-syncs; either way we don't want it playing out once the user looks back.
+    if (document.hidden) {
+      pauseSeqRef.current.forEach(clearTimeout)
+      pauseSeqRef.current = []
+      setSpinPaused(isPaused)
+      tonearmCtrl.set(isPaused ? ARM_OFF : ARM_ON)
+      return
+    }
+
     if (!isPaused) {
       // Resume: cancel any pending pause sequence, spin immediately, arm down (unchanged)
       pauseSeqRef.current.forEach(clearTimeout)
@@ -199,6 +211,21 @@ export default function LiveScreen({ currentTrack, isPaused, ending, onClose, sh
       pauseSeqRef.current = []
     }
   }, [isPaused])
+
+  // If the tab is backgrounded while a pause-sequence timer is already queued
+  // (paused just before switching away), cancel it and settle instantly rather
+  // than let the arm-lift/spin-stop play out once the user comes back.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (!document.hidden || busyRef.current) return
+      pauseSeqRef.current.forEach(clearTimeout)
+      pauseSeqRef.current = []
+      setSpinPaused(isPausedRef.current)
+      tonearmCtrl.set(isPausedRef.current ? ARM_OFF : ARM_ON)
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [])
 
   // Populate shown/artUrl when currentTrack first arrives (SDK delivers it async after mount)
   useEffect(() => {
