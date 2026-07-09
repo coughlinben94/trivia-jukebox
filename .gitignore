@@ -25,3 +25,7 @@ dist-ssr
 .vercel
 *.local
 .playwright-cli/
+.claude/skills/
+*.bak
+.claude/settings.local.json
+.impeccable/
