@@ -1,3 +1,5 @@
+import { useRef, useState } from 'react'
+
 function fmt(ms) {
   const s = Math.floor(ms / 1000)
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
@@ -5,11 +7,18 @@ function fmt(ms) {
 
 export default function Player({ player, isPlaying, onPlay, onStop, onSkip, library, runtime }) {
   const { currentTrack, position, duration, seek, volume, setVolume } = player
+  // Only commit a seek on release, not per drag pixel — the native range input's
+  // onChange fires continuously during a mouse drag, and firing an uncoalesced,
+  // uncancelled seek() fetch per pixel let network reordering land playback at a
+  // stale intermediate point. Track the drag locally and seek once on pointer up.
+  const [dragMs, setDragMs] = useState(null)
+  const draggingRef = useRef(false)
 
   if (library.length === 0) return null
 
   const art = currentTrack?.album?.images?.[1] ?? currentTrack?.album?.images?.[0]
-  const progress = duration > 0 ? (position / duration) * 100 : 0
+  const displayPosition = dragMs !== null ? dragMs : position
+  const progress = duration > 0 ? (displayPosition / duration) * 100 : 0
   const volPct = (volume ?? 0.8) * 100
 
   return (
@@ -17,15 +26,21 @@ export default function Player({ player, isPlaying, onPlay, onStop, onSkip, libr
       {/* Scrubber */}
       <div className="px-5 pt-3 pb-1">
         <div className="flex items-center gap-2.5">
-          <span className="text-[10px] text-ink-muted tabular-nums w-7 text-right">{fmt(position)}</span>
+          <span className="text-[10px] text-ink-muted tabular-nums w-7 text-right">{fmt(displayPosition)}</span>
           <input
             type="range"
             className="player-scrubber flex-1"
             min={0}
             max={duration || 1}
-            value={position}
+            value={displayPosition}
             style={{ '--progress': `${progress}%` }}
-            onChange={e => seek(Number(e.target.value))}
+            onPointerDown={() => { draggingRef.current = true; setDragMs(position) }}
+            onChange={e => { if (draggingRef.current) setDragMs(Number(e.target.value)) }}
+            onPointerUp={e => {
+              seek(Number(e.target.value))
+              draggingRef.current = false
+              setDragMs(null)
+            }}
           />
           <span className="text-[10px] text-ink-muted tabular-nums w-7">{fmt(duration)}</span>
         </div>

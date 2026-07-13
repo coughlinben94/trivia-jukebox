@@ -163,11 +163,18 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         setTextVisible(true)
         busyRef.current = false
 
-        // Bug 3: re-sync arm now that busyRef is clear, in case isPaused changed mid-entrance
-        tonearmCtrl.start({
-          ...(isPausedRef.current ? ARM_OFF : ARM_ON),
-          transition: { type: 'spring', stiffness: 180, damping: 26 },
-        })
+        // Bug 3: re-sync arm now that busyRef is clear, in case isPaused changed mid-entrance.
+        // Settle instantly if the tab is hidden — same rationale as the isPaused
+        // effect above: this spring is rAF-driven and stalls while backgrounded,
+        // then visibly snaps/catches up on refocus if left animating.
+        if (document.hidden) {
+          tonearmCtrl.set(isPausedRef.current ? ARM_OFF : ARM_ON)
+        } else {
+          tonearmCtrl.start({
+            ...(isPausedRef.current ? ARM_OFF : ARM_ON),
+            transition: { type: 'spring', stiffness: 180, damping: 26 },
+          })
+        }
 
         if (pendingRef.current && pendingRef.current.uri !== shown?.uri) {
           const pending = pendingRef.current
@@ -340,11 +347,16 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         busyRef.current = false
         setTextVisible(true)
 
-        // Re-sync arm in case isPaused changed while busy
-        tonearmCtrl.start({
-          ...(isPausedRef.current ? ARM_OFF : ARM_ON),
-          transition: { type: 'spring', stiffness: 180, damping: 26 },
-        })
+        // Re-sync arm in case isPaused changed while busy. Settle instantly if
+        // the tab is hidden — see the identical guard in runEntrance above.
+        if (document.hidden) {
+          tonearmCtrl.set(isPausedRef.current ? ARM_OFF : ARM_ON)
+        } else {
+          tonearmCtrl.start({
+            ...(isPausedRef.current ? ARM_OFF : ARM_ON),
+            transition: { type: 'spring', stiffness: 180, damping: 26 },
+          })
+        }
 
         // Let the re-sync animation start before any recursive call fires ARM_OFF
         await new Promise(r => setTimeout(r, 50))

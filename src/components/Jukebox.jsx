@@ -100,6 +100,65 @@ const [newSetName, setNewSetName] = useState('')
   // same-window remote write doesn't get last-write-wins clobbered.
   const stashedIncomingSetsRef    = useRef(null)
 
+  // Writes the current sets to Supabase (merging any stashed incoming songs
+  // first). Shared by the 500ms debounced auto-save and by flushPendingWrite,
+  // which the 'b' hotkey uses to force this through immediately before
+  // navigating away — otherwise a debounce-window edit gets silently dropped
+  // when the tab navigates mid-timer.
+  const writeToSupabase = useCallback(async () => {
+    supabaseDebounceRef.current = null
+    // Guard 1a — never write before the initial sync has confirmed the remote state.
+    // This is the primary protection against the first-render empty-default race.
+    if (!syncCompletedRef.current) return
+
+    // Merge in any songs from an incoming realtime update that arrived
+    // while this write was pending and don't exist locally yet (e.g. a
+    // QuickAdd from another device), so this write doesn't clobber them.
+    let outgoing = setsRef.current
+    const stashed = stashedIncomingSetsRef.current
+    if (stashed) {
+      stashedIncomingSetsRef.current = null
+      const items = { ...outgoing.items }
+      for (const [setId, stashedSet] of Object.entries(stashed.items ?? {})) {
+        const localSongs = items[setId]?.songs ?? []
+        const localIds = new Set(localSongs.map(s => s.id))
+        const missing = (stashedSet.songs ?? []).filter(s => !localIds.has(s.id))
+        if (missing.length > 0) {
+          items[setId] = { ...(items[setId] ?? stashedSet), songs: [...localSongs, ...missing] }
+        }
+      }
+      outgoing = { ...outgoing, items }
+      if (outgoing !== setsRef.current) setSets(outgoing)
+    }
+
+    // Guard 1b — if we're about to write an empty state, verify the remote is also
+    // empty. Catches any edge-case that bypasses Guard 1a (e.g. sync completes but
+    // local state is still empty before the user adds anything).
+    if (totalSongs(outgoing) === 0) {
+      try {
+        const { data } = await supabase
+          .from('jukebox_state').select('sets').eq('id', 'singleton').single()
+        if (data?.sets && totalSongs(data.sets) > 0) return  // remote has data — abort
+      } catch { return }  // cannot verify remote state — do not risk it
+    }
+    try {
+      await supabase.from('jukebox_state').upsert({
+        id: 'singleton',
+        sets: outgoing,
+        last_writer: sessionIdRef.current,
+        updated_at: new Date().toISOString(),
+      })
+    } catch { /* silent — localStorage is always the local fallback */ }
+  }, [])
+
+  // If a debounced write is pending, cancel its timer and run it right now —
+  // used before navigating away so an in-flight edit isn't lost.
+  const flushPendingWrite = useCallback(async () => {
+    if (supabaseDebounceRef.current === null) return
+    clearTimeout(supabaseDebounceRef.current)
+    await writeToSupabase()
+  }, [writeToSupabase])
+
   // Persist to localStorage immediately; debounce Supabase write 500ms.
   useEffect(() => {
     localStorage.setItem('trivia_sets', JSON.stringify(sets))
@@ -112,52 +171,8 @@ const [newSetName, setNewSetName] = useState('')
       return
     }
     clearTimeout(supabaseDebounceRef.current)
-    supabaseDebounceRef.current = setTimeout(async () => {
-      supabaseDebounceRef.current = null
-      // Guard 1a — never write before the initial sync has confirmed the remote state.
-      // This is the primary protection against the first-render empty-default race.
-      if (!syncCompletedRef.current) return
-
-      // Merge in any songs from an incoming realtime update that arrived
-      // while this write was pending and don't exist locally yet (e.g. a
-      // QuickAdd from another device), so this write doesn't clobber them.
-      let outgoing = sets
-      const stashed = stashedIncomingSetsRef.current
-      if (stashed) {
-        stashedIncomingSetsRef.current = null
-        const items = { ...outgoing.items }
-        for (const [setId, stashedSet] of Object.entries(stashed.items ?? {})) {
-          const localSongs = items[setId]?.songs ?? []
-          const localIds = new Set(localSongs.map(s => s.id))
-          const missing = (stashedSet.songs ?? []).filter(s => !localIds.has(s.id))
-          if (missing.length > 0) {
-            items[setId] = { ...(items[setId] ?? stashedSet), songs: [...localSongs, ...missing] }
-          }
-        }
-        outgoing = { ...outgoing, items }
-        if (outgoing !== sets) setSets(outgoing)
-      }
-
-      // Guard 1b — if we're about to write an empty state, verify the remote is also
-      // empty. Catches any edge-case that bypasses Guard 1a (e.g. sync completes but
-      // local state is still empty before the user adds anything).
-      if (totalSongs(outgoing) === 0) {
-        try {
-          const { data } = await supabase
-            .from('jukebox_state').select('sets').eq('id', 'singleton').single()
-          if (data?.sets && totalSongs(data.sets) > 0) return  // remote has data — abort
-        } catch { return }  // cannot verify remote state — do not risk it
-      }
-      try {
-        await supabase.from('jukebox_state').upsert({
-          id: 'singleton',
-          sets: outgoing,
-          last_writer: sessionIdRef.current,
-          updated_at: new Date().toISOString(),
-        })
-      } catch { /* silent — localStorage is always the local fallback */ }
-    }, 500)
-  }, [sets])
+    supabaseDebounceRef.current = setTimeout(writeToSupabase, 500)
+  }, [sets, writeToSupabase])
 
   // On mount: fetch the authoritative sets from Supabase.
   // One-way migration: push localStorage→Supabase ONLY when remote is empty AND
@@ -237,6 +252,7 @@ const [newSetName, setNewSetName] = useState('')
   const shuffleOrderRef = useRef([])
   const shuffleIdxRef = useRef(0)
   const debounceRef = useRef(null)
+  const searchTokenRef = useRef(0)
   const shuffleDebounceRef = useRef(null)
   const playTrackFn = useRef(null)
   const onUpcomingTrackRef = useRef(null)
@@ -406,17 +422,23 @@ const [newSetName, setNewSetName] = useState('')
 
   const search = useCallback((q) => {
     clearTimeout(debounceRef.current)
-    if (!q.trim()) { setResults([]); return }
+    if (!q.trim()) { searchTokenRef.current += 1; setResults([]); return }
+    const token = ++searchTokenRef.current
     debounceRef.current = setTimeout(async () => {
       setSearching(true)
       try {
         const tracks = await searchTracks(q)
+        // A newer search (the debounce clears only a not-yet-fired timer, not
+        // an in-flight fetch) may have already resolved and rendered its
+        // results by the time this one lands — ignore a stale response so it
+        // can't overwrite what the user is currently seeing.
+        if (searchTokenRef.current !== token) return
         setResults(tracks)
         setResultsKey(k => k + 1)
       } catch (err) {
         console.error('[search]', err)
-        setResults([])
-      } finally { setSearching(false) }
+        if (searchTokenRef.current === token) setResults([])
+      } finally { if (searchTokenRef.current === token) setSearching(false) }
     }, 280)
   }, [])
 
@@ -428,7 +450,10 @@ const [newSetName, setNewSetName] = useState('')
 
   const removeFromLibrary = (id) => {
     setLibrary(prev => prev.filter(t => t.id !== id))
-    if (playingId === id) { player.fadeAndPause(); setPlayingId(null); setIsPlaying(false) }
+    // Route through handleStop (not a partial fadeAndPause/setPlayingId inline)
+    // so the Live overlay tears down too — it only ever closes via handleStop's
+    // showLive/liveEnding logic, otherwise it's left open over dead audio.
+    if (playingId === id) handleStop()
     addToast('Removed')
   }
 
@@ -500,6 +525,11 @@ const [newSetName, setNewSetName] = useState('')
 
   const switchSet = (id) => {
     if (id === sets.activeId) return
+    // Always cancel a pending shuffle start, not just when isPlaying is
+    // already true — startShuffle's 400ms debounce leaves isPlaying false
+    // until it fires, so switching sets inside that window previously let
+    // the stale timeout play a song from the set the user just left.
+    clearTimeout(shuffleDebounceRef.current)
     if (isPlaying) handleStop()
     setPlayingId(null)
     setSets(prev => ({ ...prev, activeId: id }))
@@ -520,6 +550,8 @@ const [newSetName, setNewSetName] = useState('')
 
   const deleteSet = (id) => {
     if (id === 'main') return
+    // See switchSet: cancel a pending shuffle start too, not just live playback.
+    if (sets.activeId === id) clearTimeout(shuffleDebounceRef.current)
     if (isPlaying && sets.activeId === id) handleStop()
     setSets(prev => {
       const items = { ...prev.items }
@@ -552,16 +584,22 @@ const [newSetName, setNewSetName] = useState('')
   }, [isPlaying, handleStop, startShuffle, modalTrack])
 
   useEffect(() => {
-    const onDown = (e) => {
+    const onDown = async (e) => {
       if (e.repeat) return
       if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return
       if (e.target.isContentEditable) return
       if (modalTrack) return
-      if (e.key === 'b') window.location.href = 'https://trivia-os.vercel.app/display?from=jukebox'
+      if (e.key === 'b') {
+        // Flush any pending debounced Supabase write first — otherwise an edit
+        // made just before handing back to trivia-os (add/reorder/trim/rename)
+        // gets silently dropped when the tab navigates mid-debounce.
+        await flushPendingWrite()
+        window.location.href = 'https://trivia-os.vercel.app/display?from=jukebox'
+      }
     }
     window.addEventListener('keydown', onDown)
     return () => window.removeEventListener('keydown', onDown)
-  }, [modalTrack])
+  }, [modalTrack, flushPendingWrite])
 
   const handleDragStart = (i) => { dragIdxRef.current = i }
   const handleDragOver = (e, i) => {
@@ -699,7 +737,10 @@ const [newSetName, setNewSetName] = useState('')
                   const cur = sets.items[id]?.songs ?? []
                   if (cur.length === 0) return
                   setSets(prev => ({ ...prev, items: { ...prev.items, [id]: { ...prev.items[id], songs: [] } } }))
-                  if (sets.activeId === id) { player.fadeAndPause(); setPlayingId(null); setIsPlaying(false) }
+                  // handleStop (not a partial fadeAndPause/setPlayingId inline) so
+                  // the Live overlay tears down too instead of being left open
+                  // over dead audio, and any pending shuffle-start gets cancelled.
+                  if (sets.activeId === id) handleStop()
                   addToast(`Cleared ${sets.items[id].name}`)
                 }}
                 onStartRename={() => { setRenamingId(id); setRenamingVal(sets.items[id].name) }}
@@ -798,6 +839,8 @@ const [newSetName, setNewSetName] = useState('')
           sets={sets}
           activeId={sets.activeId}
           onToast={addToast}
+          isLiveShuffling={isPlaying}
+          onStopLiveShuffle={handleStop}
         />
       )}
 

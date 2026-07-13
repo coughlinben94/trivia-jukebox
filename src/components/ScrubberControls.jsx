@@ -13,7 +13,7 @@ function parseMmSs(str) {
   return isNaN(sec) ? null : sec * 1000
 }
 
-export function TimeField({ label, value, maxMs, onChange }) {
+export function TimeField({ label, value, minMs = 0, maxMs, onChange }) {
   const [editing, setEditing] = useState(false)
   const [raw, setRaw] = useState('')
   const ref = useRef(null)
@@ -25,7 +25,7 @@ export function TimeField({ label, value, maxMs, onChange }) {
   }
   const commit = () => {
     const ms = parseMmSs(raw)
-    if (ms !== null) onChange(Math.max(0, Math.min(maxMs, ms)))
+    if (ms !== null) onChange(Math.max(minMs, Math.min(maxMs, ms)))
     setEditing(false)
   }
 

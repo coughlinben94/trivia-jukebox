@@ -105,8 +105,12 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
   // preview=true: fade+pause at stopMs but do NOT advance to the next song
   const startMonitor = useCallback((stopMs, gen, preview = false) => {
     clearInterval(monitorRef.current)
-    monitorRef.current = setInterval(async () => {
-      if (genRef.current !== gen) { clearInterval(monitorRef.current); return }
+    // Capture this monitor's own interval id in the closure rather than reading
+    // monitorRef.current at clear-time — a stale tick from a superseded generation
+    // could otherwise clear a *newer* monitor's interval (it reassigns monitorRef
+    // between this tick firing and the ref-based clear running).
+    const intervalId = setInterval(async () => {
+      if (genRef.current !== gen) { clearInterval(intervalId); return }
       const state = await playerRef.current?.getCurrentState()
       if (!state) return
       if (seekingRef.current) return
@@ -116,7 +120,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
       const maxVol = maxVolumeRef.current
       // Guard !state.paused: don't trigger on Spotify's own buffering pauses near stopMs
       if (stopMs > 0 && pos >= stopMs - FADE_MS && !state.paused) {
-        clearInterval(monitorRef.current)
+        clearInterval(intervalId)
         if (!preview) onFadeStartRef.current?.()
         await fadeVolume(maxVol, 0, gen)
         if (genRef.current !== gen) return
@@ -126,6 +130,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
         if (!preview) onAdvanceRef.current?.()
       }
     }, 300)
+    monitorRef.current = intervalId
   }, [])
 
   // ─── Play a track with custom start/stop ─────────────────────────
@@ -165,6 +170,9 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
       console.error('[playTrack] token refresh failed — aborting play')
       return false
     }
+    // A newer playTrack call already superseded this one while we awaited the
+    // token — don't send a now-pointless play command for a stale uri.
+    if (genRef.current !== gen) return undefined
     const doPlay = (tok) => fetch(
       `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
       {
@@ -189,16 +197,16 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
       return false
     }
 
-    await new Promise(resolve => {
+    const confirmed = await new Promise(resolve => {
       const timeout = setTimeout(() => {
         player.removeListener('player_state_changed', check)
-        resolve()
+        resolve(false)
       }, 4000)
       const check = (state) => {
         if (state?.track_window?.current_track?.uri === uri) {
           clearTimeout(timeout)
           player.removeListener('player_state_changed', check)
-          resolve()
+          resolve(true)
         }
       }
       player.addListener('player_state_changed', check)
@@ -209,6 +217,18 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     // failure. Callers must treat `undefined` (superseded) differently from
     // `false` (genuine failure): only a real failure should reset the UI.
     if (genRef.current !== gen) return undefined
+
+    if (!confirmed) {
+      // The state-changed listener never fired a matching uri within 4s — the
+      // /play PUT may have landed after a different call's PUT reordered on the
+      // network, so Spotify could be playing the wrong track. Double-check
+      // directly before blindly seeking/fading against a track that isn't loaded.
+      const state = await player.getCurrentState()
+      if (state?.track_window?.current_track?.uri !== uri) {
+        console.error('[playTrack] Spotify never confirmed this track loaded — aborting')
+        return false
+      }
+    }
 
     if (startMs > 0) {
       // Give Spotify 400ms to buffer the start of the track before seeking

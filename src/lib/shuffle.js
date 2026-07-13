@@ -19,7 +19,10 @@ export function resolveNext(order, idx, lib) {
   while (nextIdx < nextOrder.length && !lib.some(t => t.id === nextOrder[nextIdx])) nextIdx++
 
   if (nextIdx >= nextOrder.length) {
-    const lastId = nextOrder[nextOrder.length - 1]
+    // The just-played id — not necessarily the last array element, since
+    // trailing ids near the end of `order` may have been removed from the
+    // library (and skipped by the while-loop above) since the order was built.
+    const lastId = order[idx]
     nextOrder = shuffleArray(lib.map(t => t.id))
     if (nextOrder[0] === lastId && nextOrder.length > 1) {
       const swapIdx = 1 + Math.floor(Math.random() * (nextOrder.length - 1))

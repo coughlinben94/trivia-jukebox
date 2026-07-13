@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { fmt, TimeField, SetMarkerButton } from './ScrubberControls'
 
-export default function SongDetailModal({ track, player, onUpdateTimes, onClose, moveOrCopySong, sets, activeId, onToast }) {
+const MIN_CLIP_MS = 1000
+
+export default function SongDetailModal({ track, player, onUpdateTimes, onClose, moveOrCopySong, sets, activeId, onToast, isLiveShuffling, onStopLiveShuffle }) {
   const { position, duration, seek, playTrack, pause, currentTrack, isPaused } = player
 
   const isActive = currentTrack?.uri === track.uri
@@ -36,19 +38,30 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose,
   const inPct  = displayDuration > 0 ? (startMs          / displayDuration) * 100 : 0
   const outPct = displayDuration > 0 ? (stopMs           / displayDuration) * 100 : 0
 
-  // Preview: plays from In to Out, does NOT auto-advance to next song
-  const handlePlay = () => playTrack(track.uri, startMs, stopMs, true)
+  // Preview: plays from In to Out, does NOT auto-advance to next song.
+  // The modal shares the single Spotify player/connection with live shuffle
+  // playback, so previewing a *different* song than what's live would
+  // otherwise silently hijack it (no fade, and Jukebox's isPlaying/playingId/
+  // Live-overlay state would go stale since it never learns playback moved
+  // on). Stop the live session cleanly first so state stays consistent.
+  const handlePlay = () => {
+    if (isLiveShuffling && !isActive) onStopLiveShuffle?.()
+    playTrack(track.uri, startMs, stopMs, true)
+  }
   const handleStop = () => pause()
 
-  // Set In/Out: capture current scrubber position AND immediately save to library
+  // Set In/Out: capture current scrubber position AND immediately save to library.
+  // Clamped against the other bound (with a minimum gap) so a saved clip can
+  // never have startMs >= stopMs — that combination silently disables the
+  // stop-point trigger during live playback (the song just plays through untrimmed).
   const handleSetIn = () => {
-    const ms = displayPosition
+    const ms = Math.min(displayPosition, Math.max(0, stopMsRef.current - MIN_CLIP_MS))
     setStartMs(ms)
     startMsRef.current = ms
     onUpdateTimes(track.id, ms, stopMsRef.current)
   }
   const handleSetOut = () => {
-    const ms = displayPosition
+    const ms = Math.max(displayPosition, Math.min(displayDuration, startMsRef.current + MIN_CLIP_MS))
     setStopMs(ms)
     stopMsRef.current = ms
     onUpdateTimes(track.id, startMsRef.current, ms)
@@ -197,7 +210,7 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose,
 
           {/* Typed In/Out fields + reset */}
           <div className="flex items-center justify-between px-1 mb-5">
-            <TimeField label="In"  value={startMs} maxMs={stopMs}          onChange={v => { setStartMs(v); startMsRef.current = v }} />
+            <TimeField label="In"  value={startMs} maxMs={Math.max(0, stopMs - MIN_CLIP_MS)} onChange={v => { setStartMs(v); startMsRef.current = v; onUpdateTimes(track.id, v, stopMsRef.current) }} />
             <div className="flex flex-col items-center gap-1">
               <div className="w-24 h-[1px] bg-accent/20" />
               <button
@@ -207,7 +220,7 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose,
                 ↺ reset
               </button>
             </div>
-            <TimeField label="Out" value={stopMs}  maxMs={displayDuration} onChange={v => { setStopMs(v);  stopMsRef.current  = v }} />
+            <TimeField label="Out" value={stopMs}  minMs={Math.min(displayDuration, startMs + MIN_CLIP_MS)} maxMs={displayDuration} onChange={v => { setStopMs(v);  stopMsRef.current  = v; onUpdateTimes(track.id, startMsRef.current, v) }} />
           </div>
 
           {/* Move / Copy to another library */}

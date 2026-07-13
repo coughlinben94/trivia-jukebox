@@ -133,7 +133,14 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
     // usePalette emits its all-black fallback before a fetch resolves — never
     // encroach black; wait for the real palette (a real one is never all #080808).
     if (nextColors.every(c => c === '#080808')) return
-    if (entranceActiveRef.current) { pendingBlendRef.current = nextColors; return }
+    if (entranceActiveRef.current) {
+      // Deferred path: the blend hasn't started yet, but it's still "from next" —
+      // set the flag now so the later official `colors` update (for the same
+      // song) realigns targets instead of restarting a whole new blend.
+      pendingFromNextRef.current = true
+      pendingBlendRef.current = nextColors
+      return
+    }
     startBlendTo(nextColors)
     pendingFromNextRef.current = true
   }, [nextColors])
@@ -142,8 +149,12 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
   useEffect(() => {
     if (isFirst.current) { isFirst.current = false; return }
     if (pendingFromNextRef.current) {
-      // nextColors blend in progress — just realign targets to official colors, keep blending
+      // nextColors blend in progress (or was deferred and pending-flagged, see
+      // above) — just realign targets to official colors, keep blending. Clear
+      // any deferred nextColors blend too, so a still-pending entrance-end
+      // flush doesn't later restart a blend toward now-superseded colors.
       pendingFromNextRef.current = false
+      pendingBlendRef.current = null
       const s = st.current
       s.inRgb     = parseColors(colors, NUM_CIRCLES)
       s.steadyRgb = parseColors(colors, NUM_CIRCLES)

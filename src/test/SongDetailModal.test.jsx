@@ -348,11 +348,12 @@ describe('TimeField', () => {
     expect(updatedInBtn).toHaveTextContent('0:30')
   })
 
-  it('clamps In value to stopMs maximum (3:20)', async () => {
+  it('clamps In value to stopMs minus the minimum clip gap (3:19)', async () => {
     const user = userEvent.setup()
     renderModal()
 
-    // stopMs = 200000 (3:20). Typing 5:00 (300000ms) should clamp.
+    // stopMs = 200000 (3:20). In is clamped to stopMs - MIN_CLIP_MS (1s) so a
+    // saved clip can never have startMs >= stopMs. Typing 5:00 clamps to 3:19.
     const [inTimeBtn] = timeFieldBtns()
     fireEvent.click(inTimeBtn)
 
@@ -362,7 +363,7 @@ describe('TimeField', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
 
     const [updatedInBtn] = timeFieldBtns()
-    expect(updatedInBtn).toHaveTextContent('3:20')
+    expect(updatedInBtn).toHaveTextContent('3:19')
   })
 
   it('clamps Out value to duration_ms maximum (4:00)', async () => {
