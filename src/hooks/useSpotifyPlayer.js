@@ -126,6 +126,9 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
         if (genRef.current !== gen) return
         if (!preview) transitioningRef.current = true   // suppress isPaused during advance gap
         await playerRef.current?.pause()
+        // A stop can land during the await above — re-check before advancing,
+        // and skip setVolume(0) too so a superseding play isn't muted.
+        if (genRef.current !== gen) return
         playerRef.current?.setVolume(0)
         if (!preview) onAdvanceRef.current?.()
       }
@@ -186,6 +189,9 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
       // getToken() thought this token was fresh — Spotify disagrees. Force a
       // refresh once and retry before giving up.
       const freshToken = await refreshToken()
+      // A newer playTrack call superseded this one while we awaited the
+      // refresh — don't retry a now-pointless play command for a stale uri.
+      if (genRef.current !== gen) return undefined
       if (!freshToken) {
         console.error('[playTrack] 401 on play and token refresh failed')
         return false
@@ -292,6 +298,9 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     await fadeVolume(maxVol, 0, gen)
     if (genRef.current !== gen) return
     await playerRef.current?.pause()
+    // A newer call (e.g. playTrack) may have started while we awaited the
+    // pause — don't zero the volume out from under it.
+    if (genRef.current !== gen) return
     playerRef.current?.setVolume(0)
   }, [])
 

@@ -388,7 +388,10 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
 
   // Escape key
   useEffect(() => {
-    const h = e => { if (e.key === 'Escape') onClose() }
+    const h = e => {
+      if (e.repeat) return
+      if (e.key === 'Escape') onClose()
+    }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
   }, [onClose])

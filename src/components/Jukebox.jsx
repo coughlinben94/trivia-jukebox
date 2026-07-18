@@ -336,6 +336,9 @@ const [newSetName, setNewSetName] = useState('')
     shuffleIdxRef.current = 0
     const song = targetSongs.find(t => t.id === order[0])
     prefetchPalette(song.album?.images?.[0]?.url)
+    // A new play supersedes any in-flight LiveScreen exit — clear liveEnding
+    // so the fresh session doesn't mount into the outgoing animation state.
+    setLiveEnding(false)
     setShuffleKey(k => k + 1)
     setPlayingId(song.id)
     setIsPlaying(true)
@@ -366,6 +369,9 @@ const [newSetName, setNewSetName] = useState('')
       shuffleOrderRef.current = order
       shuffleIdxRef.current = idx
       if (!song) return
+      // A new play supersedes any in-flight LiveScreen exit — clear liveEnding
+      // so the fresh session doesn't mount into the outgoing animation state.
+      setLiveEnding(false)
       setPlayingId(song.id)
       playTrackFn.current?.(song)?.then(started => {
         if (started !== false) return
@@ -494,6 +500,9 @@ const [newSetName, setNewSetName] = useState('')
       // Warm the first song's palette during play startup so LiveScreen's
       // usePalette hits cache at mount instead of re-rendering mid-entrance.
       prefetchPalette(song.album?.images?.[0]?.url)
+      // A new play supersedes any in-flight LiveScreen exit — clear liveEnding
+      // so the fresh session doesn't mount into the outgoing animation state.
+      setLiveEnding(false)
       setPlayingId(song.id)
       setIsPlaying(true)
       pendingLiveOpenRef.current = true
@@ -513,7 +522,7 @@ const [newSetName, setNewSetName] = useState('')
 
   const handleStop = useCallback(() => {
     clearTimeout(shuffleDebounceRef.current)
-    player.fadeAndPause()
+    const fadeDone = player.fadeAndPause()
     setIsPlaying(false)
     setPlayingId(null)
     if (showLive) {
@@ -521,6 +530,9 @@ const [newSetName, setNewSetName] = useState('')
     } else {
       setShowLive(false)
     }
+    // Returned so callers (SongDetailModal preview) can wait for the fade to
+    // finish before starting new playback instead of clobbering it mid-fade.
+    return fadeDone
   }, [player.fadeAndPause, showLive])
 
   const switchSet = (id) => {
@@ -572,16 +584,19 @@ const [newSetName, setNewSetName] = useState('')
 
   useEffect(() => {
     const handler = (e) => {
+      if (e.repeat) return
       if (e.code !== 'Space') return
       if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return
       if (modalTrack) return
       e.preventDefault()
       if (isPlaying) handleStop()
-      else startShuffle()
+      // While LiveScreen is animating out (liveEnding), ignore play — starting
+      // a track mid-exit would fight the transition. Stop is already a no-op here.
+      else if (!liveEnding) startShuffle()
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [isPlaying, handleStop, startShuffle, modalTrack])
+  }, [isPlaying, handleStop, startShuffle, modalTrack, liveEnding])
 
   useEffect(() => {
     const onDown = async (e) => {
@@ -703,6 +718,7 @@ const [newSetName, setNewSetName] = useState('')
                   value={newSetName}
                   onChange={e => setNewSetName(e.target.value)}
                   onKeyDown={e => {
+                    if (e.repeat) return
                     if (e.key === 'Enter') createSet()
                     if (e.key === 'Escape') { setAddingSet(false); setNewSetName('') }
                   }}

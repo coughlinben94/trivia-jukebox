@@ -44,8 +44,11 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose,
   // otherwise silently hijack it (no fade, and Jukebox's isPlaying/playingId/
   // Live-overlay state would go stale since it never learns playback moved
   // on). Stop the live session cleanly first so state stays consistent.
-  const handlePlay = () => {
-    if (isLiveShuffling && !isActive) onStopLiveShuffle?.()
+  const handlePlay = async () => {
+    // Wait for the live fade-out to finish before starting the preview —
+    // starting immediately would bump the player generation and cut the
+    // fade short (onStopLiveShuffle returns fadeAndPause's promise).
+    if (isLiveShuffling && !isActive) await onStopLiveShuffle?.()
     playTrack(track.uri, startMs, stopMs, true)
   }
   const handleStop = () => pause()
@@ -99,7 +102,10 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose,
   handleCloseRef.current = handleClose  // keep ref fresh so Escape handler always calls latest
 
   useEffect(() => {
-    const h = (e) => { if (e.key === 'Escape') handleCloseRef.current() }
+    const h = (e) => {
+      if (e.repeat) return
+      if (e.key === 'Escape') handleCloseRef.current()
+    }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
   }, [])  // stable: h always calls handleCloseRef.current which is always current
