@@ -98,6 +98,9 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
       player.setVolume(Math.max(0, Math.min(1, v)))
       await sleep(stepMs)
     }
+    // i/steps never reaches 1 inside the loop (i maxes out at steps-1), so the
+    // last applied value is one step short of `to` — land exactly on target.
+    if (genRef.current === gen) player.setVolume(Math.max(0, Math.min(1, to)))
     fadingRef.current = false
   }
 

@@ -40,11 +40,11 @@ function makeCircleParams() {
     // Amp up + radius down ~10% vs the ca8fb4d tuning: smaller blobs overlap
     // less, so the screen-blend washes to a single hue less often and distinct
     // palette colors stay co-visible. Periods 10–17s (was 12–20s) for a bit
-    // more background motion.
+    // more background motion. Frequency +10% again for faster flow.
     xAmp:   0.33,
     yAmp:   0.33,
-    xFreq:  1 / (10 + rng(i, 2) * 7),
-    yFreq:  1 / (10 + rng(i, 3) * 7),
+    xFreq:  1.1 / (10 + rng(i, 2) * 7),
+    yFreq:  1.1 / (10 + rng(i, 3) * 7),
     xPhase: rng(i, 4) * Math.PI * 2,
     yPhase: rng(i, 5) * Math.PI * 2,
     radius: 0.50 + rng(i, 6) * 0.13,

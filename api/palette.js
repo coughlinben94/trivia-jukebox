@@ -37,7 +37,18 @@ export default async function handler(req, res) {
       pixels.push([data[i], data[i + 1], data[i + 2]]);
     }
 
-    const colors = medianCut(pixels, 6);
+    // Drop near-black pixels before quantising — a black border, letterboxing,
+    // or a mostly-black cover shouldn't win a median-cut bucket and end up
+    // driving a blob. Keep anything with real luminance so the gradient
+    // favors the other colors on the cover. If the art really is all black
+    // (filtering leaves too few points to be meaningful), fall back to the
+    // unfiltered set rather than starving medianCut of input.
+    const LUMA_THRESHOLD = 30;
+    const luma = ([r, g, b]) => 0.299 * r + 0.587 * g + 0.114 * b;
+    const litPixels = pixels.filter(p => luma(p) >= LUMA_THRESHOLD);
+    const source = litPixels.length >= pixels.length * 0.05 ? litPixels : pixels;
+
+    const colors = medianCut(source, 6);
 
     // Album art URLs are stable — cache aggressively
     res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');

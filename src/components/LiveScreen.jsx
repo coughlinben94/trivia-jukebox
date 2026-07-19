@@ -136,6 +136,13 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
     mountedRef.current = true
 
     async function runEntrance() {
+      // Set when a pending skip is handed off to runTransition below — from
+      // that point runTransition owns busyRef exclusively (it clears it at
+      // its own exit points ~2.8s later). Without this flag the unconditional
+      // reset in `finally` fires after this function's own 600ms sleep and
+      // clobbers busyRef mid-transition, letting a second skip race the
+      // still-running fly/arm sequence.
+      let handedOffToTransition = false
       try {
         setTextInstant(true)
         busyRef.current = true
@@ -180,6 +187,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         if (pendingRef.current && pendingRef.current.uri !== shown?.uri) {
           const pending = pendingRef.current
           pendingRef.current = null
+          handedOffToTransition = true
           runTransitionRef.current?.(pending)
         }
 
@@ -190,7 +198,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         await sleep(600)
       } finally {
         setEntranceActive(false)
-        busyRef.current = false
+        if (!handedOffToTransition) busyRef.current = false
       }
     }
 
@@ -280,7 +288,17 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       t3 = setTimeout(() => setClosing(true), 1650)
       t4 = setTimeout(onClose, 1850)
     }, 400)
-    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4) }
+    // Fires either when `ending` flips back to false (Jukebox supersedes an
+    // in-flight exit — e.g. song restarted within the close window) or on
+    // unmount. Either way, reset the flags this effect set so a superseded
+    // exit doesn't leave busyRef stuck true — which would silently swallow
+    // every subsequent track change into pendingRef forever with the record
+    // stranded mid fly-off.
+    return () => {
+      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4)
+      busyRef.current = false
+      setTransitioning(false)
+    }
   }, [ending])
 
   // Hide text immediately when a new track arrives — instant (no fade) before runTransition fires
