@@ -1,8 +1,22 @@
 import { useState, useEffect, useRef, memo } from 'react'
 import { motion, useAnimation } from 'framer-motion'
 import AlbumGradient from './AlbumGradient'
+import AlbumGradientNoise from './AlbumGradientNoise'
 import { usePalette } from '../hooks/usePalette'
 import { displayName } from '../lib/track'
+
+// Opt-in flag for the experimental WebGL noise-flow background — the canvas2D
+// AlbumGradient stays the default (proven, tuned, no WebGL dependency). Flip
+// on live via URL (?gradient=noise) or persist with
+// localStorage.setItem('trivia_gradient_engine', 'noise') in devtools — either
+// way it's instant, no redeploy needed to test or to revert.
+// Not a real hook (no React state/effects) — plain function, just named to
+// signal it's read at render time rather than cached once at module load.
+function getNoiseGradientFlag() {
+  if (typeof window === 'undefined') return false
+  if (new URLSearchParams(window.location.search).get('gradient') === 'noise') return true
+  return localStorage.getItem('trivia_gradient_engine') === 'noise'
+}
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
@@ -55,6 +69,10 @@ function Tonearm({ controls }) {
 // change on that cadence, so memo() keeps it from redoing its render work — title-fit
 // measurement, palette lookups, the whole record/tonearm JSX tree — 3.3x/second for nothing.
 function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpcomingTrack }) {
+  // Read once per mount, not per render — avoids re-checking localStorage/URL
+  // on every position-tick re-render this component already gets a lot of.
+  const [useNoiseGradient] = useState(getNoiseGradientFlag)
+  const GradientBg = useNoiseGradient ? AlbumGradientNoise : AlbumGradient
   const [shown, setShown]                 = useState(currentTrack)
   const [prev,  setPrev]                  = useState(null)
   const [transitioning, setTransitioning] = useState(false)
@@ -418,7 +436,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   return (
     <div className={`fixed inset-0 bg-black z-50 overflow-hidden flex flex-col items-center justify-start transition-opacity duration-200 ${closing ? 'opacity-0' : 'opacity-100'}`}>
 
-      <AlbumGradient colors={paletteColors} nextColors={upcomingPaletteColors} active={!isPaused || transitioning} shuffleKey={shuffleKey} entranceActive={entranceActive} />
+      <GradientBg colors={paletteColors} nextColors={upcomingPaletteColors} active={!isPaused || transitioning} shuffleKey={shuffleKey} entranceActive={entranceActive} />
 
       <div className="relative z-10 flex flex-col items-center gap-8 px-10 text-center max-w-lg w-full" style={{ paddingTop: '15vh' }}>
         {shown ? (
