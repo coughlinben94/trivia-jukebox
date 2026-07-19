@@ -259,7 +259,18 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
         for (let i = 0; i < NUM_COLORS; i++) {
           const seed = colorSeeds[i]
           const n = pseudoNoise(u + wx + seed.seedU, v + wy + seed.seedV, t + i * 1.3)
-          const w = Math.max(0, n * 0.5 + 0.5) // linear — no sharpening, stays a blend
+          // Squared, not linear. Zero exponent (the previous tuning) kept every
+          // color's weight clustered near 0.5 always, so the 5-color weighted
+          // average barely moved from "average of the palette" anywhere on
+          // screen — read as one flat wash with no visible color separation or
+          // motion. Squaring widens the spread between a noise field's high and
+          // low points before normalizing across colors, so one color can
+          // actually dominate a region instead of everything blending equally
+          // everywhere — restores distinct color regions and, since those
+          // regions now visibly change as the noise animates, visible motion.
+          // Still far short of the old pow(n, 1.6) marble-vein exponent — this
+          // stays a soft blend, not all-or-nothing.
+          const w = Math.pow(Math.max(0, n * 0.5 + 0.5), 2)
           const [pl, pa, pb] = oklabColors[i]
           L += pl * w; a += pa * w; b += pb * w; total += w
         }
