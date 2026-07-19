@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, memo } from 'react'
 import { motion, useAnimation } from 'framer-motion'
 import AlbumGradient from './AlbumGradient'
 import { usePalette } from '../hooks/usePalette'
+import { displayName } from '../lib/track'
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
@@ -484,7 +485,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                 className="text-4xl sm:text-5xl font-bold text-white tracking-tight leading-tight mb-2"
                 style={titleScale < 1 ? { fontSize: `${(titleBasePxRef.current ?? 48) * titleScale}px` } : undefined}
               >
-                {shown.name}
+                {displayName(shown.name)}
               </h1>
               <p className="text-xl text-white font-medium">
                 {shown.artists?.map(a => a.name).join(', ')}

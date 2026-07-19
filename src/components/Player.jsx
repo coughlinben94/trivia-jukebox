@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { displayName } from '../lib/track'
 
 function fmt(ms) {
   const s = Math.floor(ms / 1000)
@@ -57,7 +58,7 @@ export default function Player({ player, isPlaying, onPlay, onStop, onSkip, libr
           <div className="min-w-0">
             {currentTrack ? (
               <>
-                <p className="text-sm font-semibold text-white truncate leading-tight">{currentTrack.name}</p>
+                <p className="text-sm font-semibold text-white truncate leading-tight">{displayName(currentTrack.name)}</p>
                 <p className="text-xs text-white truncate mt-0.5">
                   {currentTrack.artists?.map(a => a.name).join(', ')}
                 </p>
