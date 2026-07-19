@@ -86,12 +86,15 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
   }, [])
 
   // ─── Fade helpers ───────────────────────────────────────────────
-  const fadeVolume = async (from, to, gen) => {
+  // durationMs defaults to FADE_MS but callers can pass a shorter window when
+  // there isn't a full FADE_MS of room outside the trimmed in/out points to
+  // spend on the fade (see playTrack/startMonitor).
+  const fadeVolume = async (from, to, gen, durationMs = FADE_MS) => {
     const player = playerRef.current
     if (!player) return
     fadingRef.current = true
     const steps = FADE_STEPS
-    const stepMs = FADE_MS / steps
+    const stepMs = durationMs / steps
     for (let i = 0; i < steps; i++) {
       if (genRef.current !== gen) { fadingRef.current = false; return }
       const v = from + (to - from) * (i / steps)
@@ -121,11 +124,18 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
       if (!state.paused) setPosition(pos)
 
       const maxVol = maxVolumeRef.current
+      // Trigger AT stopMs, not FADE_MS before it — the trimmed-in content plays
+      // at full volume the whole way through the out-point; the fade spends
+      // whatever track time is left AFTER stopMs instead of eating into it.
       // Guard !state.paused: don't trigger on Spotify's own buffering pauses near stopMs
-      if (stopMs > 0 && pos >= stopMs - FADE_MS && !state.paused) {
+      if (stopMs > 0 && pos >= stopMs && !state.paused) {
         clearInterval(intervalId)
         if (!preview) onFadeStartRef.current?.()
-        await fadeVolume(maxVol, 0, gen)
+        // Clamp to whatever's actually left in the track — if stopMs is at (or
+        // near) the track's natural end there's no outside room to fade into.
+        const roomAfter = Math.max(0, (state.duration || stopMs) - stopMs)
+        const fadeMs = Math.min(FADE_MS, roomAfter)
+        await fadeVolume(maxVol, 0, gen, fadeMs)
         if (genRef.current !== gen) return
         if (!preview) transitioningRef.current = true   // suppress isPaused during advance gap
         await playerRef.current?.pause()
@@ -239,7 +249,16 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
       }
     }
 
-    if (startMs > 0) {
+    // Pre-roll: seek to just BEFORE startMs (not startMs itself) and spend the
+    // fade-in ramping through that pre-roll, so full volume is reached right
+    // as playback crosses the actual in-point — the trimmed content itself
+    // never plays at anything less than full volume. Clamped to whatever room
+    // exists before startMs (0 if the in-point is already the track's start —
+    // nothing to pre-roll into, so there's no fade to do).
+    const preRollMs = Math.min(FADE_MS, startMs)
+    const seekMs = startMs - preRollMs
+
+    if (seekMs > 0) {
       // Give Spotify 400ms to buffer the start of the track before seeking
       await sleep(400)
       if (genRef.current !== gen) return undefined
@@ -248,22 +267,22 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
         // REST API seek only — more reliable than SDK seek; using both caused a double-seek glitch
         const t = await getToken()
         await fetch(
-          `https://api.spotify.com/v1/me/player/seek?position_ms=${startMs}&device_id=${deviceId}`,
+          `https://api.spotify.com/v1/me/player/seek?position_ms=${seekMs}&device_id=${deviceId}`,
           { method: 'PUT', headers: { Authorization: `Bearer ${t}` } }
         )
       }
 
       await doSeek()
 
-      // Poll until position lands at or just past the in-point.
-      // Allow up to 300ms before startMs to handle slight Spotify overshoot.
-      // Reject if position is still far before startMs — that means seek hasn't landed yet.
+      // Poll until position lands at or just past the pre-roll point.
+      // Allow up to 300ms before seekMs to handle slight Spotify overshoot.
+      // Reject if position is still far before seekMs — that means seek hasn't landed yet.
       const landed = await new Promise(resolve => {
         const deadline = setTimeout(() => resolve(false), 3000)
         const poll = setInterval(async () => {
           const s = await player.getCurrentState()
           if (!s) return
-          if (s.position >= startMs - 300 && s.position <= startMs + 5000) {
+          if (s.position >= seekMs - 300 && s.position <= seekMs + 5000) {
             clearInterval(poll)
             clearTimeout(deadline)
             resolve(true)
@@ -283,7 +302,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     if (genRef.current !== gen) return undefined
 
     const maxVol = maxVolumeRef.current
-    await fadeVolume(0, maxVol, gen)
+    await fadeVolume(0, maxVol, gen, preRollMs)
 
     if (genRef.current !== gen) return undefined
 

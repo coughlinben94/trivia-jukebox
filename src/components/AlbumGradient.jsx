@@ -34,20 +34,33 @@ function makeCircleParams() {
     const x = Math.sin((i * 7 + slot) * 9301 + 49297) * 233280
     return x - Math.floor(x)
   }
+  // Every circle shares one period instead of each rolling its own random
+  // frequency — independent frequencies is what read as six blobs wandering
+  // with no relationship to each other. A shared beat, phase-staggered evenly
+  // around the group (i/NUM_CIRCLES of a turn apart) with x/y a quarter-cycle
+  // apart per circle (so each one traces a circular orbit, not a straight
+  // back-and-forth), reads as one coordinated motion — like dancers doing the
+  // same move offset in time — instead of independent drifting.
+  // Period 10.27s ≈ (10+3.5*7)/1.265, keeping the same +10%-then-+15% speed
+  // bumps previously applied per-circle.
+  const sharedFreq = 1.265 / 10.27
   return Array.from({ length: NUM_CIRCLES }, (_, i) => ({
     baseX:  0.10 + rng(i, 0) * 0.80,
     baseY:  0.10 + rng(i, 1) * 0.80,
     // Amp up + radius down ~10% vs the ca8fb4d tuning: smaller blobs overlap
     // less, so the screen-blend washes to a single hue less often and distinct
-    // palette colors stay co-visible. Periods 10–17s (was 12–20s) for a bit
-    // more background motion. Frequency +10% again for faster flow.
+    // palette colors stay co-visible.
     xAmp:   0.33,
     yAmp:   0.33,
-    xFreq:  1.1 / (10 + rng(i, 2) * 7),
-    yFreq:  1.1 / (10 + rng(i, 3) * 7),
-    xPhase: rng(i, 4) * Math.PI * 2,
-    yPhase: rng(i, 5) * Math.PI * 2,
-    radius: 0.50 + rng(i, 6) * 0.13,
+    xFreq:  sharedFreq,
+    yFreq:  sharedFreq,
+    xPhase: (i / NUM_CIRCLES) * Math.PI * 2,
+    yPhase: (i / NUM_CIRCLES) * Math.PI * 2 + Math.PI / 2,
+    // Big enough that the edge is essentially always off-canvas — you only
+    // ever see a curved wash of color sweeping through, never the full round
+    // silhouette. A soft edge alone doesn't fix this (soft-edged is still
+    // shaped like a closed round patch); running the edge off-screen does.
+    radius: 0.95 + rng(i, 6) * 0.35,
   }))
 }
 
@@ -231,10 +244,23 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
           const buildLayer = (rgbArr) => rgbArr.map(([R, G, B], i) => {
             const r = circleParams[i].radius * maxDim
             const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r)
-            // Soft falloff from the center out — no flat dense core that reads as a solid object.
-            g.addColorStop(0,    `rgba(${R},${G},${B},0.55)`)
-            g.addColorStop(0.45, `rgba(${R},${G},${B},0.22)`)
-            g.addColorStop(1,    `rgba(${R},${G},${B},0)`)
+            // Gradual multi-stop falloff — canvas gradients interpolate linearly
+            // between stops, so a 2-3 stop gradient still reads as a circle with
+            // a soft edge. Enough stops approximating an exponential decay to
+            // where alpha is imperceptible well before the outer radius — no
+            // discernible boundary, just a color wash.
+            // Peak alpha tuned down from the very first pass (radius grew ~80%
+            // so overlap/screen-blend accumulation went up), but the outer stop
+            // is a small floor (0.02) instead of exactly 0 — with radius this
+            // large every point on screen sits inside all six gradients' reach,
+            // so a nonzero floor means color everywhere, no patches of bare
+            // near-black base showing through between blob centers.
+            g.addColorStop(0,    `rgba(${R},${G},${B},0.34)`)
+            g.addColorStop(0.15, `rgba(${R},${G},${B},0.24)`)
+            g.addColorStop(0.30, `rgba(${R},${G},${B},0.16)`)
+            g.addColorStop(0.50, `rgba(${R},${G},${B},0.09)`)
+            g.addColorStop(0.70, `rgba(${R},${G},${B},0.045)`)
+            g.addColorStop(1,    `rgba(${R},${G},${B},0.02)`)
             return { grad: g, r }
           })
           blendCacheRef.current = { maxDim, out: buildLayer(s.outRgb), in: buildLayer(s.inRgb) }
@@ -287,9 +313,12 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
             entries: s.steadyRgb.map(([R, G, B], i) => {
               const r    = circleParams[i].radius * maxDim
               const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, r)
-              grad.addColorStop(0,    `rgba(${R},${G},${B},0.55)`)
-              grad.addColorStop(0.45, `rgba(${R},${G},${B},0.22)`)
-              grad.addColorStop(1,    `rgba(${R},${G},${B},0)`)
+              grad.addColorStop(0,    `rgba(${R},${G},${B},0.34)`)
+              grad.addColorStop(0.15, `rgba(${R},${G},${B},0.24)`)
+              grad.addColorStop(0.30, `rgba(${R},${G},${B},0.16)`)
+              grad.addColorStop(0.50, `rgba(${R},${G},${B},0.09)`)
+              grad.addColorStop(0.70, `rgba(${R},${G},${B},0.045)`)
+              grad.addColorStop(1,    `rgba(${R},${G},${B},0.02)`)
               return { grad, r }
             }),
           }

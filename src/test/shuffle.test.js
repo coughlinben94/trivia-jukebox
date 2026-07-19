@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { shuffleArray, resolveNext, resolveUpcoming } from '../lib/shuffle'
+import { shuffleArray, resolveNext, resolveUpcoming, buildSessionOrder } from '../lib/shuffle'
 
 function song(id) { return { id, name: id } }
 
@@ -64,6 +64,47 @@ describe('resolveNext', () => {
   it('returns null song when the library is empty', () => {
     const { song: next } = resolveNext(['a'], 0, [])
     expect(next).toBeNull()
+  })
+
+  it('excludes already-played ids from the reshuffle pool', () => {
+    const lib = [song('a'), song('b'), song('c')]
+    const order = ['a', 'b', 'c']
+    const playedIds = new Set(['a', 'b']) // only 'c' left unplayed this session
+    const { order: newOrder, song: next } = resolveNext(order, 2, lib, playedIds)
+    expect(newOrder).toEqual(['c'])
+    expect(next.id).toBe('c')
+  })
+
+  it('starts a fresh lap (and clears playedIds) once every song has played', () => {
+    const lib = [song('a'), song('b'), song('c')]
+    const order = ['a', 'b', 'c']
+    const playedIds = new Set(['a', 'b', 'c']) // whole library already had a turn
+    const { order: newOrder } = resolveNext(order, 2, lib, playedIds)
+    expect(new Set(newOrder)).toEqual(new Set(['a', 'b', 'c']))
+    expect(playedIds.size).toBe(0) // cleared so the new lap can track fresh
+  })
+})
+
+describe('buildSessionOrder', () => {
+  it('draws only from songs not yet played this session', () => {
+    const lib = [song('a'), song('b'), song('c')]
+    const playedIds = new Set(['a', 'c'])
+    const order = buildSessionOrder(lib, playedIds)
+    expect(order).toEqual(['b'])
+  })
+
+  it('uses the full library when playedIds is empty', () => {
+    const lib = [song('a'), song('b')]
+    const order = buildSessionOrder(lib, new Set())
+    expect(new Set(order)).toEqual(new Set(['a', 'b']))
+  })
+
+  it('starts a new lap once the whole library has played', () => {
+    const lib = [song('a'), song('b')]
+    const playedIds = new Set(['a', 'b'])
+    const order = buildSessionOrder(lib, playedIds)
+    expect(new Set(order)).toEqual(new Set(['a', 'b']))
+    expect(playedIds.size).toBe(0)
   })
 })
 

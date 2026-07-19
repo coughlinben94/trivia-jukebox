@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { searchTracks, logout } from '../lib/spotify'
 import { supabase } from '../lib/supabase'
 import { slimTrack, songNeedsSlim } from '../lib/track'
-import { shuffleArray, resolveNext, resolveUpcoming } from '../lib/shuffle'
+import { shuffleArray, resolveNext, resolveUpcoming, buildSessionOrder } from '../lib/shuffle'
 import { useSpotifyPlayer } from '../hooks/useSpotifyPlayer'
 import { prefetchPalette } from '../hooks/usePalette'
 import Player from './Player'
@@ -94,6 +94,15 @@ const [newSetName, setNewSetName] = useState('')
   // race where the 500ms debounce fires before we know what the remote row contains.
   const syncCompletedRef          = useRef(false)
   const libParamHandledRef        = useRef(false)
+  // updated_at of the remote row as of the last sets we know we're caught up
+  // with (initial sync, an applied realtime update, a visibility resync, or
+  // our own successful write). writeToSupabase compares against this before
+  // upserting — if the remote has moved on without us (e.g. a realtime event
+  // silently missed after the tab was backgrounded/asleep), our in-memory
+  // `sets` is stale and must NOT be allowed to overwrite whatever's actually
+  // on the server (this is how trim in/out points previously got wiped: a
+  // stale tab's full-state write silently reverted a newer one).
+  const lastAppliedUpdatedAtRef   = useRef(null)
   // Set by the realtime handler when an incoming update is dropped because a
   // local write is in-flight. The debounced writer merges any songs in here
   // that aren't already local (e.g. a QuickAdd) before it upserts, so a
@@ -141,13 +150,50 @@ const [newSetName, setNewSetName] = useState('')
         if (data?.sets && totalSongs(data.sets) > 0) return  // remote has data — abort
       } catch { return }  // cannot verify remote state — do not risk it
     }
+
+    // Guard 3 — compare-and-swap on updated_at. If the remote row has moved on
+    // since the last sets we know we're caught up with, and it wasn't our own
+    // last write, this tab's `sets` is stale (most likely: a realtime UPDATE
+    // event was silently missed while backgrounded/asleep). Writing `outgoing`
+    // now would blindly overwrite someone else's newer edit — pull the fresh
+    // remote state in instead and bail, rather than reverting it.
+    // Skipped when a stash was just merged above — that merge already folds
+    // in the concurrent remote change, so this write is the correct catch-up,
+    // not a stale overwrite (checking here would just discard the merge and
+    // drop our own pending edit instead).
+    if (!stashed && lastAppliedUpdatedAtRef.current) {
+      try {
+        // Cheap check first (no sets payload) — only pull the full row if it
+        // actually looks stale, to avoid doubling payload size on every write.
+        const { data: check } = await supabase
+          .from('jukebox_state').select('updated_at, last_writer').eq('id', 'singleton').single()
+        if (
+          check &&
+          check.updated_at !== lastAppliedUpdatedAtRef.current &&
+          check.last_writer !== sessionIdRef.current
+        ) {
+          const { data: remoteRow } = await supabase
+            .from('jukebox_state').select('sets, updated_at').eq('id', 'singleton').single()
+          if (remoteRow?.sets) {
+            lastAppliedUpdatedAtRef.current = remoteRow.updated_at
+            justLoadedFromSupabaseRef.current = true
+            setSets(remoteRow.sets)
+            localStorage.setItem('trivia_sets', JSON.stringify(remoteRow.sets))
+          }
+          return
+        }
+      } catch { return }  // cannot verify remote state — do not risk overwriting it
+    }
+
+    const nowIso = new Date().toISOString()
     try {
       await supabase.from('jukebox_state').upsert({
         id: 'singleton',
         sets: outgoing,
         last_writer: sessionIdRef.current,
-        updated_at: new Date().toISOString(),
+        updated_at: nowIso,
       })
+      lastAppliedUpdatedAtRef.current = nowIso
     } catch { /* silent — localStorage is always the local fallback */ }
   }, [])
 
@@ -182,7 +228,7 @@ const [newSetName, setNewSetName] = useState('')
       try {
         const { data, error } = await supabase
           .from('jukebox_state')
-          .select('sets')
+          .select('sets, updated_at')
           .eq('id', 'singleton')
           .single()
         if (error || !data?.sets) return
@@ -192,17 +238,20 @@ const [newSetName, setNewSetName] = useState('')
           const lsSets = loadSets()
           if (totalSongs(lsSets) > 0) {
             try {
+              const nowIso = new Date().toISOString()
               await supabase.from('jukebox_state').upsert({
                 id: 'singleton',
                 sets: lsSets,
                 last_writer: sessionIdRef.current,
-                updated_at: new Date().toISOString(),
+                updated_at: nowIso,
               })
+              lastAppliedUpdatedAtRef.current = nowIso
             } catch { /* migration failed silently — localStorage remains the truth */ }
           }
         } else {
           // Remote has songs — use it as the source of truth
           justLoadedFromSupabaseRef.current = true
+          lastAppliedUpdatedAtRef.current = data.updated_at
           setSets(sbSets)
           localStorage.setItem('trivia_sets', JSON.stringify(sbSets))
         }
@@ -241,6 +290,7 @@ const [newSetName, setNewSetName] = useState('')
           }
           // Guard 2 — never let an empty/default incoming state wipe a populated local library
           if (totalSongs(incoming) === 0 && totalSongs(setsRef.current) > 0) return
+          lastAppliedUpdatedAtRef.current = payload.new?.updated_at ?? lastAppliedUpdatedAtRef.current
           setSets(incoming)
           localStorage.setItem('trivia_sets', JSON.stringify(incoming))
         }
@@ -249,8 +299,41 @@ const [newSetName, setNewSetName] = useState('')
     return () => { supabase.removeChannel(channel) }
   }, [])
 
+  // Realtime subscriptions can silently stop delivering events after a tab is
+  // backgrounded or the laptop sleeps (websocket drops with no error), so a
+  // long-open tab can drift out of sync without ever knowing it. Re-pull the
+  // remote row whenever the tab regains focus and apply it if it's actually
+  // newer — same guards as the realtime handler above, just polled on regain
+  // instead of pushed. Skips while a local edit is mid-debounce so it can't
+  // stomp something the user just typed.
+  useEffect(() => {
+    const onVisible = async () => {
+      if (document.visibilityState !== 'visible') return
+      if (!syncCompletedRef.current) return
+      if (supabaseDebounceRef.current !== null) return
+      try {
+        const { data } = await supabase
+          .from('jukebox_state').select('sets, updated_at').eq('id', 'singleton').single()
+        if (!data?.sets) return
+        if (data.updated_at === lastAppliedUpdatedAtRef.current) return  // already current
+        if (totalSongs(data.sets) === 0 && totalSongs(setsRef.current) > 0) return  // Guard 2
+        lastAppliedUpdatedAtRef.current = data.updated_at
+        justLoadedFromSupabaseRef.current = true
+        setSets(data.sets)
+        localStorage.setItem('trivia_sets', JSON.stringify(data.sets))
+      } catch { /* offline — keep showing local state, next regain will retry */ }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [])
+
   const shuffleOrderRef = useRef([])
   const shuffleIdxRef = useRef(0)
+  // Ids played so far this session (cleared only when the tab reloads, i.e.
+  // once per night). Consulted by buildSessionOrder/resolveNext so pressing
+  // Shuffle-play again mid-night never repeats a song until every track in
+  // the library has had a turn — then a new lap starts and it clears itself.
+  const playedIdsRef = useRef(new Set())
   const debounceRef = useRef(null)
   const searchTokenRef = useRef(0)
   const shuffleDebounceRef = useRef(null)
@@ -332,10 +415,11 @@ const [newSetName, setNewSetName] = useState('')
     // first and startShuffle immediately after would shuffle the OLD active set.
     // Capturing targetSongs from setsRef before any state update sidesteps that race.
     clearTimeout(shuffleDebounceRef.current)
-    const order = shuffleArray(targetSongs.map(t => t.id))
+    const order = buildSessionOrder(targetSongs, playedIdsRef.current)
     shuffleOrderRef.current = order
     shuffleIdxRef.current = 0
     const song = targetSongs.find(t => t.id === order[0])
+    playedIdsRef.current.add(song.id)
     prefetchPalette(song.album?.images?.[0]?.url)
     // A new play supersedes any in-flight LiveScreen exit — clear liveEnding
     // so the fresh session doesn't mount into the outgoing animation state.
@@ -366,10 +450,11 @@ const [newSetName, setNewSetName] = useState('')
     // onClick, which would otherwise pass the click event as an arg.
     const tryPlay = (isRetry) => {
       const lib = libraryRef.current
-      const { order, idx, song } = resolveNext(shuffleOrderRef.current, shuffleIdxRef.current, lib)
+      const { order, idx, song } = resolveNext(shuffleOrderRef.current, shuffleIdxRef.current, lib, playedIdsRef.current)
       shuffleOrderRef.current = order
       shuffleIdxRef.current = idx
       if (!song) return
+      playedIdsRef.current.add(song.id)
       // A new play supersedes any in-flight LiveScreen exit — clear liveEnding
       // so the fresh session doesn't mount into the outgoing animation state.
       setLiveEnding(false)
@@ -494,10 +579,11 @@ const [newSetName, setNewSetName] = useState('')
     shuffleDebounceRef.current = setTimeout(async () => {
       if (library.length === 0) return
       setShuffleKey(k => k + 1)
-      const order = shuffleArray(library.map(t => t.id))
+      const order = buildSessionOrder(library, playedIdsRef.current)
       shuffleOrderRef.current = order
       shuffleIdxRef.current = 0
       const song = library.find(t => t.id === order[0])
+      playedIdsRef.current.add(song.id)
       // Warm the first song's palette during play startup so LiveScreen's
       // usePalette hits cache at mount instead of re-rendering mid-entrance.
       prefetchPalette(song.album?.images?.[0]?.url)
