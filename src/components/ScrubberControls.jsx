@@ -39,7 +39,15 @@ export function TimeField({ label, value, minMs = 0, maxMs, onChange }) {
           value={raw}
           onChange={e => setRaw(e.target.value)}
           onBlur={commit}
-          onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') commit()
+            if (e.key === 'Escape') {
+              // Cancel just this field edit — stop the event so the modal's
+              // window-level Escape handler doesn't also close the whole modal.
+              e.stopPropagation()
+              setEditing(false)
+            }
+          }}
           className="w-16 text-center text-sm font-mono font-bold bg-white/[0.08] text-white rounded-lg px-2 py-1.5 outline-none border border-accent/50"
         />
       ) : (

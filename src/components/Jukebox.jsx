@@ -254,6 +254,7 @@ const [newSetName, setNewSetName] = useState('')
   const debounceRef = useRef(null)
   const searchTokenRef = useRef(0)
   const shuffleDebounceRef = useRef(null)
+  const handoffHoldRef = useRef(null)
   const playTrackFn = useRef(null)
   const onUpcomingTrackRef = useRef(null)
   const pendingUriRef = useRef(null)
@@ -516,9 +517,12 @@ const [newSetName, setNewSetName] = useState('')
         setIsPlaying(false)
         setShowLive(false)
         setPlayingId(null)
+        // Surface the failure — without this the click is a silent no-op
+        // (e.g. another tab/device grabbed the Spotify session mid-start).
+        addToast('Couldn’t start playback — another session may be controlling Spotify')
       }
     }, 400)
-  }, [library])
+  }, [library, addToast])
 
   const handleStop = useCallback(() => {
     clearTimeout(shuffleDebounceRef.current)
@@ -550,6 +554,15 @@ const [newSetName, setNewSetName] = useState('')
   const createSet = () => {
     const name = newSetName.trim()
     if (!name) return
+    // Block duplicate names (case-insensitive) — covers 'Main Library' too,
+    // since the default library is a real entry in sets.items.
+    const duplicate = Object.values(sets.items).some(
+      s => s.name.trim().toLowerCase() === name.toLowerCase()
+    )
+    if (duplicate) {
+      addToast(`A set named “${name}” already exists`)
+      return  // keep the input open so the user can retry
+    }
     const id = uid()
     setSets(prev => ({
       ...prev,
@@ -599,22 +612,48 @@ const [newSetName, setNewSetName] = useState('')
   }, [isPlaying, handleStop, startShuffle, modalTrack, liveEnding])
 
   useEffect(() => {
-    const onDown = async (e) => {
+    const onDown = (e) => {
       if (e.repeat) return
       if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return
       if (e.target.isContentEditable) return
       if (modalTrack) return
       if (e.key === 'b') {
-        // Flush any pending debounced Supabase write first — otherwise an edit
-        // made just before handing back to trivia-os (add/reorder/trim/rename)
-        // gets silently dropped when the tab navigates mid-debounce.
-        await flushPendingWrite()
-        window.location.href = 'https://trivia-os.vercel.app/display?from=jukebox'
+        // Hold-to-confirm: a quick tap does nothing (too easy to hit mid-show).
+        // Only a ~500ms hold triggers the handoff; keyup below cancels the timer.
+        // e.repeat guard above keeps auto-repeat from refiring this during the hold.
+        handoffHoldRef.current = setTimeout(async () => {
+          handoffHoldRef.current = null
+          if (isPlaying || showLive) {
+            // Play the same stop-and-animate exit spacebar uses (fade audio,
+            // LiveScreen tonearm lift + record fly-up) instead of cutting to
+            // trivia-os mid-song. Wait matches LiveScreen's exit sequence:
+            // 400ms lead-in + 1850ms to onClose (see its ending effect).
+            handleStop()
+            await new Promise(r => setTimeout(r, 2250))
+          }
+          // Flush any pending debounced Supabase write first — otherwise an edit
+          // made just before handing back to trivia-os (add/reorder/trim/rename)
+          // gets silently dropped when the tab navigates mid-debounce.
+          await flushPendingWrite()
+          window.location.href = 'https://trivia-os.vercel.app/display?from=jukebox'
+        }, 500)
       }
     }
+    const onUp = (e) => {
+      if (e.key !== 'b') return
+      // Released before the hold threshold — cancel cleanly, no side effects.
+      clearTimeout(handoffHoldRef.current)
+      handoffHoldRef.current = null
+    }
     window.addEventListener('keydown', onDown)
-    return () => window.removeEventListener('keydown', onDown)
-  }, [modalTrack, flushPendingWrite])
+    window.addEventListener('keyup', onUp)
+    return () => {
+      window.removeEventListener('keydown', onDown)
+      window.removeEventListener('keyup', onUp)
+      clearTimeout(handoffHoldRef.current)
+      handoffHoldRef.current = null
+    }
+  }, [modalTrack, flushPendingWrite, isPlaying, showLive, handleStop])
 
   const handleDragStart = (i) => { dragIdxRef.current = i }
   const handleDragOver = (e, i) => {
