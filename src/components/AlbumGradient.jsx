@@ -56,11 +56,14 @@ function makeCircleParams() {
     yFreq:  sharedFreq,
     xPhase: (i / NUM_CIRCLES) * Math.PI * 2,
     yPhase: (i / NUM_CIRCLES) * Math.PI * 2 + Math.PI / 2,
-    // Big enough that the edge is essentially always off-canvas — you only
-    // ever see a curved wash of color sweeping through, never the full round
-    // silhouette. A soft edge alone doesn't fix this (soft-edged is still
-    // shaped like a closed round patch); running the edge off-screen does.
-    radius: 0.95 + rng(i, 6) * 0.35,
+    // Reverted from 0.95–1.3: at that size every blob was bigger than the
+    // canvas and all six overlapped almost fully at all times, so screen-blend
+    // washed everything to one flat color and the 0.33-amplitude drift moved
+    // a blob far larger than the screen — imperceptible. Back to the
+    // known-good 0.50–0.63 range (pre-9b748d1): blobs stay distinct enough
+    // for separate palette hues to read, and the same drift amplitude now
+    // moves a meaningful fraction of the blob's own size, so motion is visible.
+    radius: 0.50 + rng(i, 6) * 0.13,
   }))
 }
 
@@ -249,18 +252,19 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
             // a soft edge. Enough stops approximating an exponential decay to
             // where alpha is imperceptible well before the outer radius — no
             // discernible boundary, just a color wash.
-            // Peak alpha tuned down from the very first pass (radius grew ~80%
-            // so overlap/screen-blend accumulation went up), but the outer stop
-            // is a small floor (0.02) instead of exactly 0 — with radius this
-            // large every point on screen sits inside all six gradients' reach,
-            // so a nonzero floor means color everywhere, no patches of bare
-            // near-black base showing through between blob centers.
-            g.addColorStop(0,    `rgba(${R},${G},${B},0.34)`)
-            g.addColorStop(0.15, `rgba(${R},${G},${B},0.24)`)
-            g.addColorStop(0.30, `rgba(${R},${G},${B},0.16)`)
-            g.addColorStop(0.50, `rgba(${R},${G},${B},0.09)`)
-            g.addColorStop(0.70, `rgba(${R},${G},${B},0.045)`)
-            g.addColorStop(1,    `rgba(${R},${G},${B},0.02)`)
+            // Peak alpha restored to 0.50 (was dropped to 0.34 alongside the
+            // radius blow-up, which made colors read weak/washed). Floor back
+            // to 0 (was 0.02) — with radius shrunk back to 0.50-0.63xmaxDim,
+            // blobs no longer cover the whole canvas at all times, so a hard
+            // zero floor lets near-black show between blob centers, which is
+            // what keeps separate palette hues reading as distinct colors
+            // instead of one averaged wash.
+            g.addColorStop(0,    `rgba(${R},${G},${B},0.50)`)
+            g.addColorStop(0.15, `rgba(${R},${G},${B},0.36)`)
+            g.addColorStop(0.30, `rgba(${R},${G},${B},0.24)`)
+            g.addColorStop(0.50, `rgba(${R},${G},${B},0.14)`)
+            g.addColorStop(0.70, `rgba(${R},${G},${B},0.06)`)
+            g.addColorStop(1,    `rgba(${R},${G},${B},0)`)
             return { grad: g, r }
           })
           blendCacheRef.current = { maxDim, out: buildLayer(s.outRgb), in: buildLayer(s.inRgb) }
@@ -313,12 +317,12 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
             entries: s.steadyRgb.map(([R, G, B], i) => {
               const r    = circleParams[i].radius * maxDim
               const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, r)
-              grad.addColorStop(0,    `rgba(${R},${G},${B},0.34)`)
-              grad.addColorStop(0.15, `rgba(${R},${G},${B},0.24)`)
-              grad.addColorStop(0.30, `rgba(${R},${G},${B},0.16)`)
-              grad.addColorStop(0.50, `rgba(${R},${G},${B},0.09)`)
-              grad.addColorStop(0.70, `rgba(${R},${G},${B},0.045)`)
-              grad.addColorStop(1,    `rgba(${R},${G},${B},0.02)`)
+              grad.addColorStop(0,    `rgba(${R},${G},${B},0.50)`)
+              grad.addColorStop(0.15, `rgba(${R},${G},${B},0.36)`)
+              grad.addColorStop(0.30, `rgba(${R},${G},${B},0.24)`)
+              grad.addColorStop(0.50, `rgba(${R},${G},${B},0.14)`)
+              grad.addColorStop(0.70, `rgba(${R},${G},${B},0.06)`)
+              grad.addColorStop(1,    `rgba(${R},${G},${B},0)`)
               return { grad, r }
             }),
           }
