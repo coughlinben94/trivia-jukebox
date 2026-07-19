@@ -169,6 +169,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
       })
       if (!deviceId) {
         setError('Spotify player still connecting — try again in a moment.')
+        transitioningRef.current = false
         return false
       }
     }
@@ -184,6 +185,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     const token = await getToken()
     if (!token) {
       console.error('[playTrack] token refresh failed — aborting play')
+      transitioningRef.current = false
       return false
     }
     // A newer playTrack call already superseded this one while we awaited the
@@ -207,12 +209,14 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
       if (genRef.current !== gen) return undefined
       if (!freshToken) {
         console.error('[playTrack] 401 on play and token refresh failed')
+        transitioningRef.current = false
         return false
       }
       playRes = await doPlay(freshToken)
     }
     if (!playRes.ok) {
       console.error('[playTrack] play request failed', playRes.status)
+      transitioningRef.current = false
       return false
     }
 

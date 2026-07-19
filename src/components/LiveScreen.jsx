@@ -1,15 +1,19 @@
 import { useState, useEffect, useRef, memo } from 'react'
 import { motion, useAnimation } from 'framer-motion'
 import AlbumGradient from './AlbumGradient'
-import AlbumGradientNoise from './AlbumGradientNoise'
+import AlbumGradientMesh from './AlbumGradientMesh'
 import { usePalette } from '../hooks/usePalette'
 import { displayName } from '../lib/track'
 
-// Opt-in flag for the experimental WebGL noise-flow background — the canvas2D
-// AlbumGradient stays the default (proven, tuned, no WebGL dependency). Flip
-// on live via URL (?gradient=noise) or persist with
+// Opt-in flag for the second-generation "soft mesh" background (OKLab color
+// mixing, tiny-canvas blur, no WebGL) — the original AlbumGradient (circle
+// blobs) stays the default until this is confirmed live. Flip on via URL
+// (?gradient=noise) or persist with
 // localStorage.setItem('trivia_gradient_engine', 'noise') in devtools — either
 // way it's instant, no redeploy needed to test or to revert.
+// (Flag value stays "noise" for continuity with tonight's earlier WebGL
+// experiment, which this replaces — AlbumGradientNoise.jsx is retired/unused,
+// left in the repo rather than deleted.)
 // Not a real hook (no React state/effects) — plain function, just named to
 // signal it's read at render time rather than cached once at module load.
 function getNoiseGradientFlag() {
@@ -72,7 +76,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // Read once per mount, not per render — avoids re-checking localStorage/URL
   // on every position-tick re-render this component already gets a lot of.
   const [useNoiseGradient] = useState(getNoiseGradientFlag)
-  const GradientBg = useNoiseGradient ? AlbumGradientNoise : AlbumGradient
+  const GradientBg = useNoiseGradient ? AlbumGradientMesh : AlbumGradient
   const [shown, setShown]                 = useState(currentTrack)
   const [prev,  setPrev]                  = useState(null)
   const [transitioning, setTransitioning] = useState(false)

@@ -465,15 +465,20 @@ const [newSetName, setNewSetName] = useState('')
           // Single retry — skip the one bad track, don't loop the whole set.
           tryPlay(true)
         } else {
-          // Retry also failed — stop lying about playback state.
+          // Retry also failed — stop lying about playback state, and actually
+          // say so. This used to fail silently: music would just stop with
+          // zero indication why, which is indistinguishable from "the app is
+          // broken" in the moment. addToast is defined earlier in this
+          // component and is a stable useCallback, safe to reference here.
           setIsPlaying(false)
           setShowLive(false)
           setPlayingId(null)
+          addToast('Playback stalled and auto-retry failed — hit Shuffle to restart')
         }
       })
     }
     tryPlay(false)
-  }, [])
+  }, [addToast])
 
   const onFadeStart = useCallback(() => {
     const lib = libraryRef.current

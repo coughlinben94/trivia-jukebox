@@ -2,8 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 
 const cache = new Map();
 
-// Fallback: deep blue/purple — looks good if palette fails
-const FALLBACK = ['#080808', '#080808', '#080808', '#080808', '#080808', '#080808'];
+// Fallback while a palette is loading/fails — near-black, all gradient
+// components cycle through whatever-length array is given so this doesn't
+// need to match either gradient's exact color count.
+const FALLBACK = ['#080808', '#080808', '#080808', '#080808', '#080808'];
 
 // Warm the cache ahead of need (e.g. the upcoming song's art the moment the
 // current song starts) so the fade-out blend gets a cache hit and the full
