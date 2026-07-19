@@ -231,8 +231,10 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
           const buildLayer = (rgbArr) => rgbArr.map(([R, G, B], i) => {
             const r = circleParams[i].radius * maxDim
             const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r)
-            g.addColorStop(0, `rgba(${R},${G},${B},0.9)`)
-            g.addColorStop(1, `rgba(${R},${G},${B},0)`)
+            // Soft falloff from the center out — no flat dense core that reads as a solid object.
+            g.addColorStop(0,    `rgba(${R},${G},${B},0.55)`)
+            g.addColorStop(0.45, `rgba(${R},${G},${B},0.22)`)
+            g.addColorStop(1,    `rgba(${R},${G},${B},0)`)
             return { grad: g, r }
           })
           blendCacheRef.current = { maxDim, out: buildLayer(s.outRgb), in: buildLayer(s.inRgb) }
@@ -285,8 +287,9 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
             entries: s.steadyRgb.map(([R, G, B], i) => {
               const r    = circleParams[i].radius * maxDim
               const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, r)
-              grad.addColorStop(0, `rgba(${R},${G},${B},0.9)`)
-              grad.addColorStop(1, `rgba(${R},${G},${B},0)`)
+              grad.addColorStop(0,    `rgba(${R},${G},${B},0.55)`)
+              grad.addColorStop(0.45, `rgba(${R},${G},${B},0.22)`)
+              grad.addColorStop(1,    `rgba(${R},${G},${B},0)`)
               return { grad, r }
             }),
           }
