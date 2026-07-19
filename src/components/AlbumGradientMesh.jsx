@@ -25,10 +25,26 @@ import { useEffect, useRef, useMemo } from 'react'
 
 const BLEND_DURATION_MS = 7500
 const NUM_COLORS = 5
-// Full noise-flow cycle — deliberately much faster than the "barely
-// perceptible" version tried during design review. Ben wants colors visibly
-// moving across the screen, not just ambient drift.
-const FLOW_SPEED = 0.055
+// Full noise-flow cycle. Previous value (0.055) was a ~2-minute cycle —
+// in any 10s glance the pattern moved ~3% of a period, which is why
+// nothing looked like it was moving no matter how the color weights were
+// tuned. This is the actual "dancing" knob, not the weight exponent below.
+const FLOW_SPEED = 0.45
+// colors[0]/[1] are the two most-saturated palette picks (api/palette.js
+// ranks by HSL saturation) — treated as "anchor" colors: always present,
+// slowly trading dominance back and forth. colors[2..4] are "accent"
+// colors: no floor, each fades fully in and out on its own cycle.
+const ANCHOR_COUNT      = 2
+const ANCHOR_PERIOD_S   = 20    // one full duel (color0 up/color1 down and back) every 20s
+const ANCHOR_SWING      = 0.28  // how far the duel pushes weight from center
+const ANCHOR_FLOOR      = 0.22  // neither anchor ever drops below this share
+const ACCENT_BASE_PERIOD_S = 13 // each accent's in/out period, staggered below
+// Weight exponent — spatial contrast between colors, NOT motion speed.
+// 5 (tried live) was chasing the wrong problem: with FLOW_SPEED this slow
+// and the noise scale this coarse (see u/v below), no exponent reads as
+// motion. Once those two are fixed, 5 tips into hard marble-vein edges;
+// 2.75 keeps it a blend with real contrast.
+const WEIGHT_EXP = 2.75
 
 function hexToRgb(hex) {
   if (!hex || hex.length < 7) return [8, 8, 8]
@@ -245,32 +261,54 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     }
 
     const oklabColors = liveColors.map(rgbToOklab)
-    const t = (ts / 1000) * FLOW_SPEED
+    const t    = (ts / 1000) * FLOW_SPEED   // drives noise domain warp/flow
+    const tSec = ts / 1000                   // raw seconds — anchor duel + accent
+                                              // fade timing stay on their own clock,
+                                              // independent of FLOW_SPEED tuning
+
+    // Per-frame (not per-pixel) prep: anchor duel bias and accent fade envelopes.
+    // Anchors: opposite-signed bias off a shared oscillator — as color0's bias
+    // rises color1's falls, so they read as trading dominance, not just coexisting.
+    const anchorPower = Math.sin((tSec / ANCHOR_PERIOD_S) * Math.PI * 2)
+    const anchorBias  = [anchorPower * ANCHOR_SWING, -anchorPower * ANCHOR_SWING]
+    // Accents: independent period per index (staggered so they don't all fade
+    // in/out in lockstep) and pow(…, 1.5) on the 0–1 envelope so each one
+    // actually spends real time near-zero (true "out") instead of just
+    // wobbling in the middle of its range.
+    const accentEnvelope = Array.from({ length: NUM_COLORS - ANCHOR_COUNT }, (_, j) => {
+      const period = ACCENT_BASE_PERIOD_S + j * 5
+      const phase  = j * (Math.PI * 2 / 3)
+      const raw01  = (Math.sin((tSec / period) * Math.PI * 2 + phase) + 1) / 2
+      return Math.pow(raw01, 1.5)
+    })
 
     const img = sctx.getImageData(0, 0, SW, SH)
     const data = img.data
     for (let y = 0; y < SH; y++) {
       for (let x = 0; x < SW; x++) {
-        const u = (x / SW) * 2.6
-        const v = (y / SH) * 2.6
+        // Scale 2.6 → 5.5: at 2.6, less than one noise period fit on screen —
+        // every color read as one broad soft ramp, which is what "not
+        // multicolorful" actually was. 5.5 puts a few distinct features per
+        // axis so colors form real regions instead of one wash.
+        const u = (x / SW) * 5.5
+        const v = (y / SH) * 5.5
         const wx = pseudoNoise(u + 9, v - 4, t * 0.6) * 0.6
         const wy = pseudoNoise(u - 6, v + 8, t * 0.6) * 0.6
         let L = 0, a = 0, b = 0, total = 0
         for (let i = 0; i < NUM_COLORS; i++) {
           const seed = colorSeeds[i]
-          const n = pseudoNoise(u + wx + seed.seedU, v + wy + seed.seedV, t + i * 1.3)
-          // Squared, not linear. Zero exponent (the previous tuning) kept every
-          // color's weight clustered near 0.5 always, so the 5-color weighted
-          // average barely moved from "average of the palette" anywhere on
-          // screen — read as one flat wash with no visible color separation or
-          // motion. Squaring widens the spread between a noise field's high and
-          // low points before normalizing across colors, so one color can
-          // actually dominate a region instead of everything blending equally
-          // everywhere — restores distinct color regions and, since those
-          // regions now visibly change as the noise animates, visible motion.
-          // Still far short of the old pow(n, 1.6) marble-vein exponent — this
-          // stays a soft blend, not all-or-nothing.
-          const w = Math.pow(Math.max(0, n * 0.5 + 0.5), 2)
+          const n    = pseudoNoise(u + wx + seed.seedU, v + wy + seed.seedV, t + i * 1.3)
+          const base = Math.pow(Math.max(0, n * 0.5 + 0.5), WEIGHT_EXP)
+          let w
+          if (i < ANCHOR_COUNT) {
+            // Anchor: floor guarantees it's never fully gone, duel bias shifts
+            // how much of the remaining range it gets.
+            const biased = Math.min(1, Math.max(0, base + anchorBias[i]))
+            w = ANCHOR_FLOOR + (1 - ANCHOR_FLOOR) * biased
+          } else {
+            // Accent: no floor — envelope can take it all the way to ~0.
+            w = base * accentEnvelope[i - ANCHOR_COUNT]
+          }
           const [pl, pa, pb] = oklabColors[i]
           L += pl * w; a += pa * w; b += pb * w; total += w
         }
