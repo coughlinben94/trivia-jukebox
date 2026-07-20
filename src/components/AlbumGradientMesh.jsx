@@ -24,7 +24,11 @@ import { useEffect, useRef, useMemo } from 'react'
 // work with.
 
 const BLEND_DURATION_MS = 7500
-const NUM_COLORS = 5
+// api/palette.js now returns 5-8 colors (up from a fixed 5) when the cover
+// actually has that many distinct real hues — NUM_COLORS caps how many this
+// component will ever draw, so it needs to match that ceiling or the extra
+// colors api/palette.js worked to find just get silently dropped.
+const NUM_COLORS = 8
 // Full noise-flow cycle. Previous value (0.055) was a ~2-minute cycle —
 // in any 10s glance the pattern moved ~3% of a period, which is why
 // nothing looked like it was moving no matter how the color weights were
@@ -39,16 +43,23 @@ const FLOW_SPEED = 0.79
 // match the FLOW_SPEED bump — otherwise the color weights would still
 // duel/fade at the old slow pace while the noise field flows past faster.
 const ANCHOR_COUNT      = 2
-const ANCHOR_PERIOD_S   = 11.4  // one full duel (color0 up/color1 down and back)
-const ANCHOR_SWING      = 0.28  // how far the duel pushes weight from center
-const ANCHOR_FLOOR      = 0.22  // neither anchor ever drops below this share
+const ANCHOR_PERIOD_S   = 11.4  // one full sweep of the divider, edge to edge and back
+const ANCHOR_SWING      = 0.30  // how much territory the divider hands to whichever anchor is "ahead"
+const ANCHOR_SHARPNESS  = 3.5   // divider transition softness — lower = blurrier boundary, higher = crisper
+const ANCHOR_FLOOR      = 0.18  // neither anchor ever drops below this share, even on its "losing" side
 const ACCENT_BASE_PERIOD_S = 7.4 // each accent's in/out period, staggered below
 // Weight exponent — spatial contrast between colors, NOT motion speed.
 // 5 (tried live) was chasing the wrong problem: with FLOW_SPEED this slow
 // and the noise scale this coarse (see u/v below), no exponent reads as
 // motion. Once those two are fixed, 5 tips into hard marble-vein edges;
-// 2.75 keeps it a blend with real contrast.
-const WEIGHT_EXP = 2.75
+// 2.75 keeps it a blend with real contrast. Kept for anchors only now —
+// accents get their own gentler exponent below so they don't get crushed
+// to invisible by the same contrast curve that anchors need.
+const WEIGHT_EXP  = 2.75
+const ACCENT_EXP   = 1.35 // gentler than anchors — accents were reading as "no green at all"
+                           // because pow(x, 2.75) on top of a no-floor envelope multiplication
+                           // crushed them to near-zero almost everywhere
+const ACCENT_BOOST = 1.6  // compensates so an "in" accent is actually visible, not just a faint tint
 
 function hexToRgb(hex) {
   if (!hex || hex.length < 7) return [8, 8, 8]
@@ -271,11 +282,21 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
                                               // fade timing stay on their own clock,
                                               // independent of FLOW_SPEED tuning
 
-    // Per-frame (not per-pixel) prep: anchor duel bias and accent fade envelopes.
-    // Anchors: opposite-signed bias off a shared oscillator — as color0's bias
-    // rises color1's falls, so they read as trading dominance, not just coexisting.
-    const anchorPower = Math.sin((tSec / ANCHOR_PERIOD_S) * Math.PI * 2)
-    const anchorBias  = [anchorPower * ANCHOR_SWING, -anchorPower * ANCHOR_SWING]
+    // Per-frame (not per-pixel) prep: anchor duel divider position and accent
+    // fade envelopes.
+    // BUG FOUND live: the old anchorBias was a single scalar applied equally
+    // to every pixel — that can only nudge the whole screen's overall tint
+    // together, it can never carve out territory, because both anchors also
+    // sample the same shared domain-warp field (wx/wy below) so their spatial
+    // patterns were already highly correlated. Net result: a flat, slowly
+    // re-tinting wash — exactly "no green, not moving" — since a global
+    // scalar plus correlated noise fields never separate into regions.
+    // Fix: the divider is a POSITION (0–1 across the canvas width) that
+    // sweeps back and forth. Anchor0 wins the side ahead of the divider,
+    // anchor1 wins the side behind it — as the divider sweeps, the boundary
+    // between them visibly moves, which is what actually reads as "fighting
+    // for territory" instead of a uniform tint shift.
+    const anchorDivider = 0.5 + 0.5 * Math.sin((tSec / ANCHOR_PERIOD_S) * Math.PI * 2)
     // Accents: independent period per index (staggered so they don't all fade
     // in/out in lockstep) and pow(…, 1.5) on the 0–1 envelope so each one
     // actually spends real time near-zero (true "out") instead of just
@@ -299,20 +320,29 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
         const v = (y / SH) * 5.5
         const wx = pseudoNoise(u + 9, v - 4, t * 0.6) * 0.6
         const wy = pseudoNoise(u - 6, v + 8, t * 0.6) * 0.6
+        // Divider edge for the anchor duel — POSITION-based (x/SW, plain 0–1
+        // across the canvas), not the noise-scaled u/v above. tanh gives a
+        // soft ±1 transition centered on the divider instead of a hard cut.
+        const edge = Math.tanh((x / SW - anchorDivider) * ANCHOR_SHARPNESS)
         let L = 0, a = 0, b = 0, total = 0
         for (let i = 0; i < NUM_COLORS; i++) {
           const seed = colorSeeds[i]
-          const n    = pseudoNoise(u + wx + seed.seedU, v + wy + seed.seedV, t + i * 1.3)
-          const base = Math.pow(Math.max(0, n * 0.5 + 0.5), WEIGHT_EXP)
+          const n = pseudoNoise(u + wx + seed.seedU, v + wy + seed.seedV, t + i * 1.3)
           let w
           if (i < ANCHOR_COUNT) {
-            // Anchor: floor guarantees it's never fully gone, duel bias shifts
-            // how much of the remaining range it gets.
-            const biased = Math.min(1, Math.max(0, base + anchorBias[i]))
+            // Anchor: floor guarantees it's never fully gone. i===0 wins the
+            // side ahead of the divider (+edge), i===1 wins the side behind
+            // it (-edge) — opposite signs so as the divider sweeps, one
+            // anchor's territory visibly grows while the other's shrinks.
+            const base   = Math.pow(Math.max(0, n * 0.5 + 0.5), WEIGHT_EXP)
+            const sign   = i === 0 ? 1 : -1
+            const biased = Math.min(1, Math.max(0, base + sign * edge * ANCHOR_SWING))
             w = ANCHOR_FLOOR + (1 - ANCHOR_FLOOR) * biased
           } else {
-            // Accent: no floor — envelope can take it all the way to ~0.
-            w = base * accentEnvelope[i - ANCHOR_COUNT]
+            // Accent: gentler exponent + boost so an "in" accent actually
+            // reads as its own color instead of a faint tint on the anchors.
+            const base = Math.pow(Math.max(0, n * 0.5 + 0.5), ACCENT_EXP)
+            w = base * accentEnvelope[i - ANCHOR_COUNT] * ACCENT_BOOST
           }
           const [pl, pa, pb] = oklabColors[i]
           L += pl * w; a += pa * w; b += pb * w; total += w

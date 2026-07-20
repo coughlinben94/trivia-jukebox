@@ -48,17 +48,25 @@ export default async function handler(req, res) {
     const litPixels = pixels.filter(p => luma(p) >= LUMA_THRESHOLD);
     const source = litPixels.length >= pixels.length * 0.05 ? litPixels : pixels;
 
-    // Ask median-cut for more buckets than we'll actually use (8, not 5) —
-    // it splits by widest channel RANGE, not by vividness, so the raw bucket
-    // averages skew toward whatever's most common (skin tones, black keys,
-    // gray walls). Pulling extra candidates and ranking by saturation finds
-    // the vivid parts of the cover that a straight 5-bucket cut would miss.
-    const candidates = medianCut(source, 8);
+    // Ask median-cut for more buckets than we'll actually use (12, not the
+    // 5-8 we keep) — it splits by widest channel RANGE, not by vividness, so
+    // the raw bucket averages skew toward whatever's most common (skin
+    // tones, black keys, gray walls). Pulling extra candidates and ranking
+    // by saturation finds the vivid parts of the cover that a straight
+    // small-bucket cut would miss.
+    const candidates = medianCut(source, 12);
     const ranked = candidates
       .map(hex => ({ hex, ...hexToHsl(hex) }))
       .sort((a, b) => b.s - a.s);
 
-    let colors = ranked.slice(0, 5).map(c => c.hex);
+    // Take every candidate with real color (s > 0.12), up to 8 — covers with
+    // lots of distinct hues get more of them instead of being truncated to a
+    // fixed 5. Always keep at least 5 (padding from the ranked list even
+    // below the threshold) so the background never starves for colors on a
+    // muted-but-not-quite-grayscale cover.
+    const MIN_COLORS = 5, MAX_COLORS = 8, SATURATION_FLOOR = 0.12;
+    const vivid = ranked.filter(c => c.s > SATURATION_FLOOR).slice(0, MAX_COLORS);
+    let colors = (vivid.length >= MIN_COLORS ? vivid : ranked.slice(0, MIN_COLORS)).map(c => c.hex);
 
     // Genuinely grayscale/near-monochrome art (even the most saturated bucket
     // is barely colored) — a saturation ranking can't invent hues that
