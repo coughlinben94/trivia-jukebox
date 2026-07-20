@@ -50,11 +50,11 @@ const ANCHOR_SHARPNESS  = 3.5   // divider position→edge transition — lower 
 // for why this replaced the old N-color weighted average):
 const ANCHOR_NOISE_CONTRAST = 1.5  // how much local noise texture (vs. the divider sweep) shapes the boundary's wobble
 const ANCHOR_MIX_SHARPNESS  = 2.4  // steepness of the anchor0↔anchor1 transition itself — higher = crisper meeting line
-const ANCHOR_FLOOR      = 0.18  // neither anchor ever fully disappears, even on its "losing" side
+const ANCHOR_FLOOR      = 0.225 // neither anchor ever fully disappears, even on its "losing" side (+25% intensity pass)
 const ACCENT_BASE_PERIOD_S = 7.4 // each accent's in/out period, staggered below
 const ACCENT_EXP    = 1.35 // gentle — accents were reading as "no green at all" under a steeper curve
-const ACCENT_BOOST  = 1.6  // compensates so an "in" accent is actually visible, not just a faint tint
-const ACCENT_MAX_MIX = 0.5 // hard cap per accent — guarantees the anchor collision underneath can never be washed out
+const ACCENT_BOOST  = 2.0  // compensates so an "in" accent is actually visible, not just a faint tint (+25% intensity pass)
+const ACCENT_MAX_MIX = 0.625 // hard cap per accent — guarantees the anchor collision underneath can never be washed out (+25% intensity pass)
 
 function hexToRgb(hex) {
   if (!hex || hex.length < 7) return [8, 8, 8]
