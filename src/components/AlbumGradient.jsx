@@ -112,14 +112,15 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
     }
   }
 
-  // shuffleKey: new session starts — snap everything to black so palette bleeds in fresh
+  // shuffleKey: new session starts. Previously snapped everything to black
+  // so the palette "bled in fresh" — but that meant a real black gradient for
+  // a chunk of the 7.5s entrance blend every time. Ben doesn't want black
+  // ever. Just clear blend-tracking state; whatever was already on screen
+  // crossfades straight into the new song's colors via the normal
+  // colors-effect below, same as any other song change — no black step.
   useEffect(() => {
     if (isFirstKey.current) { isFirstKey.current = false; return }
-    const s     = st.current
-    const black = Array.from({ length: NUM_CIRCLES }, () => [8, 8, 8])
-    s.outRgb    = black.map(c => [...c])
-    s.inRgb     = black.map(c => [...c])
-    s.steadyRgb = black.map(c => [...c])
+    const s = st.current
     s.blendStart = -1
     pendingFromNextRef.current = false
     gradCacheRef.current  = null

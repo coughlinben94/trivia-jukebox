@@ -5,21 +5,20 @@ import AlbumGradientMesh from './AlbumGradientMesh'
 import { usePalette } from '../hooks/usePalette'
 import { displayName } from '../lib/track'
 
-// Opt-in flag for the second-generation "soft mesh" background (OKLab color
-// mixing, tiny-canvas blur, no WebGL) — the original AlbumGradient (circle
-// blobs) stays the default until this is confirmed live. Flip on via URL
-// (?gradient=noise) or persist with
-// localStorage.setItem('trivia_gradient_engine', 'noise') in devtools — either
-// way it's instant, no redeploy needed to test or to revert.
-// (Flag value stays "noise" for continuity with tonight's earlier WebGL
-// experiment, which this replaces — AlbumGradientNoise.jsx is retired/unused,
-// left in the repo rather than deleted.)
+// AlbumGradientMesh (soft mesh, OKLab color mixing, tiny-canvas blur, no
+// WebGL) is now the default background — the original AlbumGradient draws
+// its blobs as radial-gradient circles via ctx.arc(), which can't satisfy
+// "fluid, no circle shapes" no matter how it's tuned; the mesh's blurred
+// noise field structurally has no discrete shape to see. AlbumGradient is
+// kept as an opt-out fallback: ?gradient=circles or
+// localStorage.setItem('trivia_gradient_engine', 'circles') in devtools —
+// either way it's instant, no redeploy needed.
 // Not a real hook (no React state/effects) — plain function, just named to
 // signal it's read at render time rather than cached once at module load.
-function getNoiseGradientFlag() {
+function getCircleGradientFlag() {
   if (typeof window === 'undefined') return false
-  if (new URLSearchParams(window.location.search).get('gradient') === 'noise') return true
-  return localStorage.getItem('trivia_gradient_engine') === 'noise'
+  if (new URLSearchParams(window.location.search).get('gradient') === 'circles') return true
+  return localStorage.getItem('trivia_gradient_engine') === 'circles'
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -75,8 +74,8 @@ function Tonearm({ controls }) {
 function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpcomingTrack }) {
   // Read once per mount, not per render — avoids re-checking localStorage/URL
   // on every position-tick re-render this component already gets a lot of.
-  const [useNoiseGradient] = useState(getNoiseGradientFlag)
-  const GradientBg = useNoiseGradient ? AlbumGradientMesh : AlbumGradient
+  const [useCircleGradient] = useState(getCircleGradientFlag)
+  const GradientBg = useCircleGradient ? AlbumGradient : AlbumGradientMesh
   const [shown, setShown]                 = useState(currentTrack)
   const [prev,  setPrev]                  = useState(null)
   const [transitioning, setTransitioning] = useState(false)

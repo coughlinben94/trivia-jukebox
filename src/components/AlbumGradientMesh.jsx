@@ -29,16 +29,20 @@ const NUM_COLORS = 5
 // in any 10s glance the pattern moved ~3% of a period, which is why
 // nothing looked like it was moving no matter how the color weights were
 // tuned. This is the actual "dancing" knob, not the weight exponent below.
-const FLOW_SPEED = 0.45
+// 0.45 → 0.79: +75% per live feedback, still not enough dance.
+const FLOW_SPEED = 0.79
 // colors[0]/[1] are the two most-saturated palette picks (api/palette.js
 // ranks by HSL saturation) — treated as "anchor" colors: always present,
 // slowly trading dominance back and forth. colors[2..4] are "accent"
 // colors: no floor, each fades fully in and out on its own cycle.
+// Anchor/accent periods also cut ~75% (period down = cycle speed up) to
+// match the FLOW_SPEED bump — otherwise the color weights would still
+// duel/fade at the old slow pace while the noise field flows past faster.
 const ANCHOR_COUNT      = 2
-const ANCHOR_PERIOD_S   = 20    // one full duel (color0 up/color1 down and back) every 20s
+const ANCHOR_PERIOD_S   = 11.4  // one full duel (color0 up/color1 down and back)
 const ANCHOR_SWING      = 0.28  // how far the duel pushes weight from center
 const ANCHOR_FLOOR      = 0.22  // neither anchor ever drops below this share
-const ACCENT_BASE_PERIOD_S = 13 // each accent's in/out period, staggered below
+const ACCENT_BASE_PERIOD_S = 7.4 // each accent's in/out period, staggered below
 // Weight exponent — spatial contrast between colors, NOT motion speed.
 // 5 (tried live) was chasing the wrong problem: with FLOW_SPEED this slow
 // and the noise scale this coarse (see u/v below), no exponent reads as
@@ -168,13 +172,14 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     if (!rafRef.current && mountedRef.current) startLoop()
   }
 
+  // shuffleKey: new session starts. No black snap — same reasoning as
+  // AlbumGradient.jsx: Ben doesn't want a black gradient ever, and forcing a
+  // black reset meant one for a chunk of the 7.5s entrance blend every time.
+  // Just clear blend-tracking state; the colors-effect below crossfades
+  // straight from whatever's on screen into the new song's palette.
   useEffect(() => {
     if (isFirstKey.current) { isFirstKey.current = false; return }
-    const s     = st.current
-    const black = Array.from({ length: NUM_COLORS }, () => [8, 8, 8])
-    s.outRgb    = black.map(c => [...c])
-    s.inRgb     = black.map(c => [...c])
-    s.steadyRgb = black.map(c => [...c])
+    const s = st.current
     s.blendStart = -1
     pendingFromNextRef.current = false
   }, [shuffleKey])
