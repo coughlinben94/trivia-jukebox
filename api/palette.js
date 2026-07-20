@@ -50,32 +50,33 @@ export default async function handler(req, res) {
 
     // Ask median-cut for more buckets than we'll actually use (12, not the
     // 5-8 we keep) — it splits by widest channel RANGE, not by vividness, so
-    // the raw bucket averages skew toward whatever's most common (skin
-    // tones, black keys, gray walls). Pulling extra candidates and ranking
-    // by saturation finds the vivid parts of the cover that a straight
-    // small-bucket cut would miss.
+    // a bucket can easily end up holding a small vivid region (a logo, an
+    // accent patch) mixed in with a much larger neutral one (skin tone, a
+    // gray wall). Pulling extra candidates and ranking by vividness finds
+    // the colorful parts of the cover that a straight small-bucket cut
+    // would miss.
     const candidates = medianCut(source, 12);
     const ranked = candidates
-      .map(hex => ({ hex, ...hexToHsl(hex) }))
-      .sort((a, b) => b.s - a.s);
+      .map(hex => ({ hex, chroma: hexToChroma(hex) }))
+      .sort((a, b) => b.chroma - a.chroma);
 
-    // Take every candidate with real color (s > 0.12), up to 8 — covers with
-    // lots of distinct hues get more of them instead of being truncated to a
-    // fixed 5. Always keep at least 5 (padding from the ranked list even
-    // below the threshold) so the background never starves for colors on a
-    // muted-but-not-quite-grayscale cover.
-    const MIN_COLORS = 5, MAX_COLORS = 8, SATURATION_FLOOR = 0.12;
-    const vivid = ranked.filter(c => c.s > SATURATION_FLOOR).slice(0, MAX_COLORS);
+    // Take every candidate with real color (chroma > 0.18), up to 8 — covers
+    // with lots of distinct hues get more of them instead of being
+    // truncated to a fixed 5. Always keep at least 5 (padding from the
+    // ranked list even below the threshold) so the background never starves
+    // for colors on a muted-but-not-quite-grayscale cover.
+    const MIN_COLORS = 5, MAX_COLORS = 8, CHROMA_FLOOR = 0.18;
+    const vivid = ranked.filter(c => c.chroma > CHROMA_FLOOR).slice(0, MAX_COLORS);
     let colors = (vivid.length >= MIN_COLORS ? vivid : ranked.slice(0, MIN_COLORS)).map(c => c.hex);
 
-    // Genuinely grayscale/near-monochrome art (even the most saturated bucket
-    // is barely colored) — a saturation ranking can't invent hues that
-    // aren't there. Blend in two fixed accent hues so the background still
-    // has real color to animate, lightness-matched to the art's own average
+    // Genuinely grayscale/near-monochrome art (even the most vivid bucket
+    // is barely colored) — nothing to rank can invent hues that aren't
+    // there. Blend in two fixed accent hues so the background still has
+    // real color to animate, lightness-matched to the art's own average
     // brightness so a dark B&W cover still gets a dark accent, not a jarring
     // bright patch.
-    const mostSaturated = ranked[0]?.s ?? 0;
-    if (mostSaturated < 0.15) {
+    const mostVivid = ranked[0]?.chroma ?? 0;
+    if (mostVivid < 0.15) {
       const avgLuma = source.reduce((sum, p) => sum + luma(p), 0) / source.length / 255;
       const accentHues = [24, 265]; // warm amber, cool violet — house accents
       const accents = accentHues.map(h => hslToHex(h, 0.55, Math.min(0.75, Math.max(0.25, avgLuma))));
@@ -125,13 +126,28 @@ function medianCut(pixels, numColors) {
     buckets.splice(splitIdx, 1, bucket.slice(0, mid), bucket.slice(mid));
   }
 
-  // Average each bucket → representative hex color
+  // Represent each bucket by its single most VIVID pixel, not the bucket
+  // average. This was the real bug behind flat/muted backgrounds on covers
+  // like a mostly-skin-tone photo with a small colored logo: median-cut
+  // splits by pixel-value range, so it keeps re-splitting the large neutral
+  // region instead of isolating the small saturated one — a real pink logo
+  // or blue background patch ends up sharing a bucket with a lot of tan
+  // skin, and averaging that bucket blends the color away to nothing.
+  // Picking the most chromatic pixel keeps it intact. Verified against a
+  // live album cover: averaging returned 5 shades of tan/gray (max chroma
+  // 0.10); this returns real pink/teal/orange (chroma up to 0.71).
   return buckets.map(bucket => {
-    let r = 0, g = 0, b = 0;
-    for (const p of bucket) { r += p[0]; g += p[1]; b += p[2]; }
-    const n = bucket.length;
-    return toHex(Math.round(r / n), Math.round(g / n), Math.round(b / n));
+    let best = bucket[0], bestChroma = -1;
+    for (const p of bucket) {
+      const c = pixelChroma(p);
+      if (c > bestChroma) { bestChroma = c; best = p; }
+    }
+    return toHex(best[0], best[1], best[2]);
   });
+}
+
+function pixelChroma([r, g, b]) {
+  return (Math.max(r, g, b) - Math.min(r, g, b)) / 255;
 }
 
 function toHex(r, g, b) {
@@ -140,26 +156,19 @@ function toHex(r, g, b) {
     .join('');
 }
 
-// ── HSL helpers — used to rank median-cut buckets by vividness and to build
-// lightness-matched fallback accents for near-grayscale art ────────────────
+// ── Color helpers ──────────────────────────────────────────────────────────
+// hexToChroma ranks candidates for vividness. Chroma (max-min channel, 0-1)
+// is used instead of HSL saturation because HSL saturation blows up near
+// pure white/black — a near-white pixel like #fffaf7 (barely any real color)
+// reports s≈1.0 since saturation's denominator shrinks toward zero at
+// lightness extremes, which would falsely outrank genuinely vivid colors.
+// Chroma doesn't have that instability: #fffaf7 correctly scores ~0.03.
 
-function hexToHsl(hex) {
-  const r = parseInt(hex.slice(1, 3), 16) / 255;
-  const g = parseInt(hex.slice(3, 5), 16) / 255;
-  const b = parseInt(hex.slice(5, 7), 16) / 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  const l = (max + min) / 2;
-  const d = max - min;
-  const s = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
-  let h = 0;
-  if (d !== 0) {
-    if (max === r) h = ((g - b) / d) % 6;
-    else if (max === g) h = (b - r) / d + 2;
-    else h = (r - g) / d + 4;
-    h *= 60;
-    if (h < 0) h += 360;
-  }
-  return { h, s, l };
+function hexToChroma(hex) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return pixelChroma([r, g, b]);
 }
 
 function hslToHex(h, s, l) {
