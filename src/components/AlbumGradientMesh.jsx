@@ -44,22 +44,17 @@ const FLOW_SPEED = 0.79
 // duel/fade at the old slow pace while the noise field flows past faster.
 const ANCHOR_COUNT      = 2
 const ANCHOR_PERIOD_S   = 11.4  // one full sweep of the divider, edge to edge and back
-const ANCHOR_SWING      = 0.30  // how much territory the divider hands to whichever anchor is "ahead"
-const ANCHOR_SHARPNESS  = 3.5   // divider transition softness — lower = blurrier boundary, higher = crisper
-const ANCHOR_FLOOR      = 0.18  // neither anchor ever drops below this share, even on its "losing" side
+const ANCHOR_SWING      = 0.30  // how much the sweeping divider contributes to who's winning, vs. local noise texture
+const ANCHOR_SHARPNESS  = 3.5   // divider position→edge transition — lower = blurrier, higher = crisper
+// Two-color collision tuning (see the ARCHITECTURE CHANGE comment in draw()
+// for why this replaced the old N-color weighted average):
+const ANCHOR_NOISE_CONTRAST = 1.5  // how much local noise texture (vs. the divider sweep) shapes the boundary's wobble
+const ANCHOR_MIX_SHARPNESS  = 2.4  // steepness of the anchor0↔anchor1 transition itself — higher = crisper meeting line
+const ANCHOR_FLOOR      = 0.18  // neither anchor ever fully disappears, even on its "losing" side
 const ACCENT_BASE_PERIOD_S = 7.4 // each accent's in/out period, staggered below
-// Weight exponent — spatial contrast between colors, NOT motion speed.
-// 5 (tried live) was chasing the wrong problem: with FLOW_SPEED this slow
-// and the noise scale this coarse (see u/v below), no exponent reads as
-// motion. Once those two are fixed, 5 tips into hard marble-vein edges;
-// 2.75 keeps it a blend with real contrast. Kept for anchors only now —
-// accents get their own gentler exponent below so they don't get crushed
-// to invisible by the same contrast curve that anchors need.
-const WEIGHT_EXP  = 2.75
-const ACCENT_EXP   = 1.35 // gentler than anchors — accents were reading as "no green at all"
-                           // because pow(x, 2.75) on top of a no-floor envelope multiplication
-                           // crushed them to near-zero almost everywhere
-const ACCENT_BOOST = 1.6  // compensates so an "in" accent is actually visible, not just a faint tint
+const ACCENT_EXP    = 1.35 // gentle — accents were reading as "no green at all" under a steeper curve
+const ACCENT_BOOST  = 1.6  // compensates so an "in" accent is actually visible, not just a faint tint
+const ACCENT_MAX_MIX = 0.5 // hard cap per accent — guarantees the anchor collision underneath can never be washed out
 
 function hexToRgb(hex) {
   if (!hex || hex.length < 7) return [8, 8, 8]
@@ -282,20 +277,22 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
                                               // fade timing stay on their own clock,
                                               // independent of FLOW_SPEED tuning
 
-    // Per-frame (not per-pixel) prep: anchor duel divider position and accent
-    // fade envelopes.
-    // BUG FOUND live: the old anchorBias was a single scalar applied equally
-    // to every pixel — that can only nudge the whole screen's overall tint
-    // together, it can never carve out territory, because both anchors also
-    // sample the same shared domain-warp field (wx/wy below) so their spatial
-    // patterns were already highly correlated. Net result: a flat, slowly
-    // re-tinting wash — exactly "no green, not moving" — since a global
-    // scalar plus correlated noise fields never separate into regions.
-    // Fix: the divider is a POSITION (0–1 across the canvas width) that
-    // sweeps back and forth. Anchor0 wins the side ahead of the divider,
-    // anchor1 wins the side behind it — as the divider sweeps, the boundary
-    // between them visibly moves, which is what actually reads as "fighting
-    // for territory" instead of a uniform tint shift.
+    // ARCHITECTURE CHANGE, verified against a real screen recording: the
+    // previous approach normalized a weighted OKLab average across all 8
+    // colors at every pixel. Averaging N colors together always trends
+    // toward one blended pastel, no matter how the individual weights are
+    // tuned — three rounds of tuning that same average (exponent, floor,
+    // spatial divider bias) all still produced one flat hue on screen. That
+    // was the wrong lever: an average of many things is structurally
+    // incapable of reading as "two colors colliding."
+    //
+    // New model: the two anchors are a genuine two-color LERP (not an
+    // N-color average) between whichever one "wins" at a given point — like
+    // two liquids meeting, not eight paints mixed in a bucket. `mix` blends
+    // local noise texture (so the boundary isn't a perfectly straight line)
+    // with the sweeping divider position (so the boundary visibly travels).
+    // Accents then layer on top of that two-color base one at a time, each
+    // capped at ACCENT_MAX_MIX so no accent can ever wash the base out.
     const anchorDivider = 0.5 + 0.5 * Math.sin((tSec / ANCHOR_PERIOD_S) * Math.PI * 2)
     // Accents: independent period per index (staggered so they don't all fade
     // in/out in lockstep) and pow(…, 1.5) on the 0–1 envelope so each one
@@ -308,47 +305,53 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
       return Math.pow(raw01, 1.5)
     })
 
+    const [anchor0, anchor1] = oklabColors
+
     const img = sctx.getImageData(0, 0, SW, SH)
     const data = img.data
     for (let y = 0; y < SH; y++) {
       for (let x = 0; x < SW; x++) {
         // Scale 2.6 → 5.5: at 2.6, less than one noise period fit on screen —
-        // every color read as one broad soft ramp, which is what "not
-        // multicolorful" actually was. 5.5 puts a few distinct features per
-        // axis so colors form real regions instead of one wash.
+        // every color read as one broad soft ramp. 5.5 puts a few distinct
+        // features per axis so the boundary between the two anchors has real
+        // texture instead of being a dead-straight line.
         const u = (x / SW) * 5.5
         const v = (y / SH) * 5.5
         const wx = pseudoNoise(u + 9, v - 4, t * 0.6) * 0.6
         const wy = pseudoNoise(u - 6, v + 8, t * 0.6) * 0.6
-        // Divider edge for the anchor duel — POSITION-based (x/SW, plain 0–1
-        // across the canvas), not the noise-scaled u/v above. tanh gives a
-        // soft ±1 transition centered on the divider instead of a hard cut.
+        // Divider edge — POSITION-based (x/SW, plain 0–1 across the canvas),
+        // not the noise-scaled u/v above. tanh gives a soft ±1 transition
+        // centered on the divider instead of a hard cut.
         const edge = Math.tanh((x / SW - anchorDivider) * ANCHOR_SHARPNESS)
-        let L = 0, a = 0, b = 0, total = 0
-        for (let i = 0; i < NUM_COLORS; i++) {
+
+        const n0 = pseudoNoise(u + wx + colorSeeds[0].seedU, v + wy + colorSeeds[0].seedV, t) * 0.5 + 0.5
+        const n1 = pseudoNoise(u + wx + colorSeeds[1].seedU, v + wy + colorSeeds[1].seedV, t + 1.3) * 0.5 + 0.5
+        // score > 0 → anchor0 winning at this pixel; < 0 → anchor1 winning.
+        // Local noise texture (n0 - n1) gives the boundary organic wobble;
+        // the divider term is what makes that boundary sweep across the
+        // whole canvas over time instead of just sitting there wobbling.
+        const score = (n0 - n1) * ANCHOR_NOISE_CONTRAST + edge * ANCHOR_SWING
+        let mix = 0.5 + 0.5 * Math.tanh(score * ANCHOR_MIX_SHARPNESS)
+        mix = Math.min(1 - ANCHOR_FLOOR, Math.max(ANCHOR_FLOOR, mix)) // never fully 0 or 1 — a trace of the "losing" anchor always shows
+
+        let L = lerp(anchor1[0], anchor0[0], mix)
+        let a = lerp(anchor1[1], anchor0[1], mix)
+        let b = lerp(anchor1[2], anchor0[2], mix)
+
+        // Accents layer on top of the anchor base one at a time, each capped
+        // at ACCENT_MAX_MIX — nudges the color toward itself proportionally,
+        // never fully replaces what's already there.
+        for (let i = ANCHOR_COUNT; i < NUM_COLORS; i++) {
           const seed = colorSeeds[i]
-          const n = pseudoNoise(u + wx + seed.seedU, v + wy + seed.seedV, t + i * 1.3)
-          let w
-          if (i < ANCHOR_COUNT) {
-            // Anchor: floor guarantees it's never fully gone. i===0 wins the
-            // side ahead of the divider (+edge), i===1 wins the side behind
-            // it (-edge) — opposite signs so as the divider sweeps, one
-            // anchor's territory visibly grows while the other's shrinks.
-            const base   = Math.pow(Math.max(0, n * 0.5 + 0.5), WEIGHT_EXP)
-            const sign   = i === 0 ? 1 : -1
-            const biased = Math.min(1, Math.max(0, base + sign * edge * ANCHOR_SWING))
-            w = ANCHOR_FLOOR + (1 - ANCHOR_FLOOR) * biased
-          } else {
-            // Accent: gentler exponent + boost so an "in" accent actually
-            // reads as its own color instead of a faint tint on the anchors.
-            const base = Math.pow(Math.max(0, n * 0.5 + 0.5), ACCENT_EXP)
-            w = base * accentEnvelope[i - ANCHOR_COUNT] * ACCENT_BOOST
-          }
+          const n = pseudoNoise(u + wx + seed.seedU, v + wy + seed.seedV, t + i * 1.3) * 0.5 + 0.5
+          const base = Math.pow(Math.max(0, n), ACCENT_EXP)
+          const w = Math.min(ACCENT_MAX_MIX, base * accentEnvelope[i - ANCHOR_COUNT] * ACCENT_BOOST)
+          if (w <= 0) continue
           const [pl, pa, pb] = oklabColors[i]
-          L += pl * w; a += pa * w; b += pb * w; total += w
+          L = lerp(L, pl, w); a = lerp(a, pa, w); b = lerp(b, pb, w)
         }
-        total = Math.max(total, 0.0001)
-        const [r, g, bb] = oklabToRgb([L / total, a / total, b / total])
+
+        const [r, g, bb] = oklabToRgb([L, a, b])
         const idx = (y * SW + x) * 4
         data[idx] = r; data[idx + 1] = g; data[idx + 2] = bb; data[idx + 3] = 255
       }
