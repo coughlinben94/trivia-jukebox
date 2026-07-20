@@ -34,35 +34,19 @@ function makeCircleParams() {
     const x = Math.sin((i * 7 + slot) * 9301 + 49297) * 233280
     return x - Math.floor(x)
   }
-  // Every circle shares one period instead of each rolling its own random
-  // frequency — independent frequencies is what read as six blobs wandering
-  // with no relationship to each other. A shared beat, phase-staggered evenly
-  // around the group (i/NUM_CIRCLES of a turn apart) with x/y a quarter-cycle
-  // apart per circle (so each one traces a circular orbit, not a straight
-  // back-and-forth), reads as one coordinated motion — like dancers doing the
-  // same move offset in time — instead of independent drifting.
-  // Period 10.27s ≈ (10+3.5*7)/1.265, keeping the same +10%-then-+15% speed
-  // bumps previously applied per-circle.
-  const sharedFreq = 1.265 / 10.27
   return Array.from({ length: NUM_CIRCLES }, (_, i) => ({
     baseX:  0.10 + rng(i, 0) * 0.80,
     baseY:  0.10 + rng(i, 1) * 0.80,
     // Amp up + radius down ~10% vs the ca8fb4d tuning: smaller blobs overlap
     // less, so the screen-blend washes to a single hue less often and distinct
-    // palette colors stay co-visible.
+    // palette colors stay co-visible. Periods 10–17s (was 12–20s) for a bit
+    // more background motion. Frequency +10% again for faster flow.
     xAmp:   0.33,
     yAmp:   0.33,
-    xFreq:  sharedFreq,
-    yFreq:  sharedFreq,
-    xPhase: (i / NUM_CIRCLES) * Math.PI * 2,
-    yPhase: (i / NUM_CIRCLES) * Math.PI * 2 + Math.PI / 2,
-    // Reverted from 0.95–1.3: at that size every blob was bigger than the
-    // canvas and all six overlapped almost fully at all times, so screen-blend
-    // washed everything to one flat color and the 0.33-amplitude drift moved
-    // a blob far larger than the screen — imperceptible. Back to the
-    // known-good 0.50–0.63 range (pre-9b748d1): blobs stay distinct enough
-    // for separate palette hues to read, and the same drift amplitude now
-    // moves a meaningful fraction of the blob's own size, so motion is visible.
+    xFreq:  1.1 / (10 + rng(i, 2) * 7),
+    yFreq:  1.1 / (10 + rng(i, 3) * 7),
+    xPhase: rng(i, 4) * Math.PI * 2,
+    yPhase: rng(i, 5) * Math.PI * 2,
     radius: 0.50 + rng(i, 6) * 0.13,
   }))
 }
@@ -247,23 +231,9 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
           const buildLayer = (rgbArr) => rgbArr.map(([R, G, B], i) => {
             const r = circleParams[i].radius * maxDim
             const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r)
-            // Gradual multi-stop falloff — canvas gradients interpolate linearly
-            // between stops, so a 2-3 stop gradient still reads as a circle with
-            // a soft edge. Enough stops approximating an exponential decay to
-            // where alpha is imperceptible well before the outer radius — no
-            // discernible boundary, just a color wash.
-            // Peak alpha restored to 0.50 (was dropped to 0.34 alongside the
-            // radius blow-up, which made colors read weak/washed). Floor back
-            // to 0 (was 0.02) — with radius shrunk back to 0.50-0.63xmaxDim,
-            // blobs no longer cover the whole canvas at all times, so a hard
-            // zero floor lets near-black show between blob centers, which is
-            // what keeps separate palette hues reading as distinct colors
-            // instead of one averaged wash.
-            g.addColorStop(0,    `rgba(${R},${G},${B},0.50)`)
-            g.addColorStop(0.15, `rgba(${R},${G},${B},0.36)`)
-            g.addColorStop(0.30, `rgba(${R},${G},${B},0.24)`)
-            g.addColorStop(0.50, `rgba(${R},${G},${B},0.14)`)
-            g.addColorStop(0.70, `rgba(${R},${G},${B},0.06)`)
+            // Soft falloff from the center out — no flat dense core that reads as a solid object.
+            g.addColorStop(0,    `rgba(${R},${G},${B},0.55)`)
+            g.addColorStop(0.45, `rgba(${R},${G},${B},0.22)`)
             g.addColorStop(1,    `rgba(${R},${G},${B},0)`)
             return { grad: g, r }
           })
@@ -317,11 +287,8 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
             entries: s.steadyRgb.map(([R, G, B], i) => {
               const r    = circleParams[i].radius * maxDim
               const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, r)
-              grad.addColorStop(0,    `rgba(${R},${G},${B},0.50)`)
-              grad.addColorStop(0.15, `rgba(${R},${G},${B},0.36)`)
-              grad.addColorStop(0.30, `rgba(${R},${G},${B},0.24)`)
-              grad.addColorStop(0.50, `rgba(${R},${G},${B},0.14)`)
-              grad.addColorStop(0.70, `rgba(${R},${G},${B},0.06)`)
+              grad.addColorStop(0,    `rgba(${R},${G},${B},0.55)`)
+              grad.addColorStop(0.45, `rgba(${R},${G},${B},0.22)`)
               grad.addColorStop(1,    `rgba(${R},${G},${B},0)`)
               return { grad, r }
             }),
