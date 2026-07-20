@@ -5,20 +5,23 @@ import AlbumGradientMesh from './AlbumGradientMesh'
 import { usePalette } from '../hooks/usePalette'
 import { displayName } from '../lib/track'
 
-// AlbumGradientMesh (soft mesh, OKLab color mixing, tiny-canvas blur, no
-// WebGL) is now the default background — the original AlbumGradient draws
-// its blobs as radial-gradient circles via ctx.arc(), which can't satisfy
-// "fluid, no circle shapes" no matter how it's tuned; the mesh's blurred
-// noise field structurally has no discrete shape to see. AlbumGradient is
-// kept as an opt-out fallback: ?gradient=circles or
-// localStorage.setItem('trivia_gradient_engine', 'circles') in devtools —
+// AlbumGradient (radial-gradient circle blobs) is the default background —
+// back to the proven, pre-2026-07-19 version Ben preferred throughout that
+// day's whole mesh detour. AlbumGradientMesh (soft mesh, OKLab mixing,
+// tiny-canvas blur, "two colors colliding") was a from-scratch replacement
+// built the same day to chase "no circle shapes, more dancing" — after many
+// tuning rounds it never beat the original and the real bug turned out to
+// be upstream anyway (api/palette.js was washing out vivid colors via
+// bucket-averaging, fixed 2026-07-19 in 30e6594 — that fix benefits either
+// renderer). Mesh is kept as an opt-in: ?gradient=mesh or
+// localStorage.setItem('trivia_gradient_engine', 'mesh') in devtools —
 // either way it's instant, no redeploy needed.
 // Not a real hook (no React state/effects) — plain function, just named to
 // signal it's read at render time rather than cached once at module load.
-function getCircleGradientFlag() {
+function getMeshGradientFlag() {
   if (typeof window === 'undefined') return false
-  if (new URLSearchParams(window.location.search).get('gradient') === 'circles') return true
-  return localStorage.getItem('trivia_gradient_engine') === 'circles'
+  if (new URLSearchParams(window.location.search).get('gradient') === 'mesh') return true
+  return localStorage.getItem('trivia_gradient_engine') === 'mesh'
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -74,8 +77,8 @@ function Tonearm({ controls }) {
 function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpcomingTrack }) {
   // Read once per mount, not per render — avoids re-checking localStorage/URL
   // on every position-tick re-render this component already gets a lot of.
-  const [useCircleGradient] = useState(getCircleGradientFlag)
-  const GradientBg = useCircleGradient ? AlbumGradient : AlbumGradientMesh
+  const [useMeshGradient] = useState(getMeshGradientFlag)
+  const GradientBg = useMeshGradient ? AlbumGradientMesh : AlbumGradient
   const [shown, setShown]                 = useState(currentTrack)
   const [prev,  setPrev]                  = useState(null)
   const [transitioning, setTransitioning] = useState(false)
