@@ -40,18 +40,24 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose,
 
   // Preview: plays from In to Out, does NOT auto-advance to next song.
   // The modal shares the single Spotify player/connection with live shuffle
-  // playback, so previewing a *different* song than what's live would
-  // otherwise silently hijack it (no fade, and Jukebox's isPlaying/playingId/
-  // Live-overlay state would go stale since it never learns playback moved
-  // on). Stop the live session cleanly first so state stays consistent.
+  // playback, so previewing ANY song — including the one currently live —
+  // would otherwise silently hijack it (no fade, and Jukebox's isPlaying/
+  // playingId/Live-overlay state would go stale since it never learns
+  // playback moved on). Always stop the live session cleanly first so state
+  // stays consistent; this is also true when isActive, since the modal's own
+  // transport can't tell "still live" apart from "live but paused via us".
   const handlePlay = async () => {
     // Wait for the live fade-out to finish before starting the preview —
     // starting immediately would bump the player generation and cut the
     // fade short (onStopLiveShuffle returns fadeAndPause's promise).
-    if (isLiveShuffling && !isActive) await onStopLiveShuffle?.()
+    if (isLiveShuffling) await onStopLiveShuffle?.()
     playTrack(track.uri, startMs, stopMs, true)
   }
-  const handleStop = () => pause()
+  // Route through onStopLiveShuffle (Jukebox.handleStop) when this song is
+  // the live one — a bare player.pause() bypasses Jukebox's isPlaying/
+  // showLive/playingId state, leaving the main UI stuck showing "playing"
+  // with no song actually advancing.
+  const handleStop = () => (isActive && isLiveShuffling) ? onStopLiveShuffle?.() : pause()
 
   // Set In/Out: capture current scrubber position AND immediately save to library.
   // Clamped against the other bound (with a minimum gap) so a saved clip can

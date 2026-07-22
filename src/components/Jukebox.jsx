@@ -42,6 +42,34 @@ function totalSongs(sets) {
   return Object.values(sets?.items ?? {}).reduce((n, s) => n + (s.songs?.length ?? 0), 0)
 }
 
+// Guard 3 catch-up: `remote` has moved on past `baseline` (the last sets we
+// know we were in sync with) without us. Rather than discarding whatever the
+// user just did to `outgoing` (add/edit/new set) since `baseline`, replay
+// that local delta on top of `remote` — per-song, by id, per set — so a
+// stale-tab catch-up can't silently eat a real edit. Deletions aren't
+// replayed (a song missing from `outgoing` but present in `remote` is left
+// alone) since we can't tell "user deleted it" from "never had it" from ids
+// alone, and leaving a song in is far less surprising than losing one.
+function mergeLocalDelta(baseline, outgoing, remote) {
+  const baseItems = baseline?.items ?? {}
+  const items = { ...(remote?.items ?? {}) }
+  for (const [setId, outSet] of Object.entries(outgoing?.items ?? {})) {
+    const baseSongs = baseItems[setId]?.songs ?? []
+    const baseById = new Map(baseSongs.map(s => [s.id, s]))
+    const changed = (outSet.songs ?? []).filter(s => {
+      const prior = baseById.get(s.id)
+      return !prior || JSON.stringify(prior) !== JSON.stringify(s)
+    })
+    if (!changed.length) continue
+    const destSet = items[setId] ?? { name: outSet.name, songs: [] }
+    const destSongs = destSet.songs ?? []
+    const destById = new Map(destSongs.map(s => [s.id, s]))
+    changed.forEach(s => destById.set(s.id, s))
+    items[setId] = { ...destSet, songs: Array.from(destById.values()) }
+  }
+  return { ...(remote ?? outgoing), items }
+}
+
 export default function Jukebox({ onLogout }) {
   const [sets, setSets] = useState(loadSets)
   const [query, setQuery] = useState('')
@@ -103,6 +131,11 @@ const [newSetName, setNewSetName] = useState('')
   // on the server (this is how trim in/out points previously got wiped: a
   // stale tab's full-state write silently reverted a newer one).
   const lastAppliedUpdatedAtRef   = useRef(null)
+  // The sets we were caught up on as of lastAppliedUpdatedAtRef — paired
+  // with it everywhere it's set. Guard 3 diffs `outgoing` against this to
+  // find what the user actually changed since, so a stale-tab catch-up can
+  // merge that delta into the fresh remote row instead of discarding it.
+  const lastAppliedSetsRef        = useRef(null)
   // Set by the realtime handler when an incoming update is dropped because a
   // local write is in-flight. The debounced writer merges any songs in here
   // that aren't already local (e.g. a QuickAdd) before it upserts, so a
@@ -140,23 +173,15 @@ const [newSetName, setNewSetName] = useState('')
       if (outgoing !== setsRef.current) setSets(outgoing)
     }
 
-    // Guard 1b — if we're about to write an empty state, verify the remote is also
-    // empty. Catches any edge-case that bypasses Guard 1a (e.g. sync completes but
-    // local state is still empty before the user adds anything).
-    if (totalSongs(outgoing) === 0) {
-      try {
-        const { data } = await supabase
-          .from('jukebox_state').select('sets').eq('id', 'singleton').single()
-        if (data?.sets && totalSongs(data.sets) > 0) return  // remote has data — abort
-      } catch { return }  // cannot verify remote state — do not risk it
-    }
-
     // Guard 3 — compare-and-swap on updated_at. If the remote row has moved on
     // since the last sets we know we're caught up with, and it wasn't our own
     // last write, this tab's `sets` is stale (most likely: a realtime UPDATE
-    // event was silently missed while backgrounded/asleep). Writing `outgoing`
-    // now would blindly overwrite someone else's newer edit — pull the fresh
-    // remote state in instead and bail, rather than reverting it.
+    // event was silently missed while backgrounded/asleep). Blindly writing
+    // `outgoing` would overwrite someone else's newer edit, and blindly
+    // adopting the remote row would discard whatever the user just did here
+    // (e.g. edited a trim point right after this tab went stale) — so instead
+    // replay outgoing's delta (vs. the last-synced baseline) onto the fresh
+    // remote row and write that merged result.
     // Skipped when a stash was just merged above — that merge already folds
     // in the concurrent remote change, so this write is the correct catch-up,
     // not a stale overwrite (checking here would just discard the merge and
@@ -174,13 +199,14 @@ const [newSetName, setNewSetName] = useState('')
         ) {
           const { data: remoteRow } = await supabase
             .from('jukebox_state').select('sets, updated_at').eq('id', 'singleton').single()
-          if (remoteRow?.sets) {
-            lastAppliedUpdatedAtRef.current = remoteRow.updated_at
-            justLoadedFromSupabaseRef.current = true
-            setSets(remoteRow.sets)
-            localStorage.setItem('trivia_sets', JSON.stringify(remoteRow.sets))
-          }
-          return
+          if (!remoteRow?.sets) return
+          outgoing = mergeLocalDelta(lastAppliedSetsRef.current, outgoing, remoteRow.sets)
+          justLoadedFromSupabaseRef.current = true
+          setSets(outgoing)
+          localStorage.setItem('trivia_sets', JSON.stringify(outgoing))
+          // Fall through to the upsert below so the merged result — remote's
+          // catch-up plus our preserved local delta — actually gets persisted,
+          // instead of leaving it only-local until the next real edit.
         }
       } catch { return }  // cannot verify remote state — do not risk overwriting it
     }
@@ -194,6 +220,7 @@ const [newSetName, setNewSetName] = useState('')
         updated_at: nowIso,
       })
       lastAppliedUpdatedAtRef.current = nowIso
+      lastAppliedSetsRef.current = outgoing
     } catch { /* silent — localStorage is always the local fallback */ }
   }, [])
 
@@ -246,12 +273,14 @@ const [newSetName, setNewSetName] = useState('')
                 updated_at: nowIso,
               })
               lastAppliedUpdatedAtRef.current = nowIso
+              lastAppliedSetsRef.current = lsSets
             } catch { /* migration failed silently — localStorage remains the truth */ }
           }
         } else {
           // Remote has songs — use it as the source of truth
           justLoadedFromSupabaseRef.current = true
           lastAppliedUpdatedAtRef.current = data.updated_at
+          lastAppliedSetsRef.current = sbSets
           setSets(sbSets)
           localStorage.setItem('trivia_sets', JSON.stringify(sbSets))
         }
@@ -291,6 +320,7 @@ const [newSetName, setNewSetName] = useState('')
           // Guard 2 — never let an empty/default incoming state wipe a populated local library
           if (totalSongs(incoming) === 0 && totalSongs(setsRef.current) > 0) return
           lastAppliedUpdatedAtRef.current = payload.new?.updated_at ?? lastAppliedUpdatedAtRef.current
+          lastAppliedSetsRef.current = incoming
           setSets(incoming)
           localStorage.setItem('trivia_sets', JSON.stringify(incoming))
         }
@@ -318,6 +348,7 @@ const [newSetName, setNewSetName] = useState('')
         if (data.updated_at === lastAppliedUpdatedAtRef.current) return  // already current
         if (totalSongs(data.sets) === 0 && totalSongs(setsRef.current) > 0) return  // Guard 2
         lastAppliedUpdatedAtRef.current = data.updated_at
+        lastAppliedSetsRef.current = data.sets
         justLoadedFromSupabaseRef.current = true
         setSets(data.sets)
         localStorage.setItem('trivia_sets', JSON.stringify(data.sets))
@@ -391,9 +422,16 @@ const [newSetName, setNewSetName] = useState('')
     if (!lib) { strip(); return }
 
     // Random branch — resolve before the existence check so it flows the same path.
+    // Only pick among sets that actually have songs, so a random landing
+    // never silently no-ops on an empty theme set.
     if (lib.toLowerCase() === 'random') {
-      const keys = Object.keys(setsRef.current?.items ?? {})
-      if (!keys.length) { strip(); return }
+      const items = setsRef.current?.items ?? {}
+      const keys = Object.keys(items).filter(k => items[k].songs?.length)
+      if (!keys.length) {
+        addToast('No sets have songs — nothing to shuffle')
+        strip()
+        return
+      }
       lib = keys[Math.floor(Math.random() * keys.length)]
     }
 
@@ -405,7 +443,12 @@ const [newSetName, setNewSetName] = useState('')
     }
 
     const targetSongs = setsRef.current.items[lib].songs
-    if (!targetSongs.length) { strip(); return }
+    if (!targetSongs.length) {
+      const setName = setsRef.current.items[lib].name ?? lib
+      addToast(`“${setName}” has no songs — pick another theme`)
+      strip()
+      return
+    }
 
     // Select the library in state (updates the UI picker).
     setSets(prev => ({ ...prev, activeId: lib }))
@@ -453,7 +496,16 @@ const [newSetName, setNewSetName] = useState('')
       const { order, idx, song } = resolveNext(shuffleOrderRef.current, shuffleIdxRef.current, lib, playedIdsRef.current)
       shuffleOrderRef.current = order
       shuffleIdxRef.current = idx
-      if (!song) return
+      if (!song) {
+        // Library (or active set) is empty — e.g. emptied from another
+        // device mid-play. Nothing left to advance to; stop lying about
+        // playback state instead of leaving a frozen "playing" UI.
+        setIsPlaying(false)
+        setShowLive(false)
+        setPlayingId(null)
+        addToast('No songs left to play in this set')
+        return
+      }
       playedIdsRef.current.add(song.id)
       // A new play supersedes any in-flight LiveScreen exit — clear liveEnding
       // so the fresh session doesn't mount into the outgoing animation state.
