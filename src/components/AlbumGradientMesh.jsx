@@ -1,60 +1,77 @@
 import { useEffect, useRef, useMemo } from 'react'
 
-// Canvas2D "soft mesh" gradient background — the second-generation replacement
-// for the WebGL noise version (AlbumGradientNoise, retired after it read as
-// "lava lamp"/psychedelic marble live). Same prop contract as AlbumGradient.jsx
-// (colors/nextColors/active/shuffleKey/entranceActive) so it drops into
-// LiveScreen.jsx with no other changes — see LiveScreen.jsx for the flag that
-// picks between this and the original canvas-circles version.
+// Canvas2D "soft mesh" gradient background — third generation. Same prop
+// contract as AlbumGradient.jsx (colors/nextColors/active/shuffleKey/
+// entranceActive) so it drops into LiveScreen.jsx with no other changes —
+// see LiveScreen.jsx for the flag that picks between this and the
+// circle-blobs version.
 //
-// Three things fix what the WebGL version got wrong (per design review):
+// History: gen 1 (AlbumGradientNoise, WebGL) read as "lava lamp"/marble,
+// retired. Gen 2 (this file, until 2026-07-26) rendered a pure noise field
+// with two "anchor" colors dueling via a sweeping divider plus accent colors
+// fading in/out on independent cycles — solid at not having hard edges, but
+// the motion read as an abstract flowing field, not distinct moving bodies.
+// Gen 3 (below) keeps every anti-hard-edge guarantee from gen 2 but replaces
+// the noise-field/anchor-duel color math with the ACTUAL moving blob centers
+// from AlbumGradient.jsx (circle-blobs) — same orbiting sine motion, same
+// per-blob seeded variety — because that's specifically what read as
+// "flowing and battling" and the noise field never fully recreated it.
+//
+// What's unchanged from gen 2 (the parts that actually solve hard edges):
 //  1. Colors are mixed in OKLab (perceptual color space), not RGB/screen-blend.
-//     Screen-blend is what produced the hot bright veins; naive RGB lerp gives
-//     muddy gray seams. OKLab gives the creamy Stripe/Linear-style transitions.
-//  2. The noise field is rendered at a TINY internal resolution (~48px) and
+//  2. The color field is computed at a TINY internal resolution (~48px) and
 //     scaled up + blurred onto the real canvas — that upscale-blur physically
-//     cannot produce a hard edge, no matter how the noise math behaves.
-//  3. No sharpening exponent on the color weights (the WebGL version's
-//     `pow(n, 1.6)` pushed each color toward all-or-nothing, which is what
-//     made it read as marble veins instead of a blend).
+//     cannot produce a hard edge, no matter what the per-pixel color math does.
 //
-// Palette is 5 colors (up from the original's 6 circles) — api/palette.js
-// now ranks median-cut buckets by saturation and falls back to two fixed
-// accent hues for near-grayscale album art, so this always has real color to
-// work with.
+// What's new: each pixel's color is an inverse-distance-weighted OKLab blend
+// of the NUM_BLOBS moving blob centers (Shepard's method) — always sums to
+// 1 across all blobs, so there's no "no blob nearby" case and thus no black
+// gaps, while still concentrating each blob's own color strongly near its
+// own center. That's what gives the "distinct moving bodies colliding," not
+// an averaged-out haze.
 
 const BLEND_DURATION_MS = 7500
-// api/palette.js now returns 5-8 colors (up from a fixed 5) when the cover
-// actually has that many distinct real hues — NUM_COLORS caps how many this
-// component will ever draw, so it needs to match that ceiling or the extra
-// colors api/palette.js worked to find just get silently dropped.
-const NUM_COLORS = 8
-// Full noise-flow cycle. Previous value (0.055) was a ~2-minute cycle —
-// in any 10s glance the pattern moved ~3% of a period, which is why
-// nothing looked like it was moving no matter how the color weights were
-// tuned. This is the actual "dancing" knob, not the weight exponent below.
-// 0.45 → 0.79: +75% per live feedback, still not enough dance.
-const FLOW_SPEED = 0.79
-// colors[0]/[1] are the two most-saturated palette picks (api/palette.js
-// ranks by HSL saturation) — treated as "anchor" colors: always present,
-// slowly trading dominance back and forth. colors[2..4] are "accent"
-// colors: no floor, each fades fully in and out on its own cycle.
-// Anchor/accent periods also cut ~75% (period down = cycle speed up) to
-// match the FLOW_SPEED bump — otherwise the color weights would still
-// duel/fade at the old slow pace while the noise field flows past faster.
-const ANCHOR_COUNT      = 2
-const ANCHOR_PERIOD_S   = 11.4  // one full sweep of the divider, edge to edge and back
-const ANCHOR_SWING      = 0.30  // how much the sweeping divider contributes to who's winning, vs. local noise texture
-const ANCHOR_SHARPNESS  = 3.5   // divider position→edge transition — lower = blurrier, higher = crisper
-// Two-color collision tuning (see the ARCHITECTURE CHANGE comment in draw()
-// for why this replaced the old N-color weighted average):
-const ANCHOR_NOISE_CONTRAST = 1.5  // how much local noise texture (vs. the divider sweep) shapes the boundary's wobble
-const ANCHOR_MIX_SHARPNESS  = 2.4  // steepness of the anchor0↔anchor1 transition itself — higher = crisper meeting line
-const ANCHOR_FLOOR      = 0.27  // neither anchor ever fully disappears, even on its "losing" side (+25% intensity pass, +20% again 2026-07-26 now that palette.js gives it more vivid input to work with)
-const ACCENT_BASE_PERIOD_S = 7.4 // each accent's in/out period, staggered below
-const ACCENT_EXP    = 1.35 // gentle — accents were reading as "no green at all" under a steeper curve
-const ACCENT_BOOST  = 2.4  // compensates so an "in" accent is actually visible, not just a faint tint (+25% intensity pass, +20% again 2026-07-26)
-const ACCENT_MAX_MIX = 0.75 // hard cap per accent — guarantees the anchor collision underneath can never be washed out (+25% intensity pass, +20% again 2026-07-26)
+// Circle-blobs (AlbumGradient.jsx) only ever visualizes 6 of the up to 8
+// colors api/palette.js can return — matching that here reproduces the same
+// look/feel the "flowing and battling" motion was liked from.
+const NUM_BLOBS = 6
+
+// ── Blob motion — identical formulas to AlbumGradient.jsx's makeCircleParams,
+// just evaluated in the tiny canvas's own pixel space instead of the real
+// canvas's. Same seeded per-index variety (position, speed, phase, size) so
+// the motion feels like the same six bodies people already liked.
+function makeBlobParams() {
+  function rng(i, slot) {
+    const x = Math.sin((i * 7 + slot) * 9301 + 49297) * 233280
+    return x - Math.floor(x)
+  }
+  return Array.from({ length: NUM_BLOBS }, (_, i) => ({
+    baseX:  0.10 + rng(i, 0) * 0.80,
+    baseY:  0.10 + rng(i, 1) * 0.80,
+    xAmp:   0.33,
+    yAmp:   0.33,
+    xFreq:  1.1 / (10 + rng(i, 2) * 7),
+    yFreq:  1.1 / (10 + rng(i, 3) * 7),
+    xPhase: rng(i, 4) * Math.PI * 2,
+    yPhase: rng(i, 5) * Math.PI * 2,
+    radius: 0.50 + rng(i, 6) * 0.13,
+  }))
+}
+
+// Inverse-distance-weighting power — how sharply a blob's own color
+// dominates near its center vs. blending with neighbors further out. Higher
+// = more distinct "bodies" with crisper (pre-blur) boundaries where two
+// blobs meet, closer to how circle-blobs read; lower = creamier/more
+// averaged, closer to the old noise-field feel. 3 sits close to the
+// circle-blobs side since that's the explicitly requested target — the blur
+// pass below still guarantees the final on-screen boundary is soft either way.
+const IDW_POWER = 3
+// Small per-pixel jitter on each blob's effective distance so boundaries
+// wobble organically instead of forming perfect ellipses — in tiny-canvas
+// pixels, so keep it small relative to the ~48px canvas.
+const WOBBLE_PX = 2.2
+// How fast the wobble texture itself drifts — independent of blob orbit speed.
+const WOBBLE_FLOW_SPEED = 0.6
 
 function hexToRgb(hex) {
   if (!hex || hex.length < 7) return [8, 8, 8]
@@ -113,7 +130,8 @@ function oklabToRgb([L, a, b]) {
 // Cheap 2D pseudo-noise (sum of offset sines) — not simplex, but visually
 // comparable for this purpose and far cheaper per-pixel in plain JS, which
 // matters since this runs at every pixel of the tiny internal canvas, every
-// frame, on whatever's actually driving the display.
+// frame, on whatever's actually driving the display. Used only for the
+// small boundary-wobble jitter now (see WOBBLE_PX above).
 function pseudoNoise(x, y, t) {
   return (
     Math.sin(x * 1.3 + t) +
@@ -121,17 +139,6 @@ function pseudoNoise(x, y, t) {
     Math.sin((x + y) * 0.9 + t * 1.1) +
     Math.sin((x - y) * 1.1 - t * 0.5)
   ) / 4
-}
-
-function makeColorSeeds() {
-  function rng(i, slot) {
-    const x = Math.sin((i * 7 + slot) * 9301 + 49297) * 233280
-    return x - Math.floor(x)
-  }
-  return Array.from({ length: NUM_COLORS }, (_, i) => ({
-    seedU: rng(i, 0) * 9,
-    seedV: rng(i, 1) * 9,
-  }))
 }
 
 export default function AlbumGradientMesh({ colors = [], nextColors = [], active = true, shuffleKey = 0, entranceActive = false }) {
@@ -146,12 +153,12 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
   const pendingFromNextRef  = useRef(false)
   const entranceActiveRef  = useRef(entranceActive)
   const pendingBlendRef    = useRef(null)
-  const colorSeeds         = useMemo(makeColorSeeds, [])
+  const blobParams         = useMemo(makeBlobParams, [])
   const tinySizeRef        = useRef({ w: 48, h: 48 })
 
   const st = useRef(null)
   if (!st.current) {
-    const initial = parseColors(colors, NUM_COLORS)
+    const initial = parseColors(colors, NUM_BLOBS)
     st.current = {
       steadyRgb:  initial.map(c => [...c]),
       outRgb:     initial.map(c => [...c]),
@@ -173,7 +180,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     } else {
       s.outRgb = s.steadyRgb.map(c => [...c])
     }
-    s.inRgb      = parseColors(newHex, NUM_COLORS)
+    s.inRgb      = parseColors(newHex, NUM_BLOBS)
     s.blendStart = performance.now()
     if (!rafRef.current && mountedRef.current) startLoop()
   }
@@ -209,8 +216,8 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
       pendingFromNextRef.current = false
       pendingBlendRef.current = null
       const s = st.current
-      s.inRgb     = parseColors(colors, NUM_COLORS)
-      s.steadyRgb = parseColors(colors, NUM_COLORS)
+      s.inRgb     = parseColors(colors, NUM_BLOBS)
+      s.steadyRgb = parseColors(colors, NUM_BLOBS)
     } else {
       if (entranceActiveRef.current) { pendingBlendRef.current = colors; return }
       startBlendTo(colors)
@@ -272,84 +279,43 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     }
 
     const oklabColors = liveColors.map(rgbToOklab)
-    const t    = (ts / 1000) * FLOW_SPEED   // drives noise domain warp/flow
-    const tSec = ts / 1000                   // raw seconds — anchor duel + accent
-                                              // fade timing stay on their own clock,
-                                              // independent of FLOW_SPEED tuning
+    const tSec = ts / 1000
+    const wobT = tSec * WOBBLE_FLOW_SPEED
 
-    // ARCHITECTURE CHANGE, verified against a real screen recording: the
-    // previous approach normalized a weighted OKLab average across all 8
-    // colors at every pixel. Averaging N colors together always trends
-    // toward one blended pastel, no matter how the individual weights are
-    // tuned — three rounds of tuning that same average (exponent, floor,
-    // spatial divider bias) all still produced one flat hue on screen. That
-    // was the wrong lever: an average of many things is structurally
-    // incapable of reading as "two colors colliding."
-    //
-    // New model: the two anchors are a genuine two-color LERP (not an
-    // N-color average) between whichever one "wins" at a given point — like
-    // two liquids meeting, not eight paints mixed in a bucket. `mix` blends
-    // local noise texture (so the boundary isn't a perfectly straight line)
-    // with the sweeping divider position (so the boundary visibly travels).
-    // Accents then layer on top of that two-color base one at a time, each
-    // capped at ACCENT_MAX_MIX so no accent can ever wash the base out.
-    const anchorDivider = 0.5 + 0.5 * Math.sin((tSec / ANCHOR_PERIOD_S) * Math.PI * 2)
-    // Accents: independent period per index (staggered so they don't all fade
-    // in/out in lockstep) and pow(…, 1.5) on the 0–1 envelope so each one
-    // actually spends real time near-zero (true "out") instead of just
-    // wobbling in the middle of its range.
-    const accentEnvelope = Array.from({ length: NUM_COLORS - ANCHOR_COUNT }, (_, j) => {
-      const period = ACCENT_BASE_PERIOD_S + j * 5
-      const phase  = j * (Math.PI * 2 / 3)
-      const raw01  = (Math.sin((tSec / period) * Math.PI * 2 + phase) + 1) / 2
-      return Math.pow(raw01, 1.5)
-    })
-
-    const [anchor0, anchor1] = oklabColors
+    // This frame's blob centers, computed once (not per pixel) — identical
+    // orbiting-sine motion to AlbumGradient.jsx's circleParams, evaluated in
+    // the tiny canvas's own pixel space so it upscales to the same relative
+    // motion regardless of the real canvas's size.
+    const blobs = blobParams.map((p, i) => ({
+      cx:    (p.baseX + p.xAmp * Math.sin(tSec * p.xFreq * Math.PI * 2 + p.xPhase)) * SW,
+      cy:    (p.baseY + p.yAmp * Math.sin(tSec * p.yFreq * Math.PI * 2 + p.yPhase)) * SH,
+      r:     p.radius * Math.max(SW, SH),
+      color: oklabColors[i % oklabColors.length],
+    }))
 
     const img = sctx.getImageData(0, 0, SW, SH)
     const data = img.data
     for (let y = 0; y < SH; y++) {
       for (let x = 0; x < SW; x++) {
-        // Scale 2.6 → 5.5: at 2.6, less than one noise period fit on screen —
-        // every color read as one broad soft ramp. 5.5 puts a few distinct
-        // features per axis so the boundary between the two anchors has real
-        // texture instead of being a dead-straight line.
-        const u = (x / SW) * 5.5
-        const v = (y / SH) * 5.5
-        const wx = pseudoNoise(u + 9, v - 4, t * 0.6) * 0.6
-        const wy = pseudoNoise(u - 6, v + 8, t * 0.6) * 0.6
-        // Divider edge — POSITION-based (x/SW, plain 0–1 across the canvas),
-        // not the noise-scaled u/v above. tanh gives a soft ±1 transition
-        // centered on the divider instead of a hard cut.
-        const edge = Math.tanh((x / SW - anchorDivider) * ANCHOR_SHARPNESS)
+        // Inverse-distance-weighted OKLab blend across all blobs (Shepard's
+        // method) — weights always sum to 1, so every pixel gets real color
+        // (no black gaps) while still concentrating strongly near each
+        // blob's own center (weight grows large as distance → 0), which is
+        // what makes them read as distinct moving bodies rather than one
+        // averaged haze.
+        const wob = pseudoNoise(x * 0.15, y * 0.15, wobT) * WOBBLE_PX
 
-        const n0 = pseudoNoise(u + wx + colorSeeds[0].seedU, v + wy + colorSeeds[0].seedV, t) * 0.5 + 0.5
-        const n1 = pseudoNoise(u + wx + colorSeeds[1].seedU, v + wy + colorSeeds[1].seedV, t + 1.3) * 0.5 + 0.5
-        // score > 0 → anchor0 winning at this pixel; < 0 → anchor1 winning.
-        // Local noise texture (n0 - n1) gives the boundary organic wobble;
-        // the divider term is what makes that boundary sweep across the
-        // whole canvas over time instead of just sitting there wobbling.
-        const score = (n0 - n1) * ANCHOR_NOISE_CONTRAST + edge * ANCHOR_SWING
-        let mix = 0.5 + 0.5 * Math.tanh(score * ANCHOR_MIX_SHARPNESS)
-        mix = Math.min(1 - ANCHOR_FLOOR, Math.max(ANCHOR_FLOOR, mix)) // never fully 0 or 1 — a trace of the "losing" anchor always shows
-
-        let L = lerp(anchor1[0], anchor0[0], mix)
-        let a = lerp(anchor1[1], anchor0[1], mix)
-        let b = lerp(anchor1[2], anchor0[2], mix)
-
-        // Accents layer on top of the anchor base one at a time, each capped
-        // at ACCENT_MAX_MIX — nudges the color toward itself proportionally,
-        // never fully replaces what's already there.
-        for (let i = ANCHOR_COUNT; i < NUM_COLORS; i++) {
-          const seed = colorSeeds[i]
-          const n = pseudoNoise(u + wx + seed.seedU, v + wy + seed.seedV, t + i * 1.3) * 0.5 + 0.5
-          const base = Math.pow(Math.max(0, n), ACCENT_EXP)
-          const w = Math.min(ACCENT_MAX_MIX, base * accentEnvelope[i - ANCHOR_COUNT] * ACCENT_BOOST)
-          if (w <= 0) continue
-          const [pl, pa, pb] = oklabColors[i]
-          L = lerp(L, pl, w); a = lerp(a, pa, w); b = lerp(b, pb, w)
+        let wSum = 0, L = 0, a = 0, b = 0
+        for (let i = 0; i < blobs.length; i++) {
+          const bl = blobs[i]
+          const dx = x - bl.cx, dy = y - bl.cy
+          const d  = Math.sqrt(dx * dx + dy * dy) + wob
+          const dn = Math.max(0.02, d / bl.r)
+          const w  = 1 / Math.pow(dn, IDW_POWER)
+          wSum += w
+          L += w * bl.color[0]; a += w * bl.color[1]; b += w * bl.color[2]
         }
+        L /= wSum; a /= wSum; b /= wSum
 
         const [r, g, bb] = oklabToRgb([L, a, b])
         const idx = (y * SW + x) * 4
@@ -358,9 +324,10 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     }
     sctx.putImageData(img, 0, 0)
 
-    // Upscale + blur — this, not the noise math, is the actual guarantee
-    // against hard edges. Overdraw slightly past the canvas bounds so the
-    // blur doesn't create a visible vignette from sampling outside the source.
+    // Upscale + blur — this, not the per-pixel color math, is the actual
+    // guarantee against hard edges. Overdraw slightly past the canvas bounds
+    // so the blur doesn't create a visible vignette from sampling outside
+    // the source.
     ctx.filter = 'blur(24px)'
     ctx.clearRect(0, 0, W, H)
     const pad = Math.max(W, H) * 0.06
@@ -410,7 +377,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
       rafRef.current = null
       window.removeEventListener('resize', resize)
     }
-  }, [colorSeeds])
+  }, [blobParams])
 
   return (
     <canvas
