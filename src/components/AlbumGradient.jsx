@@ -27,6 +27,36 @@ function easeInOut(t) {
 
 function lerp(a, b, t) { return a + (b - a) * t }
 
+// How saturated an RGB color is, 0 (gray) – 1 (fully saturated).
+function chromaOf(r, g, b) { return (Math.max(r, g, b) - Math.min(r, g, b)) / 255 }
+
+// Build one blob's radial gradient. Two things folded in here:
+//
+// 1. Smooth multi-stop falloff instead of a single steep-then-shallow slope
+//    change. A gradient that goes 0→0.55, 0.45→0.22, 1→0 has a kink in its
+//    slope right at the 0.45 stop — that reads on screen as a visible ring
+//    inside the soft blob, not a clean falloff. Sampling a continuous power
+//    curve at several stops avoids the kink.
+// 2. Chroma-based alpha/radius balancing. In `screen` blend mode a muted/gray
+//    color barely lightens the near-black canvas — it reads as almost
+//    invisible — while a fully saturated color dominates. That meant a
+//    monochrome cover's 1-2 injected neon accent colors (see palette.js)
+//    read as effectively ALL the visible color on screen despite being a
+//    minority of the 6 blobs. Boosting muted blobs' peak alpha and capping
+//    (plus slightly shrinking) saturated ones' makes the accents read as a
+//    genuine minority — contrasty, but not the whole frame.
+function buildBlobGradient(ctx, r, g, b, baseRadiusPx) {
+  const chroma     = chromaOf(r, g, b)
+  const peakAlpha  = lerp(0.62, 0.38, chroma)
+  const radiusPx   = baseRadiusPx * lerp(1.05, 0.85, chroma)
+  const grad       = ctx.createRadialGradient(0, 0, 0, 0, 0, radiusPx)
+  for (const t of [0, 0.2, 0.4, 0.6, 0.8, 1]) {
+    const a = peakAlpha * Math.pow(1 - t, 1.5)
+    grad.addColorStop(t, `rgba(${r},${g},${b},${a.toFixed(3)})`)
+  }
+  return { grad, r: radiusPx }
+}
+
 // ── Circle layout — seeded per-index so positions are always deterministic ─────
 
 function makeCircleParams() {
@@ -229,15 +259,9 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
         const oy         = s.inOffsetY * offsetFrac * H
 
         if (!blendCacheRef.current || blendCacheRef.current.maxDim !== maxDim) {
-          const buildLayer = (rgbArr) => rgbArr.map(([R, G, B], i) => {
-            const r = circleParams[i].radius * maxDim
-            const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r)
-            // Soft falloff from the center out — no flat dense core that reads as a solid object.
-            g.addColorStop(0,    `rgba(${R},${G},${B},0.55)`)
-            g.addColorStop(0.45, `rgba(${R},${G},${B},0.22)`)
-            g.addColorStop(1,    `rgba(${R},${G},${B},0)`)
-            return { grad: g, r }
-          })
+          const buildLayer = (rgbArr) => rgbArr.map(([R, G, B], i) =>
+            buildBlobGradient(ctx, R, G, B, circleParams[i].radius * maxDim)
+          )
           blendCacheRef.current = { maxDim, out: buildLayer(s.outRgb), in: buildLayer(s.inRgb) }
         }
         const { out: outE, in: inE } = blendCacheRef.current
@@ -285,14 +309,9 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
         if (!gradCacheRef.current || gradCacheRef.current.maxDim !== maxDim) {
           gradCacheRef.current = {
             maxDim,
-            entries: s.steadyRgb.map(([R, G, B], i) => {
-              const r    = circleParams[i].radius * maxDim
-              const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, r)
-              grad.addColorStop(0,    `rgba(${R},${G},${B},0.55)`)
-              grad.addColorStop(0.45, `rgba(${R},${G},${B},0.22)`)
-              grad.addColorStop(1,    `rgba(${R},${G},${B},0)`)
-              return { grad, r }
-            }),
+            entries: s.steadyRgb.map(([R, G, B], i) =>
+              buildBlobGradient(ctx, R, G, B, circleParams[i].radius * maxDim)
+            ),
           }
         }
         const { entries } = gradCacheRef.current

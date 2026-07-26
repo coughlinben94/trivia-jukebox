@@ -57,7 +57,13 @@ export default async function handler(req, res) {
     // would miss.
     const candidates = medianCut(source, 12);
     const ranked = candidates
-      .map(hex => ({ hex, chroma: hexToChroma(hex) }))
+      .map(hex => ({ hex, chroma: hexToChroma(hex), luma: hexToLuma(hex) }))
+      // A near-black bucket (e.g. a two-tone black-and-one-color cover, where
+      // black is the dominant channel) shouldn't ever surface as a "color" —
+      // against the canvas's own near-black base it reads as a hole, not a
+      // hue. Drop it here so it can't win a padding slot below even when
+      // there aren't enough vivid candidates to fill MIN_COLORS.
+      .filter(c => c.luma >= LUMA_THRESHOLD)
       .sort((a, b) => b.chroma - a.chroma);
 
     // Take every candidate with real color (chroma > 0.18), up to 8 — covers
@@ -78,8 +84,8 @@ export default async function handler(req, res) {
     const mostVivid = ranked[0]?.chroma ?? 0;
     if (mostVivid < 0.15) {
       const avgLuma = source.reduce((sum, p) => sum + luma(p), 0) / source.length / 255;
-      const accentHues = [24, 265]; // warm amber, cool violet — house accents
-      const accents = accentHues.map(h => hslToHex(h, 0.55, Math.min(0.75, Math.max(0.25, avgLuma))));
+      const accentHues = [320, 280]; // neon pink, neon purple — B&W covers get punchy contrast instead of fading to gray
+      const accents = accentHues.map(h => hslToHex(h, 0.85, Math.min(0.75, Math.max(0.25, avgLuma))));
       // Replace the two least-saturated picks — the ones contributing least
       // to actual color anyway — rather than the most-saturated real ones.
       colors = [...colors.slice(0, 3), ...accents];
@@ -169,6 +175,13 @@ function hexToChroma(hex) {
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
   return pixelChroma([r, g, b]);
+}
+
+function hexToLuma(hex) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return 0.299 * r + 0.587 * g + 0.114 * b;
 }
 
 function hslToHex(h, s, l) {

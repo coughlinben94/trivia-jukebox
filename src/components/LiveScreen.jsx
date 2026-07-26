@@ -215,11 +215,16 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           runTransitionRef.current?.(pending)
         }
 
-        // Let the record + tonearm springs fully settle before entranceActive
-        // flips — that flip releases the gradient's deferred first blend, which
-        // doubles canvas layer work at onset and was landing exactly as the
-        // record lays onto the platter (the reported settle-moment chop).
-        await sleep(600)
+        // Let the record + tonearm springs settle before entranceActive flips —
+        // that flip releases the gradient's deferred first blend, which doubles
+        // canvas layer work at onset and was landing exactly as the record lays
+        // onto the platter (the reported settle-moment chop). Trimmed from 600ms:
+        // the fly spring (the one actually landing the record) finished settling
+        // well before this point (it started at t=0, this runs after +1200+200ms
+        // of tonearm work), so the extra buffer here was mostly padding past the
+        // tonearm's own settle, not guarding the chop moment itself. If a chop
+        // reappears on live testing, this is the first thing to revert.
+        await sleep(350)
       } finally {
         setEntranceActive(false)
         if (!handedOffToTransition) busyRef.current = false
