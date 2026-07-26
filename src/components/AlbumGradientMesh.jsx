@@ -66,6 +66,14 @@ function makeBlobParams() {
 // circle-blobs side since that's the explicitly requested target — the blur
 // pass below still guarantees the final on-screen boundary is soft either way.
 const IDW_POWER = 3
+// The blob-IDW model has no built-in dampening (unlike the old anchor/accent
+// system's ANCHOR_FLOOR/ACCENT_MAX_MIX caps) — every pixel is a full-strength
+// blend of real palette hues, which read as more saturated throughout than
+// the original circle-blobs renderer (whose alpha falloff diluted color
+// toward black at each blob's edge). Scaling OKLab's a/b channels (which
+// directly encode chroma) down before converting back to RGB dials that back
+// without touching hue or lightness. 1.0 = no change; live-tune from here.
+const CHROMA_SCALE = 0.82
 // Small per-pixel jitter on each blob's effective distance so boundaries
 // wobble organically instead of forming perfect ellipses — in tiny-canvas
 // pixels, so keep it small relative to the ~48px canvas.
@@ -316,6 +324,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
           L += w * bl.color[0]; a += w * bl.color[1]; b += w * bl.color[2]
         }
         L /= wSum; a /= wSum; b /= wSum
+        a *= CHROMA_SCALE; b *= CHROMA_SCALE
 
         const [r, g, bb] = oklabToRgb([L, a, b])
         const idx = (y * SW + x) * 4
