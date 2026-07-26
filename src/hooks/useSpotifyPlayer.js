@@ -253,16 +253,18 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
       }
     }
 
-    // Pre-roll: seek to just BEFORE startMs (not startMs itself) and spend the
-    // fade-in ramping through that pre-roll, so full volume is reached right
-    // as playback crosses the actual in-point — the trimmed content itself
-    // never plays at anything less than full volume. Clamped to whatever room
-    // exists before startMs (0 if the in-point is already the track's start —
-    // nothing to pre-roll into, so there's no fade to do).
-    const preRollMs = Math.min(FADE_MS, startMs)
-    const seekMs = startMs - preRollMs
+    // Fade-in: seek to startMs itself (the trim's own in-point) and ramp
+    // volume 0 → max over the stretch of trimmed content that follows — the
+    // clip audibly fades up from its own start. This spends time INSIDE the
+    // trim window on the ramp, mirroring how the fade-out (see startMonitor)
+    // spends time OUTSIDE the window (after stopMs) on its ramp instead —
+    // deliberately not symmetric: the fade-in eats into the trimmed content,
+    // the fade-out doesn't. Clamped to whatever room the trim actually has —
+    // a clip shorter than FADE_MS can't fit a full ramp before stopMs.
+    const roomIn  = stopMs > startMs ? stopMs - startMs : Infinity
+    const fadeInMs = Math.min(FADE_MS, roomIn)
 
-    if (seekMs > 0) {
+    if (startMs > 0) {
       // Give Spotify 400ms to buffer the start of the track before seeking
       await sleep(400)
       if (genRef.current !== gen) return undefined
@@ -271,22 +273,22 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
         // REST API seek only — more reliable than SDK seek; using both caused a double-seek glitch
         const t = await getToken()
         await fetch(
-          `https://api.spotify.com/v1/me/player/seek?position_ms=${seekMs}&device_id=${deviceId}`,
+          `https://api.spotify.com/v1/me/player/seek?position_ms=${startMs}&device_id=${deviceId}`,
           { method: 'PUT', headers: { Authorization: `Bearer ${t}` } }
         )
       }
 
       await doSeek()
 
-      // Poll until position lands at or just past the pre-roll point.
-      // Allow up to 300ms before seekMs to handle slight Spotify overshoot.
-      // Reject if position is still far before seekMs — that means seek hasn't landed yet.
+      // Poll until position lands at or just past the in-point.
+      // Allow up to 300ms before startMs to handle slight Spotify overshoot.
+      // Reject if position is still far before startMs — that means seek hasn't landed yet.
       const landed = await new Promise(resolve => {
         const deadline = setTimeout(() => resolve(false), 3000)
         const poll = setInterval(async () => {
           const s = await player.getCurrentState()
           if (!s) return
-          if (s.position >= seekMs - 300 && s.position <= seekMs + 5000) {
+          if (s.position >= startMs - 300 && s.position <= startMs + 5000) {
             clearInterval(poll)
             clearTimeout(deadline)
             resolve(true)
@@ -306,7 +308,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     if (genRef.current !== gen) return undefined
 
     const maxVol = maxVolumeRef.current
-    await fadeVolume(0, maxVol, gen, preRollMs)
+    await fadeVolume(0, maxVol, gen, fadeInMs)
 
     if (genRef.current !== gen) return undefined
 

@@ -68,12 +68,41 @@ export default async function handler(req, res) {
 
     // Take every candidate with real color (chroma > 0.18), up to 8 — covers
     // with lots of distinct hues get more of them instead of being
-    // truncated to a fixed 5. Always keep at least 5 (padding from the
-    // ranked list even below the threshold) so the background never starves
-    // for colors on a muted-but-not-quite-grayscale cover.
-    const MIN_COLORS = 5, MAX_COLORS = 8, CHROMA_FLOOR = 0.18;
-    const vivid = ranked.filter(c => c.chroma > CHROMA_FLOOR).slice(0, MAX_COLORS);
-    let colors = (vivid.length >= MIN_COLORS ? vivid : ranked.slice(0, MIN_COLORS)).map(c => c.hex);
+    // truncated to a fixed 5.
+    //
+    // Verified against a live cover (a yellow record background with small
+    // red/blue/green accent regions — "All The Pretty Girls"): a plain
+    // top-8-by-chroma cut returned 8 near-identical shades of yellow and
+    // NONE of the accents. Yellow's own chroma (~0.65-0.73) simply outranks
+    // the accents' (blue ~0.56, red ~0.53, green ~0.42), and median-cut had
+    // split the dominant yellow region into that many near-duplicate
+    // sub-buckets — so ranking by raw chroma alone just picks 8 flavors of
+    // the same hue instead of the cover's actual distinct colors. Walking
+    // the ranked list and skipping anything within HUE_GAP_DEG of an
+    // already-picked hue forces genuine hue diversity — confirmed this
+    // returns yellow+blue+red+green for that cover instead of all-yellow.
+    const MIN_COLORS = 5, MAX_COLORS = 8, CHROMA_FLOOR = 0.18, HUE_GAP_DEG = 25;
+    const vivid = [];
+    for (const c of ranked) {
+      if (c.chroma <= CHROMA_FLOOR) continue;
+      const hue = hexToHue(c.hex);
+      if (vivid.some(v => hueDelta(v.hue, hue) < HUE_GAP_DEG)) continue;
+      vivid.push({ ...c, hue });
+      if (vivid.length >= MAX_COLORS) break;
+    }
+    // Pad up to MIN_COLORS from the remaining ranked list if the diverse set
+    // came up short — but pad AROUND the diverse picks, don't replace them.
+    // (An earlier version fell back to `ranked.slice(0, MIN_COLORS)` whenever
+    // the diverse set was under MIN_COLORS, which silently threw the
+    // diversity work away and put all-yellow right back for any cover with
+    // fewer than 5 sufficiently-distinct hues.)
+    let colors = vivid.map(c => c.hex);
+    if (colors.length < MIN_COLORS) {
+      for (const c of ranked) {
+        if (colors.length >= MIN_COLORS) break;
+        if (!colors.includes(c.hex)) colors.push(c.hex);
+      }
+    }
 
     // Genuinely grayscale/near-monochrome art (even the most vivid bucket
     // is barely colored) — nothing to rank can invent hues that aren't
@@ -182,6 +211,26 @@ function hexToLuma(hex) {
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
   return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+function hexToHue(hex) {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  if (d === 0) return 0;
+  let h;
+  if (max === r) h = ((g - b) / d) % 6;
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  h *= 60;
+  return h < 0 ? h + 360 : h;
+}
+
+// Shortest angular distance between two hues, 0-180.
+function hueDelta(a, b) {
+  const d = Math.abs(a - b) % 360;
+  return d > 180 ? 360 - d : d;
 }
 
 function hslToHex(h, s, l) {
