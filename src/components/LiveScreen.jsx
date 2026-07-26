@@ -5,23 +5,35 @@ import AlbumGradientMesh from './AlbumGradientMesh'
 import { usePalette } from '../hooks/usePalette'
 import { displayName } from '../lib/track'
 
-// AlbumGradient (radial-gradient circle blobs) is the default background —
-// back to the proven, pre-2026-07-19 version Ben preferred throughout that
-// day's whole mesh detour. AlbumGradientMesh (soft mesh, OKLab mixing,
-// tiny-canvas blur, "two colors colliding") was a from-scratch replacement
-// built the same day to chase "no circle shapes, more dancing" — after many
-// tuning rounds it never beat the original and the real bug turned out to
-// be upstream anyway (api/palette.js was washing out vivid colors via
-// bucket-averaging, fixed 2026-07-19 in 30e6594 — that fix benefits either
-// renderer). Mesh is kept as an opt-in: ?gradient=mesh or
-// localStorage.setItem('trivia_gradient_engine', 'mesh') in devtools —
+// AlbumGradientMesh (soft mesh, OKLab mixing, tiny-canvas blur, "two colors
+// colliding") is the default background as of 2026-07-26. The original
+// AlbumGradient (radial-gradient circle blobs) draws 6 solid-colored circles
+// and screen-blends them — no matter how the falloff curve is tuned, wherever
+// two differently-colored circles meet (or a circle's own bright center meets
+// its softer edge) there's a visible boundary, reported repeatedly as "circles
+// in the middle of blobs." Mesh doesn't have that failure mode by
+// construction: it paints at a tiny ~48px resolution and blurs the result way
+// up onto the real canvas, so a hard edge is physically impossible.
+// Mesh's tuning constants (ANCHOR_SWING, ACCENT_BOOST, etc., see
+// AlbumGradientMesh.jsx) were dialed up on 2026-07-19 specifically to fight
+// api/palette.js's old washed-out bucket-averaging bug — that bug is long
+// fixed and palette.js has since also gained hue-diversity dedup (2026-07-26),
+// so those boosts are working with much more vivid input than when they were
+// tuned. Watch for oversaturation; dial the "+25% intensity pass" values back
+// down first if so.
+// Circle-blobs is kept as an opt-out: ?gradient=circles or
+// localStorage.setItem('trivia_gradient_engine', 'circles') in devtools —
 // either way it's instant, no redeploy needed.
 // Not a real hook (no React state/effects) — plain function, just named to
 // signal it's read at render time rather than cached once at module load.
 function getMeshGradientFlag() {
-  if (typeof window === 'undefined') return false
-  if (new URLSearchParams(window.location.search).get('gradient') === 'mesh') return true
-  return localStorage.getItem('trivia_gradient_engine') === 'mesh'
+  if (typeof window === 'undefined') return true
+  const q = new URLSearchParams(window.location.search).get('gradient')
+  if (q === 'circles' || q === 'circle') return false
+  if (q === 'mesh') return true
+  const stored = localStorage.getItem('trivia_gradient_engine')
+  if (stored === 'circles' || stored === 'circle') return false
+  return true
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
