@@ -37,16 +37,19 @@ export default async function handler(req, res) {
       pixels.push([data[i], data[i + 1], data[i + 2]]);
     }
 
-    // Drop near-black pixels before quantising — a black border, letterboxing,
-    // or a mostly-black cover shouldn't win a median-cut bucket and end up
-    // driving a blob. Keep anything with real luminance so the gradient
-    // favors the other colors on the cover. If the art really is all black
-    // (filtering leaves too few points to be meaningful), fall back to the
-    // unfiltered set rather than starving medianCut of input.
+    // Do NOT pre-filter dark pixels here. Tried on 2026-07-26 (a699d8d) to
+    // keep a black border/letterboxing from winning a bucket, but on a
+    // genuinely dark cover it can strip out most of the image, leaving only
+    // a small warm-highlight fraction as medianCut's input — every bucket
+    // then represents variations of that one highlight, which is why two
+    // completely different covers (a golden outdoor photo and a dark indoor
+    // photo) both extracted near-identical gold palettes on 2026-07-27.
+    // The near-black filter on the RANKED CANDIDATES below (LUMA_THRESHOLD)
+    // already keeps black from becoming an output color, without corrupting
+    // what medianCut sees.
     const LUMA_THRESHOLD = 30;
     const luma = ([r, g, b]) => 0.299 * r + 0.587 * g + 0.114 * b;
-    const litPixels = pixels.filter(p => luma(p) >= LUMA_THRESHOLD);
-    const source = litPixels.length >= pixels.length * 0.05 ? litPixels : pixels;
+    const source = pixels;
 
     // Ask median-cut for more buckets than we'll actually use (12, not the
     // 5-8 we keep) — it splits by widest channel RANGE, not by vividness, so
@@ -98,6 +101,18 @@ export default async function handler(req, res) {
     // fewer than 5 sufficiently-distinct hues.)
     let colors = vivid.map(c => c.hex);
     if (colors.length < MIN_COLORS) {
+      // Pad with the same hue-gap rule as the main pass first — a cover that
+      // only had 2 genuinely distinct hues shouldn't get those 2 diluted
+      // back down to 5-near-duplicates just to hit MIN_COLORS. Only if that
+      // still comes up short (the cover truly has no more distinct hues to
+      // offer) fall back to filling with whatever's left, duplicates and all.
+      for (const c of ranked) {
+        if (colors.length >= MIN_COLORS) break;
+        if (colors.includes(c.hex)) continue;
+        const hue = hexToHue(c.hex);
+        if (colors.some(hex => hueDelta(hexToHue(hex), hue) < HUE_GAP_DEG)) continue;
+        colors.push(c.hex);
+      }
       for (const c of ranked) {
         if (colors.length >= MIN_COLORS) break;
         if (!colors.includes(c.hex)) colors.push(c.hex);

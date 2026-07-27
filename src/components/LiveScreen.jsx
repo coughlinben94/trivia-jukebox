@@ -227,6 +227,8 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           runTransitionRef.current?.(pending)
         }
 
+        // WATCHING (2026-07-27): no live-tested chop reported yet at 350ms.
+        // If one shows up, this is a one-line revert — see the note below.
         // Let the record + tonearm springs settle before entranceActive flips —
         // that flip releases the gradient's deferred first blend, which doubles
         // canvas layer work at onset and was landing exactly as the record lays

@@ -76,6 +76,7 @@ export default function Jukebox({ onLogout }) {
   const [results, setResults] = useState([])
   const [searching, setSearching] = useState(false)
   const [resultsKey, setResultsKey] = useState(0)
+  const [librarySearch, setLibrarySearch] = useState('')
   const [playingId, setPlayingId] = useState(null)
   const [isPlaying, setIsPlaying] = useState(false)
   const [showLive, setShowLive] = useState(false)
@@ -692,6 +693,7 @@ const [newSetName, setNewSetName] = useState('')
     if (isPlaying) handleStop()
     setPlayingId(null)
     setSets(prev => ({ ...prev, activeId: id }))
+    setLibrarySearch('')
   }
 
   const createSet = () => {
@@ -819,24 +821,36 @@ const [newSetName, setNewSetName] = useState('')
   // two big lists so React skips reconciling them by element identity — dozens of
   // cards with images shouldn't rebuild 3.3x/sec. Handlers close over playingId
   // etc., but every value they read is in the dep list, so closures stay fresh.
+  const filteredLibrary = useMemo(() => {
+    const q = librarySearch.trim().toLowerCase()
+    if (!q) return library
+    return library.filter(t =>
+      t.name.toLowerCase().includes(q) ||
+      t.artists?.some(a => a.name.toLowerCase().includes(q))
+    )
+  }, [library, librarySearch])
+
   const libraryGrid = useMemo(() => (
     <div className="grid grid-cols-4 gap-2">
-      {library.map((track, i) => (
-        <LibraryCard
-          key={track.id}
-          track={track}
-          isPlaying={track.id === playingId && !player.isPaused}
-          isPaused={track.id === playingId && player.isPaused}
-          onRemove={() => removeFromLibrary(track.id)}
-          onClick={() => setModalTrack(track)}
-          onDragStart={() => handleDragStart(i)}
-          onDragOver={(e) => handleDragOver(e, i)}
-          onDragEnd={handleDragEnd}
-        />
-      ))}
+      {filteredLibrary.map((track) => {
+        const i = library.indexOf(track)
+        return (
+          <LibraryCard
+            key={track.id}
+            track={track}
+            isPlaying={track.id === playingId && !player.isPaused}
+            isPaused={track.id === playingId && player.isPaused}
+            onRemove={() => removeFromLibrary(track.id)}
+            onClick={() => setModalTrack(track)}
+            onDragStart={() => handleDragStart(i)}
+            onDragOver={(e) => handleDragOver(e, i)}
+            onDragEnd={handleDragEnd}
+          />
+        )
+      })}
     </div>
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [library, playingId, player.isPaused])
+  ), [filteredLibrary, library, playingId, player.isPaused])
 
   const resultsList = useMemo(() => (
     <div key={resultsKey}>
@@ -953,10 +967,47 @@ const [newSetName, setNewSetName] = useState('')
         {/* Library panel */}
         <div className="flex-1 flex flex-col overflow-hidden border-r border-white/[0.05]">
 
+          {/* Library search — filters the songs already in this set, to jump
+              straight to a track's trim editor instead of scrolling. Separate
+              from the Spotify search on the right, which adds new songs. */}
+          {library.length > 0 && (
+            <div className="p-3 border-b border-white/[0.05] flex-shrink-0">
+              <div className="relative">
+                <div className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-white">
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+                    <path d="M7 12A5 5 0 1 0 7 2a5 5 0 0 0 0 10ZM14 14l-3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                  </svg>
+                </div>
+                <input
+                  type="text"
+                  placeholder="Search this library…"
+                  value={librarySearch}
+                  onChange={e => setLibrarySearch(e.target.value)}
+                  className="w-full bg-white/[0.04] border border-white/[0.06] rounded-xl pl-9 pr-8 py-2.5 text-white placeholder-white/20 outline-none focus:border-accent/35 focus:bg-white/[0.06] transition-colors duration-200 text-sm"
+                />
+                {librarySearch && (
+                  <button
+                    onClick={() => setLibrarySearch('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white transition-colors duration-150 cursor-pointer text-sm leading-none"
+                    aria-label="Clear library search"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Library grid */}
           <div className="flex-1 overflow-y-auto p-3 pb-32">
             {library.length > 0 ? (
-              libraryGrid
+              filteredLibrary.length > 0 ? (
+                libraryGrid
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full text-center select-none pb-16">
+                  <p className="text-white text-sm">No matches for &ldquo;{librarySearch}&rdquo;</p>
+                </div>
+              )
             ) : (
               <div className="flex flex-col items-center justify-center h-full text-center select-none pb-16">
                 <p className="text-white text-sm">
