@@ -1,6 +1,9 @@
 import { useEffect, useRef, useMemo } from 'react'
+import {
+  circleAlphaMuted, circleAlphaSat, circleFalloffPow,
+  orbitSpeed, blobRadius, blendDurationMs, tuningVersion,
+} from '../lib/gradientTuning.js'
 
-const BLEND_DURATION_MS = 7500
 const NUM_CIRCLES  = 6
 const DIRECTIONS   = ['left', 'right', 'up', 'down']
 
@@ -47,11 +50,12 @@ function chromaOf(r, g, b) { return (Math.max(r, g, b) - Math.min(r, g, b)) / 25
 //    genuine minority — contrasty, but not the whole frame.
 function buildBlobGradient(ctx, r, g, b, baseRadiusPx) {
   const chroma     = chromaOf(r, g, b)
-  const peakAlpha  = lerp(0.62, 0.38, chroma)
+  const peakAlpha  = lerp(circleAlphaMuted(), circleAlphaSat(), chroma)
   const radiusPx   = baseRadiusPx * lerp(1.05, 0.85, chroma)
   const grad       = ctx.createRadialGradient(0, 0, 0, 0, 0, radiusPx)
+  const falloffPow = circleFalloffPow()
   for (const t of [0, 0.2, 0.4, 0.6, 0.8, 1]) {
-    const a = peakAlpha * Math.pow(1 - t, 1.5)
+    const a = peakAlpha * Math.pow(1 - t, falloffPow)
     grad.addColorStop(t, `rgba(${r},${g},${b},${a.toFixed(3)})`)
   }
   return { grad, r: radiusPx }
@@ -64,20 +68,18 @@ function makeCircleParams() {
     const x = Math.sin((i * 7 + slot) * 9301 + 49297) * 233280
     return x - Math.floor(x)
   }
+  const speed = orbitSpeed()
+  const size  = blobRadius()
   return Array.from({ length: NUM_CIRCLES }, (_, i) => ({
     baseX:  0.10 + rng(i, 0) * 0.80,
     baseY:  0.10 + rng(i, 1) * 0.80,
-    // Amp up + radius down ~10% vs the ca8fb4d tuning: smaller blobs overlap
-    // less, so the screen-blend washes to a single hue less often and distinct
-    // palette colors stay co-visible. Periods 10–17s (was 12–20s) for a bit
-    // more background motion. Frequency +10% again for faster flow.
     xAmp:   0.33,
     yAmp:   0.33,
-    xFreq:  1.1 / (10 + rng(i, 2) * 7),
-    yFreq:  1.1 / (10 + rng(i, 3) * 7),
+    xFreq:  speed / (10 + rng(i, 2) * 7),
+    yFreq:  speed / (10 + rng(i, 3) * 7),
     xPhase: rng(i, 4) * Math.PI * 2,
     yPhase: rng(i, 5) * Math.PI * 2,
-    radius: 0.50 + rng(i, 6) * 0.13,
+    radius: size + rng(i, 6) * 0.13,
   }))
 }
 
@@ -120,8 +122,8 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
   function startBlendTo(newHex) {
     const s   = st.current
     const now = performance.now()
-    if (s.blendStart >= 0 && (now - s.blendStart) < BLEND_DURATION_MS) {
-      const t = easeInOut(Math.min((now - s.blendStart) / BLEND_DURATION_MS, 1))
+    if (s.blendStart >= 0 && (now - s.blendStart) < blendDurationMs()) {
+      const t = easeInOut(Math.min((now - s.blendStart) / blendDurationMs(), 1))
       s.outRgb = s.outRgb.map((c, i) => [
         lerp(c[0], s.inRgb[i][0], t),
         lerp(c[1], s.inRgb[i][1], t),
@@ -248,21 +250,26 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
 
       ctx.globalCompositeOperation = 'screen'
 
-      if (s.blendStart >= 0 && (ts - s.blendStart) < BLEND_DURATION_MS) {
+      if (s.blendStart >= 0 && (ts - s.blendStart) < blendDurationMs()) {
         // ── Transition: two layers crossfade while Layer B sweeps in ─────────
         // Gradients cached at origin; ctx.setTransform positions them per-frame.
         // Per-layer alpha (0.9*(1-t) and 0.9*t) applied via globalAlpha — NOT baked
         // into the cache — so the crossfade curve stays fully per-frame.
-        const t          = easeInOut(Math.min((ts - s.blendStart) / BLEND_DURATION_MS, 1))
+        const t          = easeInOut(Math.min((ts - s.blendStart) / blendDurationMs(), 1))
         const offsetFrac = 1 - t
         const ox         = s.inOffsetX * offsetFrac * W
         const oy         = s.inOffsetY * offsetFrac * H
 
-        if (!blendCacheRef.current || blendCacheRef.current.maxDim !== maxDim) {
+        // tuningVersion() check: a BRIGHTNESS/BLEND knob turn (both 'live'
+        // commit dials) needs to invalidate this cache same as a resize does
+        // — otherwise buildBlobGradient's new alpha/falloff never takes
+        // effect until the next song change.
+        const tv = tuningVersion()
+        if (!blendCacheRef.current || blendCacheRef.current.maxDim !== maxDim || blendCacheRef.current.tv !== tv) {
           const buildLayer = (rgbArr) => rgbArr.map(([R, G, B], i) =>
             buildBlobGradient(ctx, R, G, B, circleParams[i].radius * maxDim)
           )
-          blendCacheRef.current = { maxDim, out: buildLayer(s.outRgb), in: buildLayer(s.inRgb) }
+          blendCacheRef.current = { maxDim, tv, out: buildLayer(s.outRgb), in: buildLayer(s.inRgb) }
         }
         const { out: outE, in: inE } = blendCacheRef.current
 
@@ -302,13 +309,18 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
           s.blendStart = -1
           gradCacheRef.current = null
         }
-        // Build (or rebuild on resize) gradient cache. Each gradient is created at origin
-        // (0,0) with the circle's fixed radius. Per-frame we translate the canvas context to
-        // (cx, cy) instead of baking position into the gradient — this lets us reuse the same
-        // CanvasGradient objects across every frame until colors or canvas size change.
-        if (!gradCacheRef.current || gradCacheRef.current.maxDim !== maxDim) {
+        // Build (or rebuild on resize, or on a BRIGHTNESS/BLEND knob turn —
+        // see the tuningVersion() check above in the transition branch)
+        // gradient cache. Each gradient is created at origin (0,0) with the
+        // circle's fixed radius. Per-frame we translate the canvas context
+        // to (cx, cy) instead of baking position into the gradient — this
+        // lets us reuse the same CanvasGradient objects across every frame
+        // until colors, canvas size, or tuning changes.
+        const steadyTv = tuningVersion()
+        if (!gradCacheRef.current || gradCacheRef.current.maxDim !== maxDim || gradCacheRef.current.tv !== steadyTv) {
           gradCacheRef.current = {
             maxDim,
+            tv: steadyTv,
             entries: s.steadyRgb.map(([R, G, B], i) =>
               buildBlobGradient(ctx, R, G, B, circleParams[i].radius * maxDim)
             ),

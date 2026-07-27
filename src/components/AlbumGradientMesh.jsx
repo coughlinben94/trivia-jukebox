@@ -1,4 +1,5 @@
 import { useEffect, useRef, useMemo } from 'react'
+import { orbitSpeed, blobRadius, meshIdwPower, chromaScale, blendDurationMs } from '../lib/gradientTuning.js'
 
 // Canvas2D "soft mesh" gradient background — third generation. Same prop
 // contract as AlbumGradient.jsx (colors/nextColors/active/shuffleKey/
@@ -30,7 +31,6 @@ import { useEffect, useRef, useMemo } from 'react'
 // own center. That's what gives the "distinct moving bodies colliding," not
 // an averaged-out haze.
 
-const BLEND_DURATION_MS = 7500
 // Circle-blobs (AlbumGradient.jsx) only ever visualizes 6 of the up to 8
 // colors api/palette.js can return — matching that here reproduces the same
 // look/feel the "flowing and battling" motion was liked from.
@@ -45,16 +45,18 @@ function makeBlobParams() {
     const x = Math.sin((i * 7 + slot) * 9301 + 49297) * 233280
     return x - Math.floor(x)
   }
+  const speed = orbitSpeed()
+  const size  = blobRadius()
   return Array.from({ length: NUM_BLOBS }, (_, i) => ({
     baseX:  0.10 + rng(i, 0) * 0.80,
     baseY:  0.10 + rng(i, 1) * 0.80,
     xAmp:   0.33,
     yAmp:   0.33,
-    xFreq:  1.1 / (10 + rng(i, 2) * 7),
-    yFreq:  1.1 / (10 + rng(i, 3) * 7),
+    xFreq:  speed / (10 + rng(i, 2) * 7),
+    yFreq:  speed / (10 + rng(i, 3) * 7),
     xPhase: rng(i, 4) * Math.PI * 2,
     yPhase: rng(i, 5) * Math.PI * 2,
-    radius: 0.50 + rng(i, 6) * 0.13,
+    radius: size + rng(i, 6) * 0.13,
   }))
 }
 
@@ -62,18 +64,20 @@ function makeBlobParams() {
 // dominates near its center vs. blending with neighbors further out. Higher
 // = more distinct "bodies" with crisper (pre-blur) boundaries where two
 // blobs meet, closer to how circle-blobs read; lower = creamier/more
-// averaged, closer to the old noise-field feel. 3 sits close to the
-// circle-blobs side since that's the explicitly requested target — the blur
-// pass below still guarantees the final on-screen boundary is soft either way.
-const IDW_POWER = 3
+// averaged, closer to the old noise-field feel. Now the BLEND dial
+// (gradientTuning.js meshIdwPower()) — 3 (its default-position value) sits
+// close to the circle-blobs side since that's the explicitly requested
+// target — the blur pass below still guarantees the final on-screen
+// boundary is soft either way.
+//
 // The blob-IDW model has no built-in dampening (unlike the old anchor/accent
 // system's ANCHOR_FLOOR/ACCENT_MAX_MIX caps) — every pixel is a full-strength
 // blend of real palette hues, which read as more saturated throughout than
 // the original circle-blobs renderer (whose alpha falloff diluted color
 // toward black at each blob's edge). Scaling OKLab's a/b channels (which
 // directly encode chroma) down before converting back to RGB dials that back
-// without touching hue or lightness. 1.0 = no change; live-tune from here.
-const CHROMA_SCALE = 0.82
+// without touching hue or lightness — now the BRIGHTNESS dial
+// (gradientTuning.js chromaScale()). 1.0 = no change.
 // Small per-pixel jitter on each blob's effective distance so boundaries
 // wobble organically instead of forming perfect ellipses — in tiny-canvas
 // pixels, so keep it small relative to the ~48px canvas.
@@ -178,8 +182,8 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
   function startBlendTo(newHex) {
     const s   = st.current
     const now = performance.now()
-    if (s.blendStart >= 0 && (now - s.blendStart) < BLEND_DURATION_MS) {
-      const t = easeInOut(Math.min((now - s.blendStart) / BLEND_DURATION_MS, 1))
+    if (s.blendStart >= 0 && (now - s.blendStart) < blendDurationMs()) {
+      const t = easeInOut(Math.min((now - s.blendStart) / blendDurationMs(), 1))
       s.outRgb = s.outRgb.map((c, i) => [
         lerp(c[0], s.inRgb[i][0], t),
         lerp(c[1], s.inRgb[i][1], t),
@@ -272,7 +276,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     const s = st.current
     let liveColors
     if (s.blendStart >= 0) {
-      const t = easeInOut(Math.min((ts - s.blendStart) / BLEND_DURATION_MS, 1))
+      const t = easeInOut(Math.min((ts - s.blendStart) / blendDurationMs(), 1))
       liveColors = s.outRgb.map((c, i) => [
         lerp(c[0], s.inRgb[i][0], t),
         lerp(c[1], s.inRgb[i][1], t),
@@ -287,6 +291,8 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     }
 
     const oklabColors = liveColors.map(rgbToOklab)
+    const idwPower  = meshIdwPower()
+    const chromaScl = chromaScale()
     const tSec = ts / 1000
     const wobT = tSec * WOBBLE_FLOW_SPEED
 
@@ -319,12 +325,12 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
           const dx = x - bl.cx, dy = y - bl.cy
           const d  = Math.sqrt(dx * dx + dy * dy) + wob
           const dn = Math.max(0.02, d / bl.r)
-          const w  = 1 / Math.pow(dn, IDW_POWER)
+          const w  = 1 / Math.pow(dn, idwPower)
           wSum += w
           L += w * bl.color[0]; a += w * bl.color[1]; b += w * bl.color[2]
         }
         L /= wSum; a /= wSum; b /= wSum
-        a *= CHROMA_SCALE; b *= CHROMA_SCALE
+        a *= chromaScl; b *= chromaScl
 
         const [r, g, bb] = oklabToRgb([L, a, b])
         const idx = (y * SW + x) * 4

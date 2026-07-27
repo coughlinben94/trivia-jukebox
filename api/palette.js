@@ -1,7 +1,9 @@
 import sharp from 'sharp';
+import { resolvePaletteConfig } from '../src/lib/paletteDefaults.js';
 
 export default async function handler(req, res) {
   const { url } = req.query;
+  const { cfg, overridden } = resolvePaletteConfig(req.query);
 
   if (!url) return res.status(400).json({ error: 'Missing url param' });
 
@@ -84,7 +86,7 @@ export default async function handler(req, res) {
     // the ranked list and skipping anything within HUE_GAP_DEG of an
     // already-picked hue forces genuine hue diversity — confirmed this
     // returns yellow+blue+red+green for that cover instead of all-yellow.
-    const MIN_COLORS = 5, MAX_COLORS = 8, CHROMA_FLOOR = 0.18, HUE_GAP_DEG = 25;
+    const MIN_COLORS = cfg.MIN_COLORS, MAX_COLORS = 8, CHROMA_FLOOR = 0.18, HUE_GAP_DEG = cfg.HUE_GAP_DEG;
     const vivid = [];
     for (const c of ranked) {
       if (c.chroma <= CHROMA_FLOOR) continue;
@@ -135,8 +137,10 @@ export default async function handler(req, res) {
       colors = [...colors.slice(0, 3), ...accents];
     }
 
-    // Album art URLs are stable — cache aggressively
-    res.setHeader('Cache-Control', 's-maxage=86400, stale-while-revalidate');
+    // Album art URLs are stable — cache aggressively, UNLESS the tuning
+    // board is live-testing a VARIETY value, in which case caching would
+    // serve a stale palette back to the board mid-tune.
+    res.setHeader('Cache-Control', overridden ? 'no-store' : 's-maxage=86400, stale-while-revalidate');
     return res.status(200).json({ colors });
   } catch (err) {
     console.error('[palette]', err.message);

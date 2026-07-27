@@ -7,6 +7,7 @@ import { useSpotifyPlayer } from '../hooks/useSpotifyPlayer'
 import { prefetchPalette } from '../hooks/usePalette'
 import Player from './Player'
 import LiveScreen from './LiveScreen'
+import TestScreen from './TestScreen'
 import SongDetailModal from './SongDetailModal'
 
 function uid() { return Math.random().toString(36).slice(2) }
@@ -82,6 +83,15 @@ export default function Jukebox({ onLogout }) {
   const [showLive, setShowLive] = useState(false)
   const [liveEnding, setLiveEnding] = useState(false)
   const closeLive = useCallback(() => { setShowLive(false); setLiveEnding(false) }, [])
+  // Gradient tuning screen (TestScreen.jsx) — a second, separate mount of the
+  // real LiveScreen with the DJ board attached. Opened only by the TUNE button
+  // in the header; no hotkey, deliberately, so nothing can pop it open mid-show.
+  const [showTest, setShowTest] = useState(false)
+  // Read by the currentTrack watcher below: while true, a confirmed track
+  // opens the tuning screen INSTEAD of the real Live screen, so `showLive`
+  // stays false for the whole tuning session and the real Live flow (Space
+  // bar, the Live header toggle, the `b` handoff) is left exactly as it was.
+  const tuningRef = useRef(false)
   const [modalTrack, setModalTrack] = useState(null)
 const [newSetName, setNewSetName] = useState('')
   const [addingSet, setAddingSet] = useState(false)
@@ -559,7 +569,10 @@ const [newSetName, setNewSetName] = useState('')
         if (player.currentTrack.uri === pendingUriRef.current) {
           pendingLiveOpenRef.current = false
           pendingUriRef.current = null
-          setShowLive(true)
+          // Tuning session: the same confirmed-track moment opens the test
+          // screen and leaves showLive alone (see tuningRef above).
+          if (tuningRef.current) setShowTest(true)
+          else setShowLive(true)
         }
       }
       // Warm the upcoming song's palette now, not at fade start — a cold
@@ -682,6 +695,35 @@ const [newSetName, setNewSetName] = useState('')
     // finish before starting new playback instead of clobbering it mid-fade.
     return fadeDone
   }, [player.fadeAndPause, showLive])
+
+  // ── Gradient tuning screen ────────────────────────────────────────────────
+  // Opens on a real shuffled session — same startShuffle() the Space bar and
+  // the Player's play button call — because tuning the background against a
+  // static preview tells you nothing about the entrance blend, the song-to-song
+  // crossfade, or how the blobs drift behind a spinning record.
+  const openTuning = useCallback(() => {
+    if (showTest) return
+    tuningRef.current = true
+    // Never both screens at once: if a live session is up, hand it over rather
+    // than stacking a second full-screen overlay on top of it.
+    setShowLive(false)
+    setLiveEnding(false)
+    setShowTest(true)   // mounts straight away; LiveScreen shows its empty-platter
+                        // waiting state until the SDK confirms the first track
+    startShuffle()
+  }, [showTest, startShuffle])
+
+  const closeTuning = useCallback(() => {
+    tuningRef.current = false
+    // Drop any not-yet-confirmed play, or a track landing a moment later would
+    // flip showLive true and pop the real Live screen open over the library.
+    pendingLiveOpenRef.current = false
+    pendingUriRef.current = null
+    setShowTest(false)
+    handleStop()   // showLive is false throughout a tuning session, so this fades
+                   // the audio and clears playback state without ever touching
+                   // liveEnding — nothing half-open for Space or `b` to trip on.
+  }, [handleStop])
 
   const switchSet = (id) => {
     if (id === sets.activeId) return
@@ -890,6 +932,17 @@ const [newSetName, setNewSetName] = useState('')
               Live
             </button>
           )}
+          {/* Gradient tuning — always visible, no hotkey. Starts a real
+              shuffled session and opens the test screen with the DJ board. */}
+          <button
+            onClick={openTuning}
+            className={`text-xs font-medium transition-colors duration-150 cursor-pointer px-3 py-1 rounded-full active:scale-[0.97] ${
+              showTest ? 'bg-white text-black' : 'text-white hover:text-white border border-white/10 hover:border-white/25'
+            }`}
+            title="Gradient tuning board — shuffles and opens the test screen"
+          >
+            Tune
+          </button>
           <button
             onClick={() => { logout(); onLogout() }}
             className="text-[11px] text-white hover:text-white transition-colors duration-150 cursor-pointer"
@@ -1075,6 +1128,19 @@ const [newSetName, setNewSetName] = useState('')
           onClose={closeLive}
           shuffleKey={shuffleKey}
           onUpcomingTrack={registerUpcomingTrackHandler}
+        />
+      )}
+
+      {/* Tuning screen — mutually exclusive with showLive (openTuning clears it,
+          and the currentTrack watcher routes to showTest while tuningRef is set),
+          so only one full-screen LiveScreen is ever mounted. */}
+      {showTest && (
+        <TestScreen
+          currentTrack={player.currentTrack}
+          isPaused={player.isPaused}
+          shuffleKey={shuffleKey}
+          onUpcomingTrack={registerUpcomingTrackHandler}
+          onClose={closeTuning}
         />
       )}
 
