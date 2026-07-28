@@ -121,29 +121,45 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
     const el = titleRef.current
     if (!el) return
 
-    // Reset any previous override so Tailwind classes determine the base size.
-    el.style.fontSize = ''
+    function measure() {
+      // Reset any previous override so Tailwind classes determine the base size.
+      el.style.fontSize = ''
 
-    const cs     = getComputedStyle(el)
-    const basePx = parseFloat(cs.fontSize)
-    // lineHeight can be 'normal' in some browsers; fall back to leading-tight ratio.
-    const lhPx   = parseFloat(cs.lineHeight) || basePx * 1.25
-    const maxH   = lhPx * 2 + 4  // two lines + 4px sub-pixel buffer
+      const cs     = getComputedStyle(el)
+      const basePx = parseFloat(cs.fontSize)
+      // lineHeight can be 'normal' in some browsers; fall back to leading-tight ratio.
+      const lhPx   = parseFloat(cs.lineHeight) || basePx * 1.25
+      const maxH   = lhPx * 2 + 4  // two lines + 4px sub-pixel buffer
 
-    titleBasePxRef.current = basePx
+      titleBasePxRef.current = basePx
 
-    if (el.scrollHeight <= maxH) {
-      setTitleScale(1)
-      return
+      if (el.scrollHeight <= maxH) {
+        setTitleScale(1)
+        return
+      }
+
+      let scale = 1 - 0.08
+      while (scale >= 0.55) {
+        el.style.fontSize = `${basePx * scale}px`
+        if (el.scrollHeight <= maxH) break
+        scale -= 0.08
+      }
+      setTitleScale(Math.max(0.55, scale))
     }
 
-    let scale = 1 - 0.08
-    while (scale >= 0.55) {
-      el.style.fontSize = `${basePx * scale}px`
-      if (el.scrollHeight <= maxH) break
-      scale -= 0.08
-    }
-    setTitleScale(Math.max(0.55, scale))
+    measure()
+
+    // Title now renders in Boogaloo (a webfont, added for the Trivia OS font
+    // match) instead of always-available system-ui. On first paint the font
+    // may still be downloading, so the measurement above can run against
+    // fallback metrics — Boogaloo's glyph widths/line-height differ enough
+    // that the two-line shrink computed pre-load can be wrong once the real
+    // font swaps in, and this effect (keyed on shown?.name) won't naturally
+    // re-run to correct it. Re-measure once the real font is actually active.
+    // Same gotcha Trivia OS's own autoFitText guards against for this reason.
+    let cancelled = false
+    document.fonts?.ready?.then(() => { if (!cancelled) measure() })
+    return () => { cancelled = true }
   }, [shown?.name])
 
   const paletteColors          = usePalette(artUrl)
@@ -580,15 +596,6 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
               animate={{ opacity: transitioning ? 0 : (textVisible ? 1 : 0), y: transitioning ? -6 : 0 }}
               transition={textInstant ? { duration: 0 } : { duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
             >
-              {/* Eyebrow breathes on its own slow loop (see eyebrow-breathe
-                  in index.css) — only runs while the parent wrapper above is
-                  itself visible, so it never breathes mid-transition. */}
-              <p
-                className="text-sm sm:text-base font-semibold uppercase tracking-[0.2em] text-white/60 mb-2"
-                style={{ animation: 'eyebrow-breathe 7s ease-in-out infinite', fontFamily: FONT_BODY }}
-              >
-                Now Spinning
-              </p>
               <h1
                 ref={titleRef}
                 className="text-4xl sm:text-5xl text-white tracking-tight leading-tight mb-2"

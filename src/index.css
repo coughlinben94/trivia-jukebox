@@ -64,17 +64,6 @@
   50%      { opacity: 1;    }
 }
 
-/* "Now Spinning" eyebrow — breathes in and out on its own slow loop rather
-   than sitting static; independent of the title/artist fade, which is driven
-   by transitioning/textVisible in LiveScreen.jsx. */
-@keyframes eyebrow-breathe {
-  0%   { opacity: 0; }
-  12%  { opacity: 1; }
-  50%  { opacity: 1; }
-  62%  { opacity: 0; }
-  100% { opacity: 0; }
-}
-
 
 /* Scrubber */
 .player-scrubber {
