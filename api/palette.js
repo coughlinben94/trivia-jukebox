@@ -97,9 +97,20 @@ export default async function handler(req, res) {
     // already-picked hue forces genuine hue diversity — confirmed this
     // returns yellow+blue+red+green for that cover instead of all-yellow.
     const MIN_COLORS = cfg.MIN_COLORS, MAX_COLORS = 8, CHROMA_FLOOR = 0.18, HUE_GAP_DEG = cfg.HUE_GAP_DEG;
+    // Gate on `.score` (chroma discounted by uglyPenalty), not raw `.chroma`
+    // — this is the piece the first version of the ugly-hue fix was missing.
+    // A discounted score only changes SORT ORDER; if a muddy hue (like the
+    // olive on The Mowgli's "I Feel Good About This") is the only candidate
+    // anywhere near its hue neighborhood, nothing else competes for that
+    // slot, so it still got picked here regardless of rank position — the
+    // live re-check after deploy confirmed #5b6732 came through unchanged.
+    // Gating the floor on `.score` means a heavily-discounted muddy color
+    // has to clear a much higher real-chroma bar (0.18 / 0.35 ≈ 0.51) to
+    // count as "real color" at all in this first pass — it gets deferred to
+    // the last-resort padding loop below instead of an automatic pick.
     const vivid = [];
     for (const c of ranked) {
-      if (c.chroma <= CHROMA_FLOOR) continue;
+      if (c.score <= CHROMA_FLOOR) continue;
       if (vivid.some(v => hueDelta(v.hue, c.hue) < HUE_GAP_DEG)) continue;
       vivid.push(c);
       if (vivid.length >= MAX_COLORS) break;
@@ -117,9 +128,14 @@ export default async function handler(req, res) {
       // back down to 5-near-duplicates just to hit MIN_COLORS. Only if that
       // still comes up short (the cover truly has no more distinct hues to
       // offer) fall back to filling with whatever's left, duplicates and all.
+      // Same `.score` gate as the vivid pass above — a muddy hue shouldn't
+      // get a free pass into padding just because it dodged the first loop's
+      // hue-gap dedup. It's still eligible for the true last-resort
+      // round-robin pad below if nothing clean is left.
       for (const c of ranked) {
         if (colors.length >= MIN_COLORS) break;
         if (colors.includes(c.hex)) continue;
+        if (c.score <= CHROMA_FLOOR) continue;
         if (colors.some(hex => hueDelta(hexToHue(hex), c.hue) < HUE_GAP_DEG)) continue;
         colors.push(c.hex);
       }
