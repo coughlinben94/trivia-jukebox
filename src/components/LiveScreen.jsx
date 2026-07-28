@@ -250,18 +250,16 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           runTransitionRef.current?.(pending)
         }
 
-        // WATCHING (2026-07-27): no live-tested chop reported yet at 350ms.
-        // If one shows up, this is a one-line revert — see the note below.
-        // Let the record + tonearm springs settle before entranceActive flips —
-        // that flip releases the gradient's deferred first blend, which doubles
-        // canvas layer work at onset and was landing exactly as the record lays
-        // onto the platter (the reported settle-moment chop). Trimmed from 600ms:
-        // the fly spring (the one actually landing the record) finished settling
-        // well before this point (it started at t=0, this runs after +1200+200ms
-        // of tonearm work), so the extra buffer here was mostly padding past the
-        // tonearm's own settle, not guarding the chop moment itself. If a chop
-        // reappears on live testing, this is the first thing to revert.
-        await sleep(350)
+        // REVERTED (2026-07-28): the 350ms trim did reproduce the chop live —
+        // Ben saw a stutter right as the record lands on the turntable, on
+        // the entrance (first song of a session), a couple of times. Back to
+        // 600ms per the watch-item's own planned rollback. Let the record +
+        // tonearm springs settle before entranceActive flips — that flip
+        // releases the gradient's deferred first blend, which doubles canvas
+        // layer work at onset; the extra buffer here is what keeps that
+        // doubled work from landing exactly as the record settles onto the
+        // platter.
+        await sleep(600)
       } finally {
         setEntranceActive(false)
         if (!handedOffToTransition) busyRef.current = false
