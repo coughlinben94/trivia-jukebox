@@ -41,6 +41,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 const ARM_ON  = { rotate: 8,  y: 0 }   // needle resting on record
 const ARM_OFF = { rotate: -30, y: -5 } // lifted and rotated back
 
+// Boogaloo (display) + DM Sans (body) — same pairing Trivia OS ships across all
+// 21 themes (see trivia-os/themes/index.js), loaded via Google Fonts link in
+// index.html. Matches the jukebox's live screen to the rest of the trivia-night
+// visual identity instead of falling back to system-ui.
+const FONT_DISPLAY = "'Boogaloo', system-ui, sans-serif"
+const FONT_BODY    = "'DM Sans', system-ui, sans-serif"
+
 function preloadImage(url) {
   return new Promise(resolve => {
     const img = new Image()
@@ -487,6 +494,14 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           at this screen the longest showed a dead frame. */}
       <GradientBg colors={paletteColors} nextColors={upcomingPaletteColors} active={true} shuffleKey={shuffleKey} entranceActive={entranceActive} />
 
+      {/* Light vignette — kept subtle on purpose. This screen's whole job is
+          showing off the album-gradient colors, so this only pulls focus
+          toward center without visibly darkening/muting the palette itself. */}
+      <div
+        className="absolute inset-0 z-[1] pointer-events-none"
+        style={{ background: 'radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,0.32) 100%)' }}
+      />
+
       <div className="relative z-10 flex flex-col items-center gap-8 px-10 text-center max-w-lg w-full" style={{ paddingTop: '15vh' }}>
         {shown ? (
           <>
@@ -570,18 +585,21 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                   itself visible, so it never breathes mid-transition. */}
               <p
                 className="text-sm sm:text-base font-semibold uppercase tracking-[0.2em] text-white/60 mb-2"
-                style={{ animation: 'eyebrow-breathe 7s ease-in-out infinite' }}
+                style={{ animation: 'eyebrow-breathe 7s ease-in-out infinite', fontFamily: FONT_BODY }}
               >
                 Now Spinning
               </p>
               <h1
                 ref={titleRef}
-                className="text-4xl sm:text-5xl font-bold text-white tracking-tight leading-tight mb-2"
-                style={titleScale < 1 ? { fontSize: `${(titleBasePxRef.current ?? 48) * titleScale}px` } : undefined}
+                className="text-4xl sm:text-5xl text-white tracking-tight leading-tight mb-2"
+                style={{
+                  fontFamily: FONT_DISPLAY,
+                  ...(titleScale < 1 ? { fontSize: `${(titleBasePxRef.current ?? 48) * titleScale}px` } : {}),
+                }}
               >
                 {displayName(shown.name)}
               </h1>
-              <p className="text-xl text-white font-medium italic">
+              <p className="text-xl text-white font-medium italic" style={{ fontFamily: FONT_BODY }}>
                 {shown.artists?.map(a => a.name).join(', ')}
               </p>
             </motion.div>
