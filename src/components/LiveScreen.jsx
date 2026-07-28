@@ -41,12 +41,6 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 const ARM_ON  = { rotate: 8,  y: 0 }   // needle resting on record
 const ARM_OFF = { rotate: -30, y: -5 } // lifted and rotated back
 
-// Song-to-song art crossfade — fully decoupled from the old fly-away timing.
-// The record never leaves the platter now, so this only has to cover the
-// time it takes two stacked <img>s to swap places, not a multi-second
-// fly-up/fly-down round trip.
-const CROSSFADE_MS = 650
-
 // Boogaloo (display) + DM Sans (body) — same pairing Trivia OS ships across all
 // 21 themes (see trivia-os/themes/index.js), loaded via Google Fonts link in
 // index.html. Matches the jukebox's live screen to the rest of the trivia-night
@@ -122,11 +116,6 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   const [textInstant, setTextInstant]     = useState(false)
   const [closing, setClosing]             = useState(false)
   const [entranceActive, setEntranceActive] = useState(true)
-  // Drives the art crossfade: false = prev art opaque / new art hidden,
-  // true = flipped. Toggled a frame after prev/artUrl are set so the browser
-  // paints the "false" state first and the opacity change actually animates
-  // instead of snapping straight to the end state.
-  const [crossfadeIn, setCrossfadeIn]     = useState(false)
 
   const titleRef                          = useRef(null)
   const titleBasePxRef                    = useRef(null)
@@ -195,16 +184,8 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   useEffect(() => { isPausedRef.current = isPaused }, [isPaused])
 
   // Register palette-prefetch handler with Jukebox so advanceToNext can notify us
-  // (fires during the outgoing song's fade-out, well before the track actually
-  // changes). Also warms the actual art image here — not just the palette —
-  // so by the time runTransition needs it, decode is already done and the
-  // crossfade isn't waiting on a network fetch.
   useEffect(() => {
-    onUpcomingTrack?.((song) => {
-      const url = song?.album?.images?.[0]?.url ?? null
-      setUpcomingArtUrl(url)
-      if (url) preloadImage(url)
-    })
+    onUpcomingTrack?.((song) => setUpcomingArtUrl(song?.album?.images?.[0]?.url ?? null))
     return () => onUpcomingTrack?.(null)
   }, [onUpcomingTrack])
 
@@ -415,48 +396,42 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         setTextInstant(true)
         setTransitioning(true)
 
-        // Arm lifts as a cue — no longer covering a fly-away, since the
-        // record itself never leaves the platter. Runs concurrently with
-        // the art crossfade below rather than gating it.
+        // Step 1 — arm lifts alone; record stays put until arm is fully up
         tonearmCtrl.start({ ...ARM_OFF, transition: { type: 'spring', stiffness: 220, damping: 30 } })
-
+        // Kick off preload during the arm lift so it has more time
         const newArtUrl = target?.album?.images?.[0]?.url
-        // Normally already warm: Jukebox's onUpcomingTrack handler preloads
-        // this during the outgoing song's final seconds. This await is a
-        // safety net for the rare skip that beats that window, not the
-        // common path — usually resolves on the same tick.
-        if (newArtUrl) await preloadImage(newArtUrl)
+        const preloadPromise = newArtUrl ? preloadImage(newArtUrl) : Promise.resolve()
+        setPrev(prevTrack)
+        await sleep(400)   // arm fully lifted
 
-        // If a newer skip arrived while we were awaiting that (usually
-        // instant) preload, bail to it before ever touching visible state.
+        // Step 2 — record flies up once arm is clear
+        flyCtrl.start({ y: -500, transition: { type: 'spring', stiffness: 220, damping: 22 } })
+        setArtOpacity(0)
+        await Promise.all([preloadPromise, sleep(1200)])   // fly-up completes; preload runs concurrently
+        // Old record is gone — swap track identity
+        setShown(target)
+
+        // If another skip arrived during this window, bail before flying the new record in
         if (pendingRef.current && pendingRef.current.uri !== target.uri) {
           const pending = pendingRef.current
           pendingRef.current = null
-          busyRef.current = false
           setTransitioning(false)
-          tonearmCtrl.start({
-            ...(isPausedRef.current ? ARM_OFF : ARM_ON),
-            transition: { type: 'spring', stiffness: 180, damping: 26 },
-          })
-          runTransition(pending, prevTrack)
+          busyRef.current = false
+          runTransition(pending, target)
           return
         }
 
-        // Mount both layers — prev (outgoing) opaque, new (incoming) hidden —
-        // then flip crossfadeIn a frame later so the browser paints the
-        // starting state before the CSS opacity transition animates it.
-        // Double rAF (not single) is the reliable way to guarantee that
-        // paint happens first; a single rAF can still land before layout.
-        setPrev(prevTrack)
-        setArtUrl(newArtUrl)
-        setShown(target)
-        setCrossfadeIn(false)
-        requestAnimationFrame(() => requestAnimationFrame(() => setCrossfadeIn(true)))
+        // Step 3 — load art onto record off-screen, then fly it down with art already visible
+        flyCtrl.set({ opacity: 0 })
+        flyCtrl.set({ y: -500, scale: 1 })
+        if (newArtUrl) setArtUrl(newArtUrl)
+        setArtOpacity(1)
+        flyCtrl.start({ y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 28 } })
+        await sleep(500)   // record flies down
 
-        await sleep(CROSSFADE_MS)
-
+        await sleep(500)
         tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 22 } })
-        await sleep(150)
+        await sleep(200)
         setTextInstant(false)
         setTransitioning(false)
         busyRef.current = false
@@ -494,11 +469,10 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
     runTransition(currentTrack)
   }, [currentTrack?.uri])
 
-  // Drop the outgoing art layer once its fade-out has fully completed —
-  // it only needs to exist in the DOM for the CROSSFADE_MS window.
+  // Cleanup prev background after crossfade
   useEffect(() => {
     if (!prev) return
-    const t = setTimeout(() => setPrev(null), CROSSFADE_MS)
+    const t = setTimeout(() => setPrev(null), 900)
     return () => clearTimeout(t)
   }, [prev?.uri])
 
@@ -555,24 +529,29 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
             {/* Record + tonearm scene */}
             <div className="relative w-[330px] h-[330px] sm:w-[368px] sm:h-[368px]">
 
-              {/* Layer 0 – turntable platter: static, never flies or spins */}
-              <div
-                className="absolute rounded-full"
-                style={{
-                  inset: '-9px',
-                  background: 'radial-gradient(circle at 40% 35%, #2a2a2a, #111)',
-                  zIndex: 0,
-                }}
-              />
-
               {/* Layer 2 – fly wrapper: drops in on entrance, flies straight up on exit.
-                   Never rotated — fly-up is always vertical regardless of spin angle. */}
+                   Never rotated — fly-up is always vertical regardless of spin angle.
+                   Now also carries the platter and spindle, so the record "is here or it isn't"
+                   as one unit — only the tonearm is left behind as permanent furniture. */}
               <motion.div
                 className="absolute inset-0"
                 style={{ zIndex: 2, willChange: 'transform, opacity' }}
                 initial={{ opacity: 0, y: -400, scale: 0.85 }}
                 animate={flyCtrl}
               >
+                {/* Layer 0 – turntable platter: travels with the record now.
+                     z-index 0 + first in tree order keeps it painted behind the
+                     content wrapper below (which is z-index:auto, i.e. effectively 0 —
+                     same-level positioned siblings paint in document order). */}
+                <div
+                  className="absolute rounded-full"
+                  style={{
+                    inset: '-9px',
+                    background: 'radial-gradient(circle at 40% 35%, #2a2a2a, #111)',
+                    zIndex: 0,
+                  }}
+                />
+
                 {/* Content wrapper: art + groove rings + shadow all fade together via artOpacity.
                      Transition delay on exit (0.25s) keeps art opaque while record is ~60% of the way up. */}
                 <motion.div
@@ -583,14 +562,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                     ? { duration: 0.35, ease: [0.23, 1, 0.32, 1] }
                     : { duration: 0.2, delay: 0.25, ease: [0.23, 1, 0.32, 1] }}
                 >
-                  {/* Spin layer: art img(s) + groove rings rotate together.
-                       This div itself is never remounted/keyed by track — only
-                       its children swap — so `live-spin`'s rotation angle
-                       carries continuously across song changes instead of
-                       snapping back to 0deg. A slight blur pulses in only
-                       while transitioning, bridging two differently-framed
-                       album covers into one smooth crossfade instead of a
-                       visible two-photos-overlapping swap. */}
+                  {/* Spin layer: art img + groove rings rotate together */}
                   <div
                     className="absolute inset-0 rounded-full overflow-hidden"
                     style={{
@@ -598,33 +570,9 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                       animationPlayState: spinPaused ? 'paused' : 'running',
                       willChange: 'transform',
                       transform: 'translateZ(0)',
-                      filter: transitioning ? 'blur(2px)' : 'blur(0px)',
-                      transition: 'filter 220ms ease',
                     }}
                   >
-                    {/* Outgoing art — only present for the CROSSFADE_MS window
-                        it takes to fade out; fully opaque until crossfadeIn flips. */}
-                    {prev?.album?.images?.[0]?.url && (
-                      <img
-                        src={prev.album.images[0].url}
-                        alt=""
-                        decoding="async"
-                        className="absolute inset-0 w-full h-full object-cover"
-                        style={{ opacity: crossfadeIn ? 0 : 1, transition: `opacity ${CROSSFADE_MS}ms ease` }}
-                      />
-                    )}
-                    {/* Incoming/current art — hidden only while an outgoing
-                        layer is actively fading out on top of it. */}
-                    <img
-                      src={artUrl}
-                      alt=""
-                      decoding="async"
-                      className="absolute inset-0 w-full h-full object-cover"
-                      style={{
-                        opacity: prev ? (crossfadeIn ? 1 : 0) : 1,
-                        transition: `opacity ${CROSSFADE_MS}ms ease`,
-                      }}
-                    />
+                    <img src={artUrl} alt="" decoding="async" className="absolute inset-0 w-full h-full object-cover" />
                     <div
                       className="absolute inset-0 rounded-full pointer-events-none"
                       style={{
@@ -638,15 +586,19 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                     style={{ boxShadow: '0 32px 80px rgba(0,0,0,0.7)' }}
                   />
                 </motion.div>
-              </motion.div>
 
-              {/* Layer 3 – center hole/spindle: static, outside fly wrapper — never moves */}
-              <div
-                className="absolute inset-0 flex items-center justify-center pointer-events-none"
-                style={{ zIndex: 15 }}
-              >
-                <div className="w-4 h-4 rounded-full bg-black ring-1 ring-white/10" />
-              </div>
+                {/* Layer 3 – center hole/spindle: travels with the record now.
+                     Explicit positive z-index forms its own stacking context, which
+                     always paints above z-index:0/auto siblings (platter, content
+                     wrapper) regardless of tree order — so it stays a dot on top of
+                     the art, same visual result as the old zIndex:15 had outside. */}
+                <div
+                  className="absolute inset-0 flex items-center justify-center pointer-events-none"
+                  style={{ zIndex: 1 }}
+                >
+                  <div className="w-4 h-4 rounded-full bg-black ring-1 ring-white/10" />
+                </div>
+              </motion.div>
 
               {/* Layer 4 – tonearm */}
               <Tonearm controls={tonearmCtrl} />
