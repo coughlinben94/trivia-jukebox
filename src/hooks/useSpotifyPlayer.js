@@ -132,17 +132,28 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
       if (!state.paused) setPosition(pos)
 
       const maxVol = maxVolumeRef.current
-      // Trigger AT stopMs, not FADE_MS before it — the trimmed-in content plays
-      // at full volume the whole way through the out-point; the fade spends
-      // whatever track time is left AFTER stopMs instead of eating into it.
+      // Trigger BEFORE stopMs now, not at it (flipped 2026-07-28) — the fade
+      // spends its time INSIDE the trim window, landing at 0 exactly AT
+      // stopMs, mirroring how the fade-IN already spends its time inside the
+      // window from startMs. The previous approach (trigger at stopMs, fade
+      // into the time AFTER it) deliberately kept the trimmed content at full
+      // volume all the way through the out-point — but that meant playback
+      // always continued up to FADE_MS past the point the host actually
+      // chose to stop at, which on some songs ran straight into the next
+      // lyric/sentence instead of a clean gap. Trade-off: a song whose
+      // punchy final note lands right at stopMs now fades into that note
+      // instead of hitting it at full volume — acceptable to avoid ever
+      // overshooting the host's chosen stop point.
       // Guard !state.paused: don't trigger on Spotify's own buffering pauses near stopMs
-      if (stopMs > 0 && pos >= stopMs && !state.paused) {
+      if (stopMs > 0 && pos >= stopMs - FADE_MS && !state.paused) {
         clearInterval(intervalId)
         if (!preview) onFadeStartRef.current?.()
-        // Clamp to whatever's actually left in the track — if stopMs is at (or
-        // near) the track's natural end there's no outside room to fade into.
-        const roomAfter = Math.max(0, (state.duration || stopMs) - stopMs)
-        const fadeMs = Math.min(FADE_MS, roomAfter)
+        // Clamp to whatever's actually left before the out-point — polling is
+        // only every 300ms, so pos may already be partway into the fade
+        // window by the time this tick fires; fade over what's actually left
+        // rather than assuming a full FADE_MS is still available.
+        const roomBefore = Math.max(0, stopMs - pos)
+        const fadeMs = Math.min(FADE_MS, roomBefore)
         await fadeVolume(maxVol, 0, gen, fadeMs)
         if (genRef.current !== gen) return
         if (!preview) transitioningRef.current = true   // suppress isPaused during advance gap
