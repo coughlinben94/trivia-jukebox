@@ -62,14 +62,24 @@ export default async function handler(req, res) {
     // would miss.
     const candidates = medianCut(source, 12);
     const ranked = candidates
-      .map(hex => ({ hex, chroma: hexToChroma(hex), luma: hexToLuma(hex) }))
+      .map(hex => {
+        const chroma = hexToChroma(hex);
+        const hue = hexToHue(hex);
+        const lightness = hexToLightness(hex);
+        // `score` (not `chroma`) drives sort order below — see uglyPenalty().
+        return { hex, chroma, hue, lightness, luma: hexToLuma(hex), score: chroma * uglyPenalty(hue, chroma, lightness) };
+      })
       // A near-black bucket (e.g. a two-tone black-and-one-color cover, where
       // black is the dominant channel) shouldn't ever surface as a "color" —
       // against the canvas's own near-black base it reads as a hole, not a
       // hue. Drop it here so it can't win a padding slot below even when
       // there aren't enough vivid candidates to fill MIN_COLORS.
       .filter(c => c.luma >= LUMA_THRESHOLD)
-      .sort((a, b) => b.chroma - a.chroma);
+      // Sort by the ugliness-discounted score, not raw chroma — see
+      // uglyPenalty() below. mostVivid/CHROMA_FLOOR checks further down
+      // still read each candidate's real (undiscounted) .chroma, so this
+      // only affects PICK ORDER, never "is there real color here at all."
+      .sort((a, b) => b.score - a.score);
 
     // Take every candidate with real color (chroma > 0.18), up to 8 — covers
     // with lots of distinct hues get more of them instead of being
@@ -90,9 +100,8 @@ export default async function handler(req, res) {
     const vivid = [];
     for (const c of ranked) {
       if (c.chroma <= CHROMA_FLOOR) continue;
-      const hue = hexToHue(c.hex);
-      if (vivid.some(v => hueDelta(v.hue, hue) < HUE_GAP_DEG)) continue;
-      vivid.push({ ...c, hue });
+      if (vivid.some(v => hueDelta(v.hue, c.hue) < HUE_GAP_DEG)) continue;
+      vivid.push(c);
       if (vivid.length >= MAX_COLORS) break;
     }
     // Pad up to MIN_COLORS from the remaining ranked list if the diverse set
@@ -111,13 +120,46 @@ export default async function handler(req, res) {
       for (const c of ranked) {
         if (colors.length >= MIN_COLORS) break;
         if (colors.includes(c.hex)) continue;
-        const hue = hexToHue(c.hex);
-        if (colors.some(hex => hueDelta(hexToHue(hex), hue) < HUE_GAP_DEG)) continue;
+        if (colors.some(hex => hueDelta(hexToHue(hex), c.hue) < HUE_GAP_DEG)) continue;
         colors.push(c.hex);
       }
-      for (const c of ranked) {
-        if (colors.length >= MIN_COLORS) break;
-        if (!colors.includes(c.hex)) colors.push(c.hex);
+      // Still short — the cover only has as many genuinely distinct hues as
+      // are already in `colors`. Round-robin the remaining padding budget
+      // ACROSS those existing hue families instead of bulk-grabbing
+      // whatever's next by raw chroma. Bulk order systematically
+      // overrepresents whichever hue family happens to rank highest by
+      // chroma: verified live on Abraham Alexander's "Stay" (a sepia/brown
+      // illustration) — real /api/palette output was
+      // #2a6899/#806d3e/#6d8eaf/#0e324f/#937957. Three of those five
+      // (#2a6899, #6d8eaf, #0e324f) are the SAME ~207° blue at different
+      // lightness levels, vs only two browns, purely because blue's
+      // candidate buckets all had higher chroma (~0.26-0.44) than the
+      // browns' (~0.24-0.26) and the old loop just took the next-highest-
+      // chroma candidate regardless of hue — so blue, having already won
+      // the "most vivid" pick, ALSO ate most of the padding slots, even
+      // though the sepia/brown tone is what actually covers most of the
+      // image. Cycling the target hue each pick spends the padding budget
+      // on more shades of EVERY real hue family found, not just the top one.
+      if (colors.length < MIN_COLORS) {
+        const remaining = ranked.filter(c => !colors.includes(c.hex));
+        const anchors = [];
+        for (const hex of colors) {
+          const h = hexToHue(hex);
+          if (!anchors.some(a => hueDelta(a, h) < HUE_GAP_DEG)) anchors.push(h);
+        }
+        let cycle = 0;
+        while (colors.length < MIN_COLORS && remaining.length) {
+          if (!anchors.length) { colors.push(remaining.shift().hex); continue; }
+          const targetHue = anchors[cycle % anchors.length];
+          let bestIdx = 0, bestDelta = Infinity;
+          for (let i = 0; i < remaining.length; i++) {
+            const d = hueDelta(hexToHue(remaining[i].hex), targetHue);
+            if (d < bestDelta) { bestDelta = d; bestIdx = i; }
+          }
+          colors.push(remaining[bestIdx].hex);
+          remaining.splice(bestIdx, 1);
+          cycle++;
+        }
       }
     }
 
@@ -127,7 +169,12 @@ export default async function handler(req, res) {
     // real color to animate, lightness-matched to the art's own average
     // brightness so a dark B&W cover still gets a dark accent, not a jarring
     // bright patch.
-    const mostVivid = ranked[0]?.chroma ?? 0;
+    // NOTE: `ranked` is now sorted by uglyPenalty-discounted `score`, not raw
+    // chroma, so ranked[0] is no longer guaranteed to be the highest-chroma
+    // candidate — this must ask "how vivid is the single most vivid REAL
+    // color" regardless of pick order, so it reads true chroma across all
+    // candidates directly rather than trusting sort position.
+    const mostVivid = ranked.length ? Math.max(...ranked.map(c => c.chroma)) : 0;
 
     // A SECOND, different failure mode: a cover can have plenty of raw
     // chroma (yellow/gold is a vivid hue) while still being a single hue
@@ -263,6 +310,54 @@ function hexToLuma(hex) {
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
   return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+// HSL lightness (0-1) — separate from luma. hexToLuma weights channels for
+// perceived brightness (used for the near-black filter); this is the plain
+// (max+min)/2 HSL definition, needed because uglyPenalty's "muddy" pocket is
+// specifically a MID-lightness band, not a dark/bright one.
+function hexToLightness(hex) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return (Math.max(r, g, b) + Math.min(r, g, b)) / 2 / 255;
+}
+
+// Discounts a candidate's chroma for the SORT score only (never the real
+// .chroma value other checks read) when it falls in a narrow hue+chroma+
+// lightness pocket that reads as bile/decay almost regardless of the rest of
+// a cover's palette — drab olive/khaki (hue 55°-100°) and mustard-brown
+// (40°-55°), both gated to moderate-or-lower chroma (<0.45) and mid
+// lightness (25%-55%). This is the same territory as Pantone 448C ("the
+// world's ugliest color," researched for Australia's 2012 plain-cigarette-
+// packaging law) — a flat murky brown-green that tested as least-liked
+// across age/gender groups; color-preference research (Palmer & Schloss,
+// "An ecological valence theory of human color preference," PNAS 2010) ties
+// that reaction to the hue calling up decay/mold/bile, largely independent
+// of how saturated it is.
+//
+// Deliberately narrow and three-way-gated so it does NOT touch true greens
+// (~100°-160°, forest/spring green), teals/blues (~160°-250°), dusty
+// rose/mauve, or terracotta/rust (~10°-30°) — all sit outside this hue
+// band by construction — and does NOT touch a vivid, bright version of the
+// SAME hue (a saturated chartreuse or golden Dijon-yellow reads as fresh,
+// not sick, which is why chroma/lightness gate it as much as hue does).
+// Verified against a real offender: "I Feel Good About This" (The Mowgli's)
+// extracted #5b6732 — hue 73.5°, chroma 0.21, lightness 30% — squarely
+// inside this pocket, and it read as "pukey" blended live against that
+// cover's rust-reds.
+//
+// Soft penalty (multiplies the sort score), not a hard ban: an all-olive
+// cover still gets this as its best available real color and survives
+// padding/fallback untouched — this only costs it the pick slot when a
+// genuinely better (non-muddy) alternative is competing for it.
+function uglyPenalty(hue, chroma, lightness) {
+  const inOliveKhaki    = hue >= 55 && hue <= 100;
+  const inMustardBrown  = hue >= 40 && hue < 55;
+  if (!inOliveKhaki && !inMustardBrown) return 1;
+  if (chroma >= 0.45) return 1;                          // vivid chartreuse/gold — not the sickly pocket
+  if (lightness < 0.25 || lightness > 0.55) return 1;    // too dark/light to read as muddy
+  return 0.35;
 }
 
 function hexToHue(hex) {
