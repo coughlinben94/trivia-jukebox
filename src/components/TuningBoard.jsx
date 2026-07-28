@@ -113,18 +113,44 @@ function Fader({ id, label, hint }) {
           }}
         />
       </div>
-      <span className="text-[9px] font-semibold tracking-wide text-white/70">{label}</span>
+      <div className="flex items-center gap-1">
+        <span className="text-[9px] font-semibold tracking-wide text-white/70">{label}</span>
+        <InfoIcon text={hint} />
+      </div>
     </div>
   )
 }
 
+// Short, plain-English blurbs for the hover info icon — no jargon, no
+// mechanics (commit timing lives in the code comments, not here).
 const HINTS = {
-  BRIGHTNESS: 'brighter, more saturated blobs',
-  MOTION:     'blobs drift faster (applies on release)',
-  SIZE:       'each blob covers more screen (applies on release)',
-  BLEND:      'distinct bodies vs. one creamy average',
-  VARIETY:    'more distinct hues pulled from the art (refetches on release)',
-  CROSSFADE:  'song-to-song background transitions get faster',
+  BRIGHTNESS: 'How bright and bold the colors look.',
+  MOTION:     'How fast the color blobs move.',
+  SIZE:       'How big each color blob is.',
+  BLEND:      'Sharp color shapes vs. soft blending.',
+  VARIETY:    'How many different colors show up.',
+  CROSSFADE:  'How fast the background fades to the next song.',
+}
+
+// Small "i" badge with a hover tooltip — CSS-only (Tailwind named group),
+// no JS state needed. Sits next to each fader's label.
+function InfoIcon({ text }) {
+  if (!text) return null
+  return (
+    <div className="relative group/info">
+      <span
+        className="w-3.5 h-3.5 rounded-full border border-white/25 text-white/50 text-[8px] leading-none flex items-center justify-center cursor-help select-none"
+        aria-label={text}
+      >
+        i
+      </span>
+      <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-32 opacity-0 group-hover/info:opacity-100 transition-opacity duration-150 z-10">
+        <div className="bg-black/95 border border-white/10 rounded-lg px-2.5 py-2 text-[10px] leading-snug text-white/85 shadow-lg text-center">
+          {text}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // The mixer. Fixed to the bottom of whatever screen mounts it (TestScreen),
