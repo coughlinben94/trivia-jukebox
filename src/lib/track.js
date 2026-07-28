@@ -25,12 +25,30 @@ export function songNeedsSlim(song) {
 // Strip ANY parenthesized/bracketed content for display — session tags
 // ("(OurVinyl Session)"), remaster/edit/live notes, "(feat. X)"/"(with X)",
 // etc. Storage keeps the real Spotify title untouched (needed for search,
-// dedup, exact-match lookups). Also strips a bare trailing "- feat. X" with
-// no brackets at all, since that's the same clutter without parens around it.
+// dedup, exact-match lookups). Also strips a bare trailing " - anything" with
+// no brackets at all ("Man I Need - Live At Capricorn Studios", "Song -
+// Remastered 2011", "Song - feat. X") — same clutter, no parens around it.
+// Requires whitespace on BOTH sides of the dash so a real mid-word hyphen
+// ("Self-Titled", "T-Pain") never matches — only the space-dash-space
+// convention music titles use for a trailing subtitle/version tag.
 const PAREN_RE = /\s*[([][^)\]]*[)\]]/g
-const TRAILING_FEAT_RE = /\s*[-–]\s*(?:feat|ft|featuring)\.?\s+.+$/i
+const DASH_SEP_RE = /\s+[-–—]\s+/g
+
+// Cuts at the LAST " - " separator, not the first. A single greedy regex
+// match from the first separator loses real title content on multi-dash
+// titles — "Twenty One Pilots - Ride - Live from Tokyo" would collapse to
+// just "Twenty One Pilots", eating the actual song title ("Ride") along with
+// the trailing tag. Finding the last separator and cutting there keeps
+// everything before it intact, however many dashes it contains, and only
+// drops the one trailing subtitle/version tag.
+function stripTrailingDashTag(name) {
+  let lastIndex = -1, m
+  DASH_SEP_RE.lastIndex = 0
+  while ((m = DASH_SEP_RE.exec(name))) lastIndex = m.index
+  return lastIndex === -1 ? name : name.slice(0, lastIndex)
+}
 
 export function displayName(name) {
   if (!name) return name
-  return name.replace(PAREN_RE, '').replace(TRAILING_FEAT_RE, '').trim()
+  return stripTrailingDashTag(name.replace(PAREN_RE, '')).trim()
 }
