@@ -159,7 +159,17 @@ export default async function handler(req, res) {
       // image. Cycling the target hue each pick spends the padding budget
       // on more shades of EVERY real hue family found, not just the top one.
       if (colors.length < MIN_COLORS) {
-        const remaining = ranked.filter(c => !colors.includes(c.hex));
+        // Same CHROMA_FLOOR gate every other pick point in this function
+        // obeys — this loop was the one place that didn't, so a gray
+        // candidate (chroma≈0, score exactly 0, well under the floor) could
+        // still win a padding slot just for having the closest hue-angle
+        // match to an existing anchor. Hue is meaningless noise at near-zero
+        // chroma; "closest hue" was never a valid reason to let one through.
+        // If nothing clears the floor, colors simply stays short of
+        // MIN_COLORS — downstream (parseColors) already wraps a short array
+        // via modulo, and the monochrome fallback below still catches a
+        // genuinely colorless cover separately.
+        const remaining = ranked.filter(c => !colors.includes(c.hex) && c.score > CHROMA_FLOOR);
         const anchors = [];
         for (const hex of colors) {
           const h = hexToHue(hex);
