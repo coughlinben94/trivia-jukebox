@@ -565,6 +565,15 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
               animate={{ opacity: transitioning ? 0 : (textVisible ? 1 : 0), y: transitioning ? -6 : 0 }}
               transition={textInstant ? { duration: 0 } : { duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
             >
+              {/* Eyebrow breathes on its own slow loop (see eyebrow-breathe
+                  in index.css) — only runs while the parent wrapper above is
+                  itself visible, so it never breathes mid-transition. */}
+              <p
+                className="text-sm sm:text-base font-semibold uppercase tracking-[0.2em] text-white/60 mb-2"
+                style={{ animation: 'eyebrow-breathe 7s ease-in-out infinite' }}
+              >
+                Now Spinning
+              </p>
               <h1
                 ref={titleRef}
                 className="text-4xl sm:text-5xl font-bold text-white tracking-tight leading-tight mb-2"
@@ -572,7 +581,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
               >
                 {displayName(shown.name)}
               </h1>
-              <p className="text-xl text-white font-medium">
+              <p className="text-xl text-white font-medium italic">
                 {shown.artists?.map(a => a.name).join(', ')}
               </p>
             </motion.div>
