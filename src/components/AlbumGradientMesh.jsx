@@ -300,12 +300,20 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     // orbiting-sine motion to AlbumGradient.jsx's circleParams, evaluated in
     // the tiny canvas's own pixel space so it upscales to the same relative
     // motion regardless of the real canvas's size.
-    const blobs = blobParams.map((p, i) => ({
-      cx:    (p.baseX + p.xAmp * Math.sin(tSec * p.xFreq * Math.PI * 2 + p.xPhase)) * SW,
-      cy:    (p.baseY + p.yAmp * Math.sin(tSec * p.yFreq * Math.PI * 2 + p.yPhase)) * SH,
-      r:     p.radius * Math.max(SW, SH),
-      color: oklabColors[i % oklabColors.length],
-    }))
+    const blobs = blobParams.map((p, i) => {
+      const color = oklabColors[i % oklabColors.length]
+      return {
+        cx:    (p.baseX + p.xAmp * Math.sin(tSec * p.xFreq * Math.PI * 2 + p.xPhase)) * SW,
+        cy:    (p.baseY + p.yAmp * Math.sin(tSec * p.yFreq * Math.PI * 2 + p.yPhase)) * SH,
+        r:     p.radius * Math.max(SW, SH),
+        color,
+        // Chroma magnitude of this blob's a/b vector, precomputed once per
+        // blob per frame (static — doesn't depend on pixel position). Used
+        // by the polar blend below so a low-chroma blob can't destabilize
+        // the hue vote the way its raw a/b would.
+        chroma: Math.sqrt(color[1] * color[1] + color[2] * color[2]),
+      }
+    })
 
     const img = sctx.getImageData(0, 0, SW, SH)
     const data = img.data
@@ -319,7 +327,10 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
         // averaged haze.
         const wob = pseudoNoise(x * 0.15, y * 0.15, wobT) * WOBBLE_PX
 
-        let wSum = 0, L = 0, a = 0, b = 0
+        // L (lightness) and the a/b vector's raw weighted sum accumulate
+        // exactly as before. What changes is what we DO with the a/b sum:
+        // see below.
+        let wSum = 0, L = 0, aSum = 0, bSum = 0, chromaSum = 0
         for (let i = 0; i < blobs.length; i++) {
           const bl = blobs[i]
           const dx = x - bl.cx, dy = y - bl.cy
@@ -327,9 +338,35 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
           const dn = Math.max(0.02, d / bl.r)
           const w  = 1 / Math.pow(dn, idwPower)
           wSum += w
-          L += w * bl.color[0]; a += w * bl.color[1]; b += w * bl.color[2]
+          L += w * bl.color[0]
+          aSum += w * bl.color[1]; bSum += w * bl.color[2]
+          chromaSum += w * bl.chroma
         }
-        L /= wSum; a /= wSum; b /= wSum
+        L /= wSum
+
+        // Found 2026-07-28: two blobs on opposite sides of the color wheel
+        // (say rust-red vs. green) sitting at ~50/50 weight used to average
+        // straight in a/b Cartesian space — two vectors pointing opposite
+        // ways partially cancel, so the midpoint pixel landed near a=b=0,
+        // i.e. gray/muddy-olive, even though neither blob's own color was
+        // ugly. That's a vector-geometry artifact, not a bad color choice,
+        // so it couldn't be fixed in api/palette.js (that only picks which
+        // colors get used, not how they blend on screen).
+        //
+        // Fix: blend hue and chroma separately instead of blending the a/b
+        // vector directly. atan2(bSum, aSum) is exactly the hue of the OLD
+        // (buggy) vector sum — same direction as before, so the "which way
+        // does the blend lean" feel is unchanged. The actual fix is chroma:
+        // instead of using the SUM vector's magnitude (which is what
+        // collapses toward zero on cancellation), we use the weighted
+        // AVERAGE of each blob's own chroma — a plain scalar mean can never
+        // cancel toward zero the way two opposing vectors can. Re-deriving
+        // a/b from (hue, chroma) then gives a midpoint that keeps real
+        // color instead of going gray.
+        const hue = Math.atan2(bSum, aSum)
+        const C   = chromaSum / wSum
+        let a = C * Math.cos(hue)
+        let b = C * Math.sin(hue)
         a *= chromaScl; b *= chromaScl
 
         const [r, g, bb] = oklabToRgb([L, a, b])

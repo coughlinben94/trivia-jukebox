@@ -342,40 +342,72 @@ function hexToLightness(hex) {
 }
 
 // Discounts a candidate's chroma for the SORT score only (never the real
-// .chroma value other checks read) when it falls in a narrow hue+chroma+
-// lightness pocket that reads as bile/decay almost regardless of the rest of
-// a cover's palette — drab olive/khaki (hue 55°-100°) and mustard-brown
-// (40°-55°), both gated to moderate-or-lower chroma (<0.45) and mid
-// lightness (25%-55%). This is the same territory as Pantone 448C ("the
-// world's ugliest color," researched for Australia's 2012 plain-cigarette-
-// packaging law) — a flat murky brown-green that tested as least-liked
-// across age/gender groups; color-preference research (Palmer & Schloss,
-// "An ecological valence theory of human color preference," PNAS 2010) ties
-// that reaction to the hue calling up decay/mold/bile, largely independent
-// of how saturated it is.
+// .chroma value other checks read) when it falls in a hue+chroma+lightness
+// pocket that reads as bile/decay almost regardless of the rest of a cover's
+// palette — drab olive/khaki through mustard-brown, hue 40°-100° combined,
+// gated to moderate-or-lower chroma (<0.45) and mid lightness (18%-55%).
+// This is the same territory as Pantone 448C ("the world's ugliest color,"
+// researched for Australia's 2012 plain-cigarette-packaging law) — a flat
+// murky brown-green that tested as least-liked across age/gender groups;
+// color-preference research (Palmer & Schloss, "An ecological valence theory
+// of human color preference," PNAS 2010) ties that reaction to the hue
+// calling up decay/mold/bile, largely independent of how saturated it is.
 //
-// Deliberately narrow and three-way-gated so it does NOT touch true greens
-// (~100°-160°, forest/spring green), teals/blues (~160°-250°), dusty
-// rose/mauve, or terracotta/rust (~10°-30°) — all sit outside this hue
-// band by construction — and does NOT touch a vivid, bright version of the
-// SAME hue (a saturated chartreuse or golden Dijon-yellow reads as fresh,
-// not sick, which is why chroma/lightness gate it as much as hue does).
-// Verified against a real offender: "I Feel Good About This" (The Mowgli's)
-// extracted #5b6732 — hue 73.5°, chroma 0.21, lightness 30% — squarely
-// inside this pocket, and it read as "pukey" blended live against that
-// cover's rust-reds.
+// Deliberately narrow so it does NOT touch true greens (~100°-160°,
+// forest/spring green), teals/blues (~160°-250°), dusty rose/mauve, or
+// terracotta/rust (~10°-30°) — all sit outside this hue band — and does NOT
+// touch a vivid, bright version of the SAME hue (a saturated chartreuse or
+// golden Dijon-yellow reads as fresh, not sick, which is why chroma/
+// lightness gate it as much as hue does). Verified against a real offender:
+// "I Feel Good About This" (The Mowgli's) extracted #5b6732 — hue 73.5°,
+// chroma 0.21, lightness 30% — squarely inside this pocket, and it read as
+// "pukey" blended live against that cover's rust-reds.
 //
-// Soft penalty (multiplies the sort score), not a hard ban: an all-olive
-// cover still gets this as its best available real color and survives
-// padding/fallback untouched — this only costs it the pick slot when a
-// genuinely better (non-muddy) alternative is competing for it.
+// Each of the three gates (hue/chroma/lightness) ramps in over a buffer
+// zone via smoothstep rather than snapping at a hard line, so a color a
+// hair on either side of an edge — chroma 0.449 vs 0.451, hue 99° vs 101° —
+// gets nearly the same treatment instead of one being fully caught and the
+// other fully waved through. The three ramps multiply together into one
+// combined `weight` (0 = clean, 1 = dead center of the pocket), which then
+// interpolates the penalty between 1 (no discount) and 0.35 (full discount).
+// A color deep in the pocket on all three axes still lands at exactly 0.35,
+// same as the original hard-gated version — this only softens the edges.
+//
+// CHROMA_FLOOR note: a color deep in the pocket (weight≈1) tops out at
+// chroma 0.40 (below the chroma ramp's own upper edge) × 0.35 ≈ 0.14,
+// still under CHROMA_FLOOR (0.18) — so the core pocket is still an absolute
+// exclusion from the vivid pick, exactly as before. Only colors near an
+// edge (partial weight) can land a discounted score above the floor, and
+// that's intentional: they're only partly in ugly territory to begin with.
+function smoothstep(edge0, edge1, x) {
+  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
 function uglyPenalty(hue, chroma, lightness) {
-  const inOliveKhaki    = hue >= 55 && hue <= 100;
-  const inMustardBrown  = hue >= 40 && hue < 55;
-  if (!inOliveKhaki && !inMustardBrown) return 1;
-  if (chroma >= 0.45) return 1;                          // vivid chartreuse/gold — not the sickly pocket
-  if (lightness < 0.25 || lightness > 0.55) return 1;    // too dark/light to read as muddy
-  return 0.35;
+  const HUE_LO = 40, HUE_HI = 100, HUE_RAMP = 10;
+  let hueWeight;
+  if (hue < HUE_LO) hueWeight = smoothstep(HUE_LO - HUE_RAMP, HUE_LO, hue);
+  else if (hue > HUE_HI) hueWeight = 1 - smoothstep(HUE_HI, HUE_HI + HUE_RAMP, hue);
+  else hueWeight = 1;
+  if (hueWeight <= 0) return 1;
+
+  // Ramps down from full weight at chroma 0.40 to none at 0.45 — vivid
+  // chartreuse/gold above that line reads as fresh, not sick.
+  const chromaWeight = 1 - smoothstep(0.40, 0.45, chroma);
+  if (chromaWeight <= 0) return 1;
+
+  // Ramps in/out over a 5%-lightness buffer on both sides of the 18%-55%
+  // muddy band. Pantone 448C itself sits at 22.7%L, comfortably inside.
+  const LIGHT_LO = 0.18, LIGHT_HI = 0.55, LIGHT_RAMP = 0.05;
+  let lightnessWeight;
+  if (lightness < LIGHT_LO) lightnessWeight = smoothstep(LIGHT_LO - LIGHT_RAMP, LIGHT_LO, lightness);
+  else if (lightness > LIGHT_HI) lightnessWeight = 1 - smoothstep(LIGHT_HI, LIGHT_HI + LIGHT_RAMP, lightness);
+  else lightnessWeight = 1;
+  if (lightnessWeight <= 0) return 1;
+
+  const weight = hueWeight * chromaWeight * lightnessWeight;
+  return 1 - weight * 0.65; // weight 1 → 0.35 (full discount), weight 0 → 1 (none)
 }
 
 function hexToHue(hex) {
