@@ -149,11 +149,11 @@ export default async function handler(req, res) {
 
     if (mostVivid < 0.15 || hueSpread < MONOCHROME_HUE_SPREAD_DEG) {
       const avgLuma = source.reduce((sum, p) => sum + luma(p), 0) / source.length / 255;
-      const accentHues = [320, 280]; // neon pink, neon purple — B&W (and single-hue) covers get punchy contrast instead of fading to one tint
+      const accentHues = [320, 280, 185]; // neon pink, neon purple, neon cyan — the classic neon/synthwave triad; cyan sits 95°/135° from the other two so it reads as a genuinely distinct moving color, not just another warm accent
       const accents = accentHues.map(h => hslToHex(h, 0.85, Math.min(0.75, Math.max(0.25, avgLuma))));
-      // Replace the two least-saturated picks — the ones contributing least
-      // to actual color anyway — rather than the most-saturated real ones.
-      colors = [...colors.slice(0, 3), ...accents];
+      // Replace the least-saturated picks — the ones contributing least to
+      // actual color anyway — rather than the most-saturated real ones.
+      colors = [...colors.slice(0, 2), ...accents];
     }
 
     // Album art URLs are stable — cache aggressively, UNLESS the tuning
