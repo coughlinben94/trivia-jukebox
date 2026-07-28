@@ -1,9 +1,30 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { getToken, refreshToken } from '../lib/spotify'
+import { computeFadeBudget } from '../lib/fade'
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 const FADE_STEPS = 24
 const FADE_MS = 2500
+
+// Root cause of the 2026-07-28 "shuffle plays nothing, forever" bug: every
+// other awaited network step in this file (deviceId poll, play-confirmation
+// listener, seek landed-poll) has an explicit deadline with a fallback. The
+// play PUT and seek PUT fetches did not — a bare `await fetch(...)` with no
+// timeout. If that fetch never settles (a stalled connection, a dropped
+// response — doesn't matter why), playTrack hangs forever with no error, no
+// fade-in, no tonearm drop, no audio, and no recovery. Surviving a page
+// refresh or a full Spotify disconnect/reconnect doesn't rule this out: the
+// hang isn't caused by stale in-memory state, it's caused by whatever's
+// stalling the network path repeating on the next attempt too. Wrap the
+// two calls that can block the whole pipeline (play, seek) in a hard
+// timeout so a stall degrades to a caught failure instead of an infinite
+// hang.
+const NETWORK_TIMEOUT_MS = 6000
+const fetchWithTimeout = (url, options, timeoutMs = NETWORK_TIMEOUT_MS) => {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer))
+}
 // Manual stop (spacebar/iPad) needs to actually go quiet fast — the host hits
 // it because they're about to talk (read a question, make an announcement),
 // not because a song is musically ending. The full FADE_MS=2500 fade was
@@ -117,7 +138,9 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
 
   // ─── Position monitor ────────────────────────────────────────────
   // preview=true: fade+pause at stopMs but do NOT advance to the next song
-  const startMonitor = useCallback((stopMs, gen, preview = false) => {
+  // fadeOutBudget: how much of the trim window the out-fade may spend — must
+  // match the fade-in's own budget (see playTrack) so the two never overlap.
+  const startMonitor = useCallback((stopMs, gen, preview = false, fadeOutBudget = FADE_MS) => {
     clearInterval(monitorRef.current)
     // Capture this monitor's own interval id in the closure rather than reading
     // monitorRef.current at clear-time — a stale tick from a superseded generation
@@ -145,15 +168,15 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
       // instead of hitting it at full volume — acceptable to avoid ever
       // overshooting the host's chosen stop point.
       // Guard !state.paused: don't trigger on Spotify's own buffering pauses near stopMs
-      if (stopMs > 0 && pos >= stopMs - FADE_MS && !state.paused) {
+      if (stopMs > 0 && pos >= stopMs - fadeOutBudget && !state.paused) {
         clearInterval(intervalId)
         if (!preview) onFadeStartRef.current?.()
         // Clamp to whatever's actually left before the out-point — polling is
         // only every 300ms, so pos may already be partway into the fade
         // window by the time this tick fires; fade over what's actually left
-        // rather than assuming a full FADE_MS is still available.
+        // rather than assuming the full budget is still available.
         const roomBefore = Math.max(0, stopMs - pos)
-        const fadeMs = Math.min(FADE_MS, roomBefore)
+        const fadeMs = Math.min(fadeOutBudget, roomBefore)
         await fadeVolume(maxVol, 0, gen, fadeMs)
         if (genRef.current !== gen) return
         if (!preview) transitioningRef.current = true   // suppress isPaused during advance gap
@@ -210,7 +233,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     // A newer playTrack call already superseded this one while we awaited the
     // token — don't send a now-pointless play command for a stale uri.
     if (genRef.current !== gen) return undefined
-    const doPlay = (tok) => fetch(
+    const doPlay = (tok) => fetchWithTimeout(
       `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
       {
         method: 'PUT',
@@ -218,20 +241,29 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
         body: JSON.stringify({ uris: [uri] }),
       }
     )
-    let playRes = await doPlay(token)
-    if (playRes.status === 401) {
-      // getToken() thought this token was fresh — Spotify disagrees. Force a
-      // refresh once and retry before giving up.
-      const freshToken = await refreshToken()
-      // A newer playTrack call superseded this one while we awaited the
-      // refresh — don't retry a now-pointless play command for a stale uri.
-      if (genRef.current !== gen) return undefined
-      if (!freshToken) {
-        console.error('[playTrack] 401 on play and token refresh failed')
-        transitioningRef.current = false
-        return false
+    let playRes
+    try {
+      playRes = await doPlay(token)
+      if (playRes.status === 401) {
+        // getToken() thought this token was fresh — Spotify disagrees. Force a
+        // refresh once and retry before giving up.
+        const freshToken = await refreshToken()
+        // A newer playTrack call superseded this one while we awaited the
+        // refresh — don't retry a now-pointless play command for a stale uri.
+        if (genRef.current !== gen) return undefined
+        if (!freshToken) {
+          console.error('[playTrack] 401 on play and token refresh failed')
+          transitioningRef.current = false
+          return false
+        }
+        playRes = await doPlay(freshToken)
       }
-      playRes = await doPlay(freshToken)
+    } catch (err) {
+      // Timeout (AbortError) or a genuine network failure — either way the
+      // play request never landed. Fail cleanly instead of hanging forever.
+      console.error('[playTrack] play request timed out or failed', err)
+      transitioningRef.current = false
+      return false
     }
     if (!playRes.ok) {
       console.error('[playTrack] play request failed', playRes.status)
@@ -274,14 +306,17 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
 
     // Fade-in: seek to startMs itself (the trim's own in-point) and ramp
     // volume 0 → max over the stretch of trimmed content that follows — the
-    // clip audibly fades up from its own start. This spends time INSIDE the
-    // trim window on the ramp, mirroring how the fade-out (see startMonitor)
-    // spends time OUTSIDE the window (after stopMs) on its ramp instead —
-    // deliberately not symmetric: the fade-in eats into the trimmed content,
-    // the fade-out doesn't. Clamped to whatever room the trim actually has —
-    // a clip shorter than FADE_MS can't fit a full ramp before stopMs.
-    const roomIn  = stopMs > startMs ? stopMs - startMs : Infinity
-    const fadeInMs = Math.min(FADE_MS, roomIn)
+    // clip audibly fades up from its own start. Both the fade-in and the
+    // fade-out (see startMonitor) now spend their ramp INSIDE the trim
+    // window (2026-07-28), so a short trim can't fit two full FADE_MS ramps
+    // without them colliding — fade-in eating the whole window left nothing
+    // for the fade-out, which then triggered instantly and cut the song off
+    // right after it faded in. computeFadeBudget splits the window evenly
+    // between the two fades so they never overlap; both sides must use the
+    // SAME budget (passed to startMonitor below) or they'll drift back out
+    // of sync.
+    const fadeBudget = computeFadeBudget(startMs, stopMs, FADE_MS)
+    const fadeInMs = fadeBudget
 
     if (startMs > 0) {
       // Give Spotify 400ms to buffer the start of the track before seeking
@@ -290,11 +325,20 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
 
       const doSeek = async () => {
         // REST API seek only — more reliable than SDK seek; using both caused a double-seek glitch
-        const t = await getToken()
-        await fetch(
-          `https://api.spotify.com/v1/me/player/seek?position_ms=${startMs}&device_id=${deviceId}`,
-          { method: 'PUT', headers: { Authorization: `Bearer ${t}` } }
-        )
+        try {
+          const t = await getToken()
+          await fetchWithTimeout(
+            `https://api.spotify.com/v1/me/player/seek?position_ms=${startMs}&device_id=${deviceId}`,
+            { method: 'PUT', headers: { Authorization: `Bearer ${t}` } }
+          )
+        } catch (err) {
+          // Timeout (AbortError) or network failure — don't hang the whole
+          // playTrack pipeline on a seek that never lands. The landed-poll
+          // right after this already has its own 3s deadline and a one-time
+          // retry; swallowing here just lets that existing fallback run
+          // instead of blocking forever on an unsettled fetch.
+          console.error('[playTrack] seek request timed out or failed', err)
+        }
       }
 
       await doSeek()
@@ -331,7 +375,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
 
     if (genRef.current !== gen) return undefined
 
-    startMonitor(stopMs > startMs ? stopMs : 0, gen, preview)
+    startMonitor(stopMs > startMs ? stopMs : 0, gen, preview, fadeBudget)
     return true
   }, [startMonitor])
 

@@ -73,19 +73,35 @@ export async function handleCallback(code) {
   return data
 }
 
+// A bare `await fetch(...)` here (no timeout) was the same root cause as the
+// 2026-07-28 "shuffle plays nothing, forever" bug in useSpotifyPlayer.js's
+// doSeek/doPlay — this call sits underneath both of those (getToken() calls
+// this whenever the cached token is stale), so a stalled response here hangs
+// the whole playback pipeline just as badly, with no error and no recovery.
 export async function refreshToken() {
   const token = localStorage.getItem('spotify_refresh_token')
   if (!token) return null
 
-  const res = await fetch('https://accounts.spotify.com/api/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: token,
-      client_id: CLIENT_ID,
-    }),
-  })
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 6000)
+  let res
+  try {
+    res = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: token,
+        client_id: CLIENT_ID,
+      }),
+      signal: controller.signal,
+    })
+  } catch (err) {
+    console.error('[refreshToken] request timed out or failed', err)
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
 
   const data = await res.json()
   if (data.access_token) {
