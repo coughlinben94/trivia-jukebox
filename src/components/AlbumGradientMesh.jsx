@@ -139,6 +139,41 @@ function oklabToRgb([L, a, b]) {
   return [linearToSrgb(r), linearToSrgb(g), linearToSrgb(bb)]
 }
 
+function rgbToOklch(rgb) {
+  const [L, a, b] = rgbToOklab(rgb)
+  return [L, Math.sqrt(a * a + b * b), Math.atan2(b, a)]
+}
+
+function oklchToRgb(L, C, H) {
+  return oklabToRgb([L, C * Math.cos(H), C * Math.sin(H)])
+}
+
+// Shortest-arc hue interpolation (radians) — without this, lerping hue
+// straight (e.g. 10° -> 350°) sweeps the LONG way around the wheel through
+// every hue in between instead of the short 20° hop.
+function hueLerp(h1, h2, t) {
+  let delta = h2 - h1
+  delta = ((delta + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI
+  return h1 + delta * t
+}
+
+// Found 2026-07-28 (same day as the spatial-blend hue/chroma fix below, same
+// root cause): the song-to-song crossfade (outRgb -> inRgb, one color per
+// blob) was a flat per-channel RGB lerp. Two near-complementary hues (say a
+// warm orange fading into a near-black/purple cover) lerp straight through
+// their RGB midpoint, which desaturates toward gray-brown at t=0.5 — visible
+// on screen as a muddy sludge wash across the whole transition, independent
+// of the per-pixel spatial fix (that one only touches how multiple blobs mix
+// within a single frame; this is two colors mixing across time). Fix here is
+// the 2-point analog: interpolate L and chroma as plain scalars, hue along
+// the shortest arc, instead of lerping the raw RGB channels or the raw a/b
+// vector (either of which can cancel toward gray the same way).
+function blendPairRgb(rgbA, rgbB, t) {
+  const [La, Ca, Ha] = rgbToOklch(rgbA)
+  const [Lb, Cb, Hb] = rgbToOklch(rgbB)
+  return oklchToRgb(lerp(La, Lb, t), lerp(Ca, Cb, t), hueLerp(Ha, Hb, t))
+}
+
 // Cheap 2D pseudo-noise (sum of offset sines) — not simplex, but visually
 // comparable for this purpose and far cheaper per-pixel in plain JS, which
 // matters since this runs at every pixel of the tiny internal canvas, every
@@ -184,11 +219,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     const now = performance.now()
     if (s.blendStart >= 0 && (now - s.blendStart) < blendDurationMs()) {
       const t = easeInOut(Math.min((now - s.blendStart) / blendDurationMs(), 1))
-      s.outRgb = s.outRgb.map((c, i) => [
-        lerp(c[0], s.inRgb[i][0], t),
-        lerp(c[1], s.inRgb[i][1], t),
-        lerp(c[2], s.inRgb[i][2], t),
-      ])
+      s.outRgb = s.outRgb.map((c, i) => blendPairRgb(c, s.inRgb[i], t))
     } else {
       s.outRgb = s.steadyRgb.map(c => [...c])
     }
@@ -277,11 +308,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     let liveColors
     if (s.blendStart >= 0) {
       const t = easeInOut(Math.min((ts - s.blendStart) / blendDurationMs(), 1))
-      liveColors = s.outRgb.map((c, i) => [
-        lerp(c[0], s.inRgb[i][0], t),
-        lerp(c[1], s.inRgb[i][1], t),
-        lerp(c[2], s.inRgb[i][2], t),
-      ])
+      liveColors = s.outRgb.map((c, i) => blendPairRgb(c, s.inRgb[i], t))
       if (t >= 1) {
         s.steadyRgb = s.inRgb.map(c => [...c])
         s.blendStart = -1

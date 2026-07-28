@@ -41,12 +41,25 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 const ARM_ON  = { rotate: 8,  y: 0 }   // needle resting on record
 const ARM_OFF = { rotate: -30, y: -5 } // lifted and rotated back
 
+// Song-to-song art crossfade — fully decoupled from the old fly-away timing.
+// The record never leaves the platter now, so this only has to cover the
+// time it takes two stacked <img>s to swap places, not a multi-second
+// fly-up/fly-down round trip.
+const CROSSFADE_MS = 650
+
 // Boogaloo (display) + DM Sans (body) — same pairing Trivia OS ships across all
 // 21 themes (see trivia-os/themes/index.js), loaded via Google Fonts link in
 // index.html. Matches the jukebox's live screen to the rest of the trivia-night
 // visual identity instead of falling back to system-ui.
 const FONT_DISPLAY = "'Boogaloo', system-ui, sans-serif"
 const FONT_BODY    = "'DM Sans', system-ui, sans-serif"
+
+// Soft dark halo hugging the glyphs — not a filled panel, not black text.
+// White title/artist text was disappearing against pale/light-hue stretches
+// of the gradient (yellow-green, cream). Three stacked no-offset blur radii
+// read as a scrim just outside the letterforms rather than a drop shadow or
+// a background box, and hold up against any hue the gradient lands on.
+const TEXT_SCRIM = '0 0 4px rgba(0,0,0,0.55), 0 0 10px rgba(0,0,0,0.45), 0 0 20px rgba(0,0,0,0.35)'
 
 function preloadImage(url) {
   return new Promise(resolve => {
@@ -109,6 +122,11 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   const [textInstant, setTextInstant]     = useState(false)
   const [closing, setClosing]             = useState(false)
   const [entranceActive, setEntranceActive] = useState(true)
+  // Drives the art crossfade: false = prev art opaque / new art hidden,
+  // true = flipped. Toggled a frame after prev/artUrl are set so the browser
+  // paints the "false" state first and the opacity change actually animates
+  // instead of snapping straight to the end state.
+  const [crossfadeIn, setCrossfadeIn]     = useState(false)
 
   const titleRef                          = useRef(null)
   const titleBasePxRef                    = useRef(null)
@@ -177,8 +195,16 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   useEffect(() => { isPausedRef.current = isPaused }, [isPaused])
 
   // Register palette-prefetch handler with Jukebox so advanceToNext can notify us
+  // (fires during the outgoing song's fade-out, well before the track actually
+  // changes). Also warms the actual art image here — not just the palette —
+  // so by the time runTransition needs it, decode is already done and the
+  // crossfade isn't waiting on a network fetch.
   useEffect(() => {
-    onUpcomingTrack?.((song) => setUpcomingArtUrl(song?.album?.images?.[0]?.url ?? null))
+    onUpcomingTrack?.((song) => {
+      const url = song?.album?.images?.[0]?.url ?? null
+      setUpcomingArtUrl(url)
+      if (url) preloadImage(url)
+    })
     return () => onUpcomingTrack?.(null)
   }, [onUpcomingTrack])
 
@@ -389,42 +415,48 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         setTextInstant(true)
         setTransitioning(true)
 
-        // Step 1 — arm lifts alone; record stays put until arm is fully up
+        // Arm lifts as a cue — no longer covering a fly-away, since the
+        // record itself never leaves the platter. Runs concurrently with
+        // the art crossfade below rather than gating it.
         tonearmCtrl.start({ ...ARM_OFF, transition: { type: 'spring', stiffness: 220, damping: 30 } })
-        // Kick off preload during the arm lift so it has more time
+
         const newArtUrl = target?.album?.images?.[0]?.url
-        const preloadPromise = newArtUrl ? preloadImage(newArtUrl) : Promise.resolve()
-        setPrev(prevTrack)
-        await sleep(400)   // arm fully lifted
+        // Normally already warm: Jukebox's onUpcomingTrack handler preloads
+        // this during the outgoing song's final seconds. This await is a
+        // safety net for the rare skip that beats that window, not the
+        // common path — usually resolves on the same tick.
+        if (newArtUrl) await preloadImage(newArtUrl)
 
-        // Step 2 — record flies up once arm is clear
-        flyCtrl.start({ y: -500, transition: { type: 'spring', stiffness: 220, damping: 22 } })
-        setArtOpacity(0)
-        await Promise.all([preloadPromise, sleep(1200)])   // fly-up completes; preload runs concurrently
-        // Old record is gone — swap track identity
-        setShown(target)
-
-        // If another skip arrived during this window, bail before flying the new record in
+        // If a newer skip arrived while we were awaiting that (usually
+        // instant) preload, bail to it before ever touching visible state.
         if (pendingRef.current && pendingRef.current.uri !== target.uri) {
           const pending = pendingRef.current
           pendingRef.current = null
-          setTransitioning(false)
           busyRef.current = false
-          runTransition(pending, target)
+          setTransitioning(false)
+          tonearmCtrl.start({
+            ...(isPausedRef.current ? ARM_OFF : ARM_ON),
+            transition: { type: 'spring', stiffness: 180, damping: 26 },
+          })
+          runTransition(pending, prevTrack)
           return
         }
 
-        // Step 3 — load art onto record off-screen, then fly it down with art already visible
-        flyCtrl.set({ opacity: 0 })
-        flyCtrl.set({ y: -500, scale: 1 })
-        if (newArtUrl) setArtUrl(newArtUrl)
-        setArtOpacity(1)
-        flyCtrl.start({ y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 28 } })
-        await sleep(500)   // record flies down
+        // Mount both layers — prev (outgoing) opaque, new (incoming) hidden —
+        // then flip crossfadeIn a frame later so the browser paints the
+        // starting state before the CSS opacity transition animates it.
+        // Double rAF (not single) is the reliable way to guarantee that
+        // paint happens first; a single rAF can still land before layout.
+        setPrev(prevTrack)
+        setArtUrl(newArtUrl)
+        setShown(target)
+        setCrossfadeIn(false)
+        requestAnimationFrame(() => requestAnimationFrame(() => setCrossfadeIn(true)))
 
-        await sleep(500)
+        await sleep(CROSSFADE_MS)
+
         tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 22 } })
-        await sleep(200)
+        await sleep(150)
         setTextInstant(false)
         setTransitioning(false)
         busyRef.current = false
@@ -462,10 +494,11 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
     runTransition(currentTrack)
   }, [currentTrack?.uri])
 
-  // Cleanup prev background after crossfade
+  // Drop the outgoing art layer once its fade-out has fully completed —
+  // it only needs to exist in the DOM for the CROSSFADE_MS window.
   useEffect(() => {
     if (!prev) return
-    const t = setTimeout(() => setPrev(null), 900)
+    const t = setTimeout(() => setPrev(null), CROSSFADE_MS)
     return () => clearTimeout(t)
   }, [prev?.uri])
 
@@ -550,7 +583,14 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                     ? { duration: 0.35, ease: [0.23, 1, 0.32, 1] }
                     : { duration: 0.2, delay: 0.25, ease: [0.23, 1, 0.32, 1] }}
                 >
-                  {/* Spin layer: art img + groove rings rotate together */}
+                  {/* Spin layer: art img(s) + groove rings rotate together.
+                       This div itself is never remounted/keyed by track — only
+                       its children swap — so `live-spin`'s rotation angle
+                       carries continuously across song changes instead of
+                       snapping back to 0deg. A slight blur pulses in only
+                       while transitioning, bridging two differently-framed
+                       album covers into one smooth crossfade instead of a
+                       visible two-photos-overlapping swap. */}
                   <div
                     className="absolute inset-0 rounded-full overflow-hidden"
                     style={{
@@ -558,9 +598,33 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                       animationPlayState: spinPaused ? 'paused' : 'running',
                       willChange: 'transform',
                       transform: 'translateZ(0)',
+                      filter: transitioning ? 'blur(2px)' : 'blur(0px)',
+                      transition: 'filter 220ms ease',
                     }}
                   >
-                    <img src={artUrl} alt="" decoding="async" className="absolute inset-0 w-full h-full object-cover" />
+                    {/* Outgoing art — only present for the CROSSFADE_MS window
+                        it takes to fade out; fully opaque until crossfadeIn flips. */}
+                    {prev?.album?.images?.[0]?.url && (
+                      <img
+                        src={prev.album.images[0].url}
+                        alt=""
+                        decoding="async"
+                        className="absolute inset-0 w-full h-full object-cover"
+                        style={{ opacity: crossfadeIn ? 0 : 1, transition: `opacity ${CROSSFADE_MS}ms ease` }}
+                      />
+                    )}
+                    {/* Incoming/current art — hidden only while an outgoing
+                        layer is actively fading out on top of it. */}
+                    <img
+                      src={artUrl}
+                      alt=""
+                      decoding="async"
+                      className="absolute inset-0 w-full h-full object-cover"
+                      style={{
+                        opacity: prev ? (crossfadeIn ? 1 : 0) : 1,
+                        transition: `opacity ${CROSSFADE_MS}ms ease`,
+                      }}
+                    />
                     <div
                       className="absolute inset-0 rounded-full pointer-events-none"
                       style={{
@@ -599,12 +663,16 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                 className="text-5xl sm:text-6xl text-white tracking-tight leading-tight mb-2"
                 style={{
                   fontFamily: FONT_DISPLAY,
+                  textShadow: TEXT_SCRIM,
                   ...(titleScale < 1 ? { fontSize: `${(titleBasePxRef.current ?? 48) * titleScale}px` } : {}),
                 }}
               >
                 {displayName(shown.name)}
               </h1>
-              <p className="text-2xl sm:text-3xl text-white font-medium italic" style={{ fontFamily: FONT_BODY }}>
+              <p
+                className="text-2xl sm:text-3xl text-white font-medium italic"
+                style={{ fontFamily: FONT_BODY, textShadow: TEXT_SCRIM }}
+              >
                 {shown.artists?.map(a => a.name).join(', ')}
               </p>
             </motion.div>
