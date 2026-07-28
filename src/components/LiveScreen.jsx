@@ -458,10 +458,34 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
     return () => window.removeEventListener('keydown', h)
   }, [onClose])
 
+  // Close button is a host control, not an audience-facing element — it stays
+  // hidden on this audience-facing screen unless the mouse is actively moving
+  // (host reaching for the trackpad), then fades out again after a couple
+  // seconds of no movement.
+  const [showClose, setShowClose] = useState(false)
+  const closeHideTimerRef = useRef(null)
+  useEffect(() => {
+    function reveal() {
+      setShowClose(true)
+      clearTimeout(closeHideTimerRef.current)
+      closeHideTimerRef.current = setTimeout(() => setShowClose(false), 2200)
+    }
+    window.addEventListener('mousemove', reveal)
+    return () => {
+      window.removeEventListener('mousemove', reveal)
+      clearTimeout(closeHideTimerRef.current)
+    }
+  }, [])
+
   return (
     <div className={`fixed inset-0 bg-black z-50 overflow-hidden flex flex-col items-center justify-start transition-opacity duration-200 ${closing ? 'opacity-0' : 'opacity-100'}`}>
 
-      <GradientBg colors={paletteColors} nextColors={upcomingPaletteColors} active={!isPaused || transitioning} shuffleKey={shuffleKey} entranceActive={entranceActive} />
+      {/* active is always true — grading breaks are exactly when the screen
+          sits paused for minutes, and that's precisely when the ambient
+          motion matters most. Previously active={!isPaused || transitioning}
+          froze the canvas RAF loop on pause, so the one moment the room stares
+          at this screen the longest showed a dead frame. */}
+      <GradientBg colors={paletteColors} nextColors={upcomingPaletteColors} active={true} shuffleKey={shuffleKey} entranceActive={entranceActive} />
 
       <div className="relative z-10 flex flex-col items-center gap-8 px-10 text-center max-w-lg w-full" style={{ paddingTop: '15vh' }}>
         {shown ? (
@@ -566,13 +590,14 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                 zIndex: 0,
               }}
             />
-            {/* Blank record */}
+            {/* Blank record — slow shimmer signals "loading," not "stuck" */}
             <div
               className="absolute inset-0 rounded-full"
               style={{
                 background: 'rgba(238,238,238,0.96)',
                 boxShadow: '0 32px 80px rgba(0,0,0,0.7)',
                 zIndex: 1,
+                animation: 'platter-shimmer 2.4s ease-in-out infinite',
               }}
             />
             {/* Center hole */}
@@ -588,13 +613,18 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         )}
       </div>
 
-      <button
-        onClick={onClose}
-        className="absolute top-6 right-6 text-white/50 hover:text-white transition-colors transition-transform duration-150 active:scale-[0.97] cursor-pointer text-lg leading-none"
-        aria-label="Close live screen"
-      >
-        ✕
-      </button>
+      {/* Wrapper owns the fade (opacity/pointer-events); the button keeps its
+          own color/press transitions so the two don't fight over
+          transition-property. */}
+      <div className={`absolute top-6 right-6 transition-opacity duration-300 ${showClose ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+        <button
+          onClick={onClose}
+          className="text-white/50 hover:text-white transition-colors transition-transform duration-150 active:scale-[0.97] cursor-pointer text-lg leading-none"
+          aria-label="Close live screen"
+        >
+          ✕
+        </button>
+      </div>
     </div>
   )
 }

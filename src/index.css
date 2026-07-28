@@ -56,6 +56,14 @@
   to   { transform: rotate(360deg); }
 }
 
+/* Waiting-state platter — slow breathing pulse so the empty-turntable screen
+   reads as "loading" rather than frozen/broken while the SDK delivers the
+   first track. */
+@keyframes platter-shimmer {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1;    }
+}
+
 
 /* Scrubber */
 .player-scrubber {
