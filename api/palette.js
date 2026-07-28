@@ -128,9 +128,28 @@ export default async function handler(req, res) {
     // brightness so a dark B&W cover still gets a dark accent, not a jarring
     // bright patch.
     const mostVivid = ranked[0]?.chroma ?? 0;
-    if (mostVivid < 0.15) {
+
+    // A SECOND, different failure mode: a cover can have plenty of raw
+    // chroma (yellow/gold is a vivid hue) while still being a single hue
+    // family throughout — a solid gold record cover (gold label + black
+    // text) has no gray/near-black-only problem, but every candidate that
+    // survives the chroma/luma filters is some shade of the same gold, so
+    // the "distinct moving bodies" gradient reads as one flat wash anyway.
+    // Reported live on "Before You Go" (Common Kings). mostVivid alone can't
+    // catch this — it only measures how colorful the single best bucket is,
+    // not how much the picked SET disagrees on hue. Measure the actual hue
+    // spread across what we ended up with and route it through the same
+    // accent treatment as B&W whenever that spread is too narrow to read as
+    // more than one color.
+    const paletteHues = colors.map(hexToHue);
+    const hueSpread = paletteHues.length > 1
+      ? Math.max(...paletteHues.flatMap((h, i) => paletteHues.slice(i + 1).map(h2 => hueDelta(h, h2))))
+      : 0;
+    const MONOCHROME_HUE_SPREAD_DEG = 40;
+
+    if (mostVivid < 0.15 || hueSpread < MONOCHROME_HUE_SPREAD_DEG) {
       const avgLuma = source.reduce((sum, p) => sum + luma(p), 0) / source.length / 255;
-      const accentHues = [320, 280]; // neon pink, neon purple — B&W covers get punchy contrast instead of fading to gray
+      const accentHues = [320, 280]; // neon pink, neon purple — B&W (and single-hue) covers get punchy contrast instead of fading to one tint
       const accents = accentHues.map(h => hslToHex(h, 0.85, Math.min(0.75, Math.max(0.25, avgLuma))));
       // Replace the two least-saturated picks — the ones contributing least
       // to actual color anyway — rather than the most-saturated real ones.

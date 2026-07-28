@@ -598,7 +598,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
             >
               <h1
                 ref={titleRef}
-                className="text-4xl sm:text-5xl text-white tracking-tight leading-tight mb-2"
+                className="text-5xl sm:text-6xl text-white tracking-tight leading-tight mb-2"
                 style={{
                   fontFamily: FONT_DISPLAY,
                   ...(titleScale < 1 ? { fontSize: `${(titleBasePxRef.current ?? 48) * titleScale}px` } : {}),
@@ -606,7 +606,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
               >
                 {displayName(shown.name)}
               </h1>
-              <p className="text-xl text-white font-medium italic" style={{ fontFamily: FONT_BODY }}>
+              <p className="text-2xl sm:text-3xl text-white font-medium italic" style={{ fontFamily: FONT_BODY }}>
                 {shown.artists?.map(a => a.name).join(', ')}
               </p>
             </motion.div>
