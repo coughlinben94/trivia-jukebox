@@ -4,6 +4,14 @@ import { getToken, refreshToken } from '../lib/spotify'
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 const FADE_STEPS = 24
 const FADE_MS = 2500
+// Manual stop (spacebar/iPad) needs to actually go quiet fast — the host hits
+// it because they're about to talk (read a question, make an announcement),
+// not because a song is musically ending. The full FADE_MS=2500 fade was
+// built for that second case (song-to-song, see startMonitor) and dragging it
+// into a deliberate "stop now" left trailing audio bleeding into the first
+// couple seconds of whatever the host said next. Short enough to avoid an
+// audible click/pop, nowhere near long enough to read as a musical fade-out.
+const STOP_FADE_MS = 400
 
 export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
   const [isReady, setIsReady] = useState(false)
@@ -323,7 +331,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     transitioningRef.current = false  // manual stop always restores isPaused tracking
     clearInterval(monitorRef.current)
     const maxVol = maxVolumeRef.current
-    await fadeVolume(maxVol, 0, gen)
+    await fadeVolume(maxVol, 0, gen, STOP_FADE_MS)
     if (genRef.current !== gen) return
     await playerRef.current?.pause()
     // A newer call (e.g. playTrack) may have started while we awaited the
