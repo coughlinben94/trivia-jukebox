@@ -104,10 +104,12 @@ export default async function handler(req, res) {
     // anywhere near its hue neighborhood, nothing else competes for that
     // slot, so it still got picked here regardless of rank position — the
     // live re-check after deploy confirmed #5b6732 came through unchanged.
-    // Gating the floor on `.score` means a heavily-discounted muddy color
-    // has to clear a much higher real-chroma bar (0.18 / 0.35 ≈ 0.51) to
-    // count as "real color" at all in this first pass — it gets deferred to
-    // the last-resort padding loop below instead of an automatic pick.
+    // Gating the floor on `.score` is actually an absolute exclusion, not
+    // just a raised bar: uglyPenalty only ever discounts when chroma < 0.45,
+    // so the highest possible discounted score is 0.45*0.35 = 0.1575 — always
+    // below CHROMA_FLOOR (0.18). Every penalized candidate fails this check,
+    // full stop, and gets deferred to the last-resort padding loop below
+    // instead of an automatic pick here.
     const vivid = [];
     for (const c of ranked) {
       if (c.score <= CHROMA_FLOOR) continue;
