@@ -149,11 +149,25 @@ export default async function handler(req, res) {
 
     if (mostVivid < 0.15 || hueSpread < MONOCHROME_HUE_SPREAD_DEG) {
       const avgLuma = source.reduce((sum, p) => sum + luma(p), 0) / source.length / 255;
-      const accentHues = [320, 280, 185]; // neon pink, neon purple, neon cyan — the classic neon/synthwave triad; cyan sits 95°/135° from the other two so it reads as a genuinely distinct moving color, not just another warm accent
-      const accents = accentHues.map(h => hslToHex(h, 0.85, Math.min(0.75, Math.max(0.25, avgLuma))));
-      // Replace the least-saturated picks — the ones contributing least to
-      // actual color anyway — rather than the most-saturated real ones.
-      colors = [...colors.slice(0, 2), ...accents];
+
+      if (mostVivid < 0.15) {
+        // Genuinely nothing real to lean on (true B&W/grayscale) — the full
+        // neon triad carries the gradient since there's no real hue to protect.
+        const accentHues = [320, 280, 185]; // neon pink, neon purple, neon cyan
+        const accents = accentHues.map(h => hslToHex(h, 0.85, Math.min(0.75, Math.max(0.25, avgLuma))));
+        colors = [...colors.slice(0, 2), ...accents];
+      } else {
+        // There IS a real color here, just one hue family (a rich solid-gold
+        // cover, or a warm skin-tone photo like Edgar Winter's "Free Ride") —
+        // that color should stay the star. The old fixed 2-real+3-neon ratio
+        // buried it under pink/purple/cyan regardless of how much real color
+        // existed (reported live on "Free Ride" — a mostly warm-skin-tone
+        // photo that came out reading as a neon wash instead of its own
+        // tone). Keep more of the real picks and add just ONE neon accent for
+        // motion/contrast instead of overpowering the album's actual color.
+        const accent = hslToHex(320, 0.85, Math.min(0.75, Math.max(0.25, avgLuma))); // neon pink only
+        colors = [...colors.slice(0, 4), accent];
+      }
     }
 
     // Album art URLs are stable — cache aggressively, UNLESS the tuning
