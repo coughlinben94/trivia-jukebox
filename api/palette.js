@@ -288,11 +288,31 @@ export default async function handler(req, res) {
       const avgLuma = source.reduce((sum, p) => sum + luma(p), 0) / source.length / 255;
 
       if (mostVivid < 0.15) {
-        // Genuinely nothing real to lean on (true B&W/grayscale) — the full
-        // neon triad carries the gradient since there's no real hue to protect.
-        const accentHues = [320, 280, 185]; // neon pink, neon purple, neon cyan
-        const accents = accentHues.map(h => hslToHex(h, 0.85, Math.min(0.75, Math.max(0.25, avgLuma))));
-        colors = [...colors.slice(0, 2), ...accents];
+        // Genuinely nothing real to lean on (true B&W/grayscale) — no real
+        // hue to derive a color-wheel relationship FROM (unlike the
+        // single-real-hue branch below), so this triad has to be a
+        // deliberately-chosen fixed palette rather than something derived
+        // per cover. Evenly spaced 120° apart (true triadic — the standard
+        // relationship for exactly three accent hues, same logic as this
+        // file's true-complementary fix for the single-accent case) and
+        // chosen to sit clear of the documented ugly olive/khaki pocket
+        // (hue 40-100°, see uglyWeight/deuglify above) at full saturation —
+        // 140/260/20 lands at teal-green/blue-violet/red-orange, none of
+        // them anywhere near that band. Saturation eased from the old 0.85
+        // (matches the tone-down on the single-accent branch, 0.85 -> 0.55)
+        // to 0.65 — still needs to carry the WHOLE gradient alone here since
+        // there's no real color backing it up, so a bit more than the
+        // single-accent case, but the old 0.85 read as the same "neon slap"
+        // this whole pass is fixing.
+        const accentHues = [140, 260, 20];
+        const accents = accentHues.map(h => hslToHex(h, 0.65, Math.min(0.75, Math.max(0.25, avgLuma))));
+        // Accents FIRST, leftover near-gray candidates after: LiveScreen's
+        // client-side pick takes the top 2-3 entries in array order, and the
+        // three accents here are the only entries with any real hue
+        // separation — two near-identical grays (colors.slice(0,2), all
+        // that's left in a genuinely colorless cover) would otherwise sit
+        // first and waste a pick slot on a near-duplicate of each other.
+        colors = [...accents, ...colors.slice(0, 2)];
       } else {
         // There IS a real color here, just one hue family (a rich solid-gold
         // cover, or a warm skin-tone photo like Edgar Winter's "Free Ride") —
@@ -310,17 +330,24 @@ export default async function handler(req, res) {
         // shit color," because a fixed neon accent has no relationship to
         // whatever real hue it's forced next to — sometimes it'll clash,
         // sometimes (as here) it always will against a warm muted tone.
-        // Deriving the accent FROM the real color's own hue instead (+150°,
-        // not the exact 180° complement — two hues at precisely opposite
-        // points and similar saturation can cancel toward a flat/muddy
-        // midpoint when the mesh blends them, same failure class as the
-        // OKLab hue-cancellation bug fixed elsewhere in this session) and
-        // toning saturation down from 0.85 to 0.55 (still reads as a
-        // distinct second color, not a neon slap) means the accent always
-        // has SOME relationship to the actual cover instead of being an
-        // unrelated fixed color bolted on.
+        // Deriving the accent from the real color's own hue, true
+        // complementary (+180°) — the standard, legible color-wheel
+        // relationship for pairing exactly one accent against one base hue.
+        // An earlier version of this fix hedged to +150° instead, worried
+        // exact opposites would cancel toward gray when blended — that
+        // concern doesn't actually apply here: both blend paths this mesh
+        // uses (the per-frame multi-blob spatial blend AND the song-to-song
+        // crossfade) already work in polar (hue, chroma) space specifically
+        // to avoid vector cancellation — chroma is a scalar mean/lerp, hue
+        // takes the shortest arc, neither can collapse toward zero the way
+        // averaging raw a/b vectors can (see AlbumGradientMesh.jsx's own
+        // comments on both fixes). True complementary is safe and gives more
+        // contrast than the hedge. Saturation toned down from 0.85 to 0.55
+        // either way (still reads as a distinct second color, not a neon
+        // slap) so the accent always has SOME relationship to the actual
+        // cover instead of being an unrelated fixed color bolted on.
         const realHue = colors.length ? hexToHue(colors[0]) : 320;
-        const accentHue = (realHue + 150) % 360;
+        const accentHue = (realHue + 180) % 360;
         const accent = hslToHex(accentHue, 0.55, Math.min(0.75, Math.max(0.25, avgLuma)));
         colors = [...colors.slice(0, 4), accent];
       }
