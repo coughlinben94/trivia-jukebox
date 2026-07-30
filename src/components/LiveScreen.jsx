@@ -171,15 +171,20 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
 
   const paletteColorsFull      = usePalette(artUrl)
   const upcomingPaletteColorsFull = usePalette(upcomingArtUrl)
-  // Cap what the gradient actually draws from to 2 colors (2026-07-30) — the
-  // mesh renders 6 blobs, one palette hue per blob (see AlbumGradientMesh's
-  // parseColors), so handing it 5-8 distinct hues gives 6 blobs that many
-  // ways to disagree, reading as scattered pooled bodies ("lava lamp") no
-  // matter how the blend math is tuned. Feeding it only the top 2 means
-  // every blob is one of just two hues, so blobs of the same color overlap
-  // and reinforce each other into a wash instead of six separate patches.
-  // palette.js already ranks colors[] most-interesting-first, so slicing to
-  // 2 keeps the strongest pick plus its next-best, not an arbitrary pair.
+  // Cap what the gradient actually draws from to 3 colors (2026-07-30, was
+  // 2) — the mesh renders 6 blobs, one palette hue per blob (see
+  // AlbumGradientMesh's parseColors), so handing it 5-8 distinct hues gives
+  // 6 blobs that many ways to disagree, reading as scattered pooled bodies
+  // ("lava lamp") no matter how the blend math is tuned. But 2 turned out
+  // too tight: palette.js's own hue-diversity gap only guarantees adjacent
+  // picks are ≥25° apart, which two DARK, similarly-lightness/chroma colors
+  // can clear while still reading as "one color" — live-verified on The
+  // Killers' "Shot At The Night" cover, whose real palette.js output is
+  // ["#760a52" dark magenta, "#520a76" dark purple (40° apart, both dark),
+  // "#0a6d76" teal (a genuinely different family)]. Capping at 2 kept the
+  // two similar dark tones and dropped the one color that would've actually
+  // read as a second color. 3 keeps that safety net without going back to
+  // the original lava-lamp problem.
   //
   // useMemo, not a plain .slice() every render: AlbumGradientMesh's
   // blend-trigger effects key off [colors]/[nextColors] BY REFERENCE
@@ -195,8 +200,8 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // during the fade-out like the onFadeStart/onUpcomingTrack plumbing
   // already intends. useMemo restores the same stable-unless-really-changed
   // reference usePalette itself provides.
-  const paletteColors         = useMemo(() => paletteColorsFull.slice(0, 2), [paletteColorsFull])
-  const upcomingPaletteColors = useMemo(() => upcomingPaletteColorsFull.slice(0, 2), [upcomingPaletteColorsFull])
+  const paletteColors         = useMemo(() => paletteColorsFull.slice(0, 3), [paletteColorsFull])
+  const upcomingPaletteColors = useMemo(() => upcomingPaletteColorsFull.slice(0, 3), [upcomingPaletteColorsFull])
 
   const tonearmCtrl = useAnimation()
   const flyCtrl     = useAnimation()
