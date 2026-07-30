@@ -250,6 +250,38 @@ export default async function handler(req, res) {
     // their own `weights` directly, since they mix in synthetic colors that
     // were never in `ranked` to begin with.)
     const byHex = new Map(ranked.map(c => [c.hex, c]));
+
+    // Merge hue-sibling entries BEFORE computing weights — found live
+    // 2026-07-30 on Llunr's "Rocketship" (hard blue/orange split, reported
+    // as "lava lamp" even after the weighted-palette fix above landed).
+    // Real output was #e89c00/#1169b6/#cc0000/#f2a61b/#005096 — only 3
+    // genuine hue families (orange ~40°, blue ~208°, a trace of red), but
+    // the round-robin padding loop above (see its own comment, "Stay"/
+    // Abraham Alexander) deliberately cycles back through EVERY anchor
+    // family to hit MIN_COLORS when a cover doesn't have 5 genuinely
+    // distinct hues — so orange and blue each got a second near-duplicate
+    // entry (#e89c00/#f2a61b 1.5° apart, #1169b6/#005096 0° apart) purely to
+    // pad the count. That was harmless under the old equal-weight blob
+    // split (adjacent near-identical hues just blended into each other) but
+    // is a real bug now that blob COUNT and PAIRING are weight-driven (see
+    // AlbumGradientMesh.jsx, allocateBlobCounts/assignColorsToPairs, same
+    // day): splitting one real hue family's population across two separate
+    // array entries hands each one its OWN independent blob-pairing slot,
+    // antipodally mirrored against a DIFFERENT partner — traced by hand
+    // against Rocketship's real weights, dark blue (#005096, 2 blobs) and
+    // #1169b6 (1 blob) never land in the same arena, so blue's presence
+    // gets reinforced against orange twice instead of settling into one
+    // stable, self-consistent pool. Same HUE_GAP_DEG bar the rest of this
+    // file already uses for "is this actually a different color" — if it's
+    // not diverse enough to count as a separate PICK, it shouldn't count as
+    // a separate WEIGHT/blob-allocation unit either. Keeps the
+    // higher-population member as the representative hex and folds every
+    // sibling's population into it, so the family's full weight backs ONE
+    // entry. Runs only here (not in the B&W/single-hue-accent branches
+    // below) — those already construct their hues 180° apart by design, so
+    // there's nothing for this to merge.
+    colors = mergeHueSiblings(colors, byHex, HUE_GAP_DEG);
+
     let weights = buildWeights(colors.map(hex => ({ population: byHex.get(hex)?.population ?? null })));
 
     // Genuinely grayscale/near-monochrome art (even the most vivid bucket
@@ -587,6 +619,57 @@ export function buildWeights(entries) {
   return entries.map(e =>
     e.population == null ? ACCENT_WEIGHT : realBudget * (e.population / totalReal)
   );
+}
+
+// Merges near-duplicate-hue entries (same real hue family, different exact
+// shade) into one before weights are computed — found live 2026-07-30 on
+// Llunr's "Rocketship" (hard blue/orange split reported as "lava lamp"
+// even after the weighted-palette fix above landed). Real output was
+// #e89c00/#1169b6/#cc0000/#f2a61b/#005096 — only 3 genuine hue families
+// (orange ~40°, blue ~208°, a trace of red), but the round-robin padding
+// loop above (see its own comment, "Stay"/Abraham Alexander) deliberately
+// cycles back through EVERY anchor family to hit MIN_COLORS when a cover
+// doesn't have 5 genuinely distinct hues — so orange and blue each got a
+// second near-duplicate entry (#e89c00/#f2a61b 1.5° apart, #1169b6/#005096
+// 0° apart) purely to pad the count. That was harmless under the old
+// equal-weight blob split (adjacent near-identical hues just blended into
+// each other) but is a real bug now that blob COUNT and PAIRING are
+// weight-driven (see AlbumGradientMesh.jsx, allocateBlobCounts/
+// assignColorsToPairs, same day): splitting one real hue family's
+// population across two separate array entries hands each one its OWN
+// independent blob-pairing slot, antipodally mirrored against a DIFFERENT
+// partner — traced by hand against Rocketship's real weights, dark blue
+// (#005096, 2 blobs) and #1169b6 (1 blob) never land in the same arena, so
+// blue's presence gets reinforced against orange twice instead of settling
+// into one stable, self-consistent pool. Same HUE_GAP_DEG bar the rest of
+// this file already uses for "is this actually a different color" — if
+// it's not diverse enough to count as a separate PICK, it shouldn't count
+// as a separate WEIGHT/blob-allocation unit either. Keeps the
+// higher-population member as the representative hex and folds every
+// sibling's population into it (mutating `byHex` in place so buildWeights'
+// lookup sees the combined total), so the family's full weight backs ONE
+// entry. Only ever called on the normal vivid+padding path — the B&W/
+// single-hue-accent branches below construct their hues 180° apart by
+// design, so there's nothing for this to merge.
+export function mergeHueSiblings(colors, byHex, hueGapDeg) {
+  const groups = [];
+  for (const hex of colors) {
+    const hue = byHex.get(hex)?.hue ?? hexToHue(hex);
+    const group = groups.find(g => hueDelta(g.hue, hue) < hueGapDeg);
+    if (group) group.members.push(hex);
+    else groups.push({ hue, members: [hex] });
+  }
+  return groups.map(g => {
+    if (g.members.length === 1) return g.members[0];
+    let best = g.members[0], bestPop = byHex.get(best)?.population ?? 0, totalPop = bestPop;
+    for (const hex of g.members.slice(1)) {
+      const pop = byHex.get(hex)?.population ?? 0;
+      totalPop += pop;
+      if (pop > bestPop) { bestPop = pop; best = hex; }
+    }
+    byHex.set(best, { ...byHex.get(best), population: totalPop });
+    return best;
+  });
 }
 
 function hexToLuma(hex) {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { populationFactor, buildWeights, relativeSaturation, uglyWeight, deuglify } from '../../api/palette.js'
+import { populationFactor, buildWeights, relativeSaturation, uglyWeight, deuglify, mergeHueSiblings } from '../../api/palette.js'
 
 // hue / chroma / lightness triplets for real live-library colors, computed
 // exactly the way api/palette.js's own hexToHue/hexToChroma/hexToLightness
@@ -102,6 +102,51 @@ describe('uglyWeight (generalized muddy-warm pocket, 2026-07-30)', () => {
   })
   it('ignores warm-tinted near-grays (neutrality guard) instead of inventing color for them', () => {
     expect(uglyWeight(30, 0.03, 0.4)).toBe(0)
+  })
+})
+
+describe('mergeHueSiblings (2026-07-30, the Rocketship hard-bisection fix)', () => {
+  it('merges Rocketship\'s real live output down to 3 real hue families, summing population into the dominant member', () => {
+    // Real live /api/palette output for Llunr's "Rocketship" before this
+    // fix: orange padded twice (#e89c00 hue 40.3, #f2a61b hue 38.8 -- 1.5°
+    // apart) and blue padded twice (#1169b6, #005096 -- both hue 208, 0°
+    // apart), plus one real red. HUE_GAP_DEG defaults to 25 at VARIETY=50.
+    const colors = ['#e89c00', '#1169b6', '#cc0000', '#f2a61b', '#005096']
+    const byHex = new Map([
+      ['#e89c00', { hue: 40.3, population: 300 }],
+      ['#1169b6', { hue: 208,  population: 400 }],
+      ['#cc0000', { hue: 0,    population: 150 }],
+      ['#f2a61b', { hue: 38.8, population: 300 }],
+      ['#005096', { hue: 208,  population: 1200 }], // dominant blue
+    ])
+    const merged = mergeHueSiblings(colors, byHex, 25)
+    expect(merged).toHaveLength(3)
+    // darkblue (#005096) had the larger population within its family, so it
+    // survives as the representative and inherits BOTH blues' population.
+    expect(merged).toContain('#005096')
+    expect(merged).not.toContain('#1169b6')
+    expect(byHex.get('#005096').population).toBe(1600) // 400 + 1200
+    // orange: #e89c00 and #f2a61b tie at 300 -- first-seen wins the tie.
+    expect(merged).toContain('#e89c00')
+    expect(byHex.get('#e89c00').population).toBe(600)
+    expect(merged).toContain('#cc0000')
+  })
+
+  it('leaves genuinely distinct hues untouched (no merge when nothing is a sibling)', () => {
+    const colors = ['#fec50d', '#1ea48f', '#ff8e84', '#8348bc', '#e48bc3']
+    const byHex = new Map([
+      ['#fec50d', { hue: 46,  population: 100 }],
+      ['#1ea48f', { hue: 172, population: 90 }],
+      ['#ff8e84', { hue: 4,   population: 80 }],
+      ['#8348bc', { hue: 270, population: 70 }],
+      ['#e48bc3', { hue: 320, population: 60 }],
+    ])
+    expect(mergeHueSiblings(colors, byHex, 25)).toEqual(colors)
+  })
+
+  it('is a no-op on a single color', () => {
+    const byHex = new Map([['#123456', { hue: 210, population: 50 }]])
+    expect(mergeHueSiblings(['#123456'], byHex, 25)).toEqual(['#123456'])
   })
 })
 
