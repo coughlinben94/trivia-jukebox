@@ -61,8 +61,9 @@ export default async function handler(req, res) {
     // the colorful parts of the cover that a straight small-bucket cut
     // would miss.
     const candidates = medianCut(source, 12);
+    const maxPopulation = Math.max(...candidates.map(c => c.population));
     const ranked = candidates
-      .map(hex => {
+      .map(({ hex, population }) => {
         const rawChroma = hexToChroma(hex);
         const rawHue = hexToHue(hex);
         const rawLightness = hexToLightness(hex);
@@ -74,7 +75,9 @@ export default async function handler(req, res) {
         // vividness, not a color this function invented.
         const { hue, chroma, lightness, hex: displayHex } =
           deuglify(rawHue, rawChroma, rawLightness, hex);
-        // `score` (not `chroma`) drives sort order below — see uglyPenalty().
+        const popRel = maxPopulation > 0 ? population / maxPopulation : 0;
+        // `score` (not `chroma`) drives sort order below — see uglyPenalty()
+        // and populationFactor().
         return {
           hex: displayHex,
           chroma,
@@ -82,7 +85,9 @@ export default async function handler(req, res) {
           lightness,
           rawChroma,
           luma: hexToLuma(hex),
-          score: chroma * uglyPenalty(hue, chroma, lightness),
+          population,
+          popRel,
+          score: chroma * uglyPenalty(hue, chroma, lightness) * populationFactor(popRel),
         };
       })
       // A near-black bucket (e.g. a two-tone black-and-one-color cover, where
@@ -234,6 +239,14 @@ export default async function handler(req, res) {
       }
     }
 
+    // `colors` at this point is real (vivid picks + padding), so every
+    // entry has a real population from `ranked` — look each one up by hex
+    // to carry it through. (The monochrome/single-hue branches below build
+    // their own `weights` directly, since they mix in synthetic colors that
+    // were never in `ranked` to begin with.)
+    const byHex = new Map(ranked.map(c => [c.hex, c]));
+    let weights = buildWeights(colors.map(hex => ({ population: byHex.get(hex)?.population ?? null })));
+
     // Genuinely grayscale/near-monochrome art (even the most vivid bucket
     // is barely colored) — nothing to rank can invent hues that aren't
     // there. Blend in two fixed accent hues so the background still has
@@ -330,6 +343,9 @@ export default async function handler(req, res) {
         // legible without pushing the light end past what 0.75 already caps.
         const accentHues = [200, 20];
         colors = accentHues.map(h => hslToHex(h, 0.65, Math.min(0.75, Math.max(0.38, avgLuma))));
+        // Nothing real behind either hue here — both synthetic, so
+        // buildWeights' zero-real-entries branch splits them evenly.
+        weights = buildWeights(colors.map(() => ({ population: null })));
       } else {
         // There IS a real color here, just one hue family (a rich solid-gold
         // cover, or a warm skin-tone photo like Edgar Winter's "Free Ride") —
@@ -410,6 +426,16 @@ export default async function handler(req, res) {
         // At index 2 the picker's top-2/3rd-if-close logic reaches it on
         // every one of them.
         colors = [colors[0], colors[1], accent, ...colors.slice(2, 4)].filter(Boolean);
+        // colors[0]/colors[1] (and any padding past index 2) are real, so
+        // they keep their bucket population; `accent` is synthetic and gets
+        // buildWeights' fixed ACCENT_WEIGHT share instead of competing for
+        // an equal split — this is the actual structural fix for the
+        // accent reading as a fully competing pooling color instead of a
+        // minor one (see AlbumGradientMesh.jsx's blob-allocation change,
+        // same day, which is what actually consumes this weight).
+        weights = buildWeights(colors.map(hex =>
+          hex === accent ? { population: null } : { population: byHex.get(hex)?.population ?? null }
+        ));
       }
     }
 
@@ -417,7 +443,7 @@ export default async function handler(req, res) {
     // board is live-testing a VARIETY value, in which case caching would
     // serve a stale palette back to the board mid-tune.
     res.setHeader('Cache-Control', overridden ? 'no-store' : 's-maxage=86400, stale-while-revalidate');
-    return res.status(200).json({ colors });
+    return res.status(200).json({ colors, weights });
   } catch (err) {
     console.error('[palette]', err.message);
     return res.status(500).json({ error: 'Extraction failed' });
@@ -466,13 +492,22 @@ function medianCut(pixels, numColors) {
   // Picking the most chromatic pixel keeps it intact. Verified against a
   // live album cover: averaging returned 5 shades of tan/gray (max chroma
   // 0.10); this returns real pink/teal/orange (chroma up to 0.71).
+  // Also returns `population` (bucket.length, i.e. how many of the ~7500
+  // sampled pixels landed in this bucket) alongside the hex. This was
+  // previously discarded entirely once medianCut returned — the single
+  // biggest architectural gap found in the 2026-07-30 root-cause review:
+  // every candidate was ranked by vividness alone with zero sense of how
+  // much of the cover it actually represents, which is why a small vivid
+  // accent could out-rank a large muted background that a viewer would
+  // call "the cover's real color." See populationFactor()/buildWeights()
+  // below for what consumes this.
   return buckets.map(bucket => {
     let best = bucket[0], bestChroma = -1;
     for (const p of bucket) {
       const c = pixelChroma(p);
       if (c > bestChroma) { bestChroma = c; best = p; }
     }
-    return toHex(best[0], best[1], best[2]);
+    return { hex: toHex(best[0], best[1], best[2]), population: bucket.length };
   });
 }
 
@@ -499,6 +534,50 @@ function hexToChroma(hex) {
   const g = parseInt(hex.slice(3, 5), 16);
   const b = parseInt(hex.slice(5, 7), 16);
   return pixelChroma([r, g, b]);
+}
+
+// Dampens population's effect on sort order so a large boring bucket can't
+// win purely on size — CHROMA_FLOOR (below) still gates real color first;
+// this only re-orders candidates that already cleared it. sqrt compresses
+// the dynamic range (a bucket 4x bigger than another gets only 2x the
+// factor, not 4x) so a modestly-larger muted region can't bury a smaller
+// genuinely vivid one. Range 0.5 (smallest bucket) to 1.0 (largest) means
+// population can at most halve a candidate's score, never zero it out or
+// let it alone create a top pick from nothing -- chroma still has to be
+// real to begin with. Calibrated 2026-07-30 against live extraction data
+// from Sub-Radio's "1990something": the cover's actual dominant salmon-pink
+// background (two buckets, each 12.5% of sampled pixels, popRel 0.5) was
+// ranked 7th-8th by chroma alone, behind a 6.3%-of-image yellow patch
+// (popRel 0.25, chroma 0.902) — this factor promotes the dominant color
+// enough to compete for the top ranking slot without letting population
+// override a real vividness gap (see src/test/palette.test.js).
+export function populationFactor(popRel) {
+  return 0.5 + 0.5 * Math.sqrt(Math.max(0, Math.min(1, popRel)));
+}
+
+// Builds a normalized (sum=1) weight per final output color, for the
+// renderer to allocate blob count/size proportionally instead of an equal
+// split. `entries` is an array of { population } -- population is the real
+// bucket pixel-count for a color that came from `ranked`, or `null` for a
+// synthetic color (the monochrome/single-hue-accent fallbacks below, which
+// have no real bucket to measure). Synthetic entries each get a fixed
+// ACCENT_WEIGHT share; the real entries split what's left, proportional to
+// their own population. If EVERY entry is synthetic (the true-B&W fallback,
+// exactly 2 fixed hues, nothing real behind either), there's nothing to be
+// proportional to -- split evenly instead of collapsing to a divide-by-zero.
+const ACCENT_WEIGHT = 0.15;
+export function buildWeights(entries) {
+  const real = entries.filter(e => e.population != null);
+  const synthetic = entries.filter(e => e.population == null);
+  if (!real.length) {
+    const even = 1 / entries.length;
+    return entries.map(() => even);
+  }
+  const totalReal = real.reduce((s, e) => s + e.population, 0);
+  const realBudget = synthetic.length ? 1 - ACCENT_WEIGHT * synthetic.length : 1;
+  return entries.map(e =>
+    e.population == null ? ACCENT_WEIGHT : realBudget * (e.population / totalReal)
+  );
 }
 
 function hexToLuma(hex) {
