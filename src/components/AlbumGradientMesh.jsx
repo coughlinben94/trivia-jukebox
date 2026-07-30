@@ -174,18 +174,169 @@ function hexToRgb(hex) {
 // blendPairRgb blends two concrete colors per slot and has no notion of
 // (and no dependency on) which palette index either one came from, or
 // whether the rotation differed between the outgoing and incoming call.
-function rotationFor(src) {
-  if (!src.length) return 0
+function rotationFor(src, mod = src.length) {
+  if (!src.length || !mod) return 0
   const hex = src[0] || '#000000'
   let sum = 0
   for (let k = 1; k < hex.length; k++) sum += hex.charCodeAt(k)
-  return sum % src.length
+  return sum % mod
 }
 
-function parseColors(hexArr, n) {
+// Weight-proportional blob allocation (2026-07-30). Colors used to get an
+// automatic equal share (src[(i+rot) % src.length] handed every blob index
+// in turn) — with the antipodal pairing above making each color's share
+// STABLE instead of lucky, "equal" became a real structural guarantee, and
+// that's exactly what turned a single small accent hue (the synthetic
+// color api/palette.js mixes in for a single-real-hue cover, via
+// buildWeights()'s ACCENT_WEIGHT=0.15) into a fully competing third of the
+// frame — live-reported as "the exact lava lamp thing" on Orleans' "Dance
+// with Me." Task 1/2 today threaded a real `weights` array (sums to 1,
+// parallel to colors) all the way from api/palette.js's bucket population
+// through LiveScreen's pickGradientColors, specifically so blob count could
+// finally track how much of the cover a color actually is.
+//
+// allocateBlobCounts: Hamilton/largest-remainder apportionment of the 6
+// blob slots by weight. NOT the "reserve 1 slot per color, then apportion
+// the remaining 6-n by weight among all colors" version literally spelled
+// out in the weighted-palette plan doc — verified numerically
+// (simulate-blob-weights.mjs) that version backfires for a low-weight
+// accent specifically: for a real buildWeights()-shaped 2-color
+// [0.85, 0.15] palette, reserving 1 to each color first then apportioning
+// the remaining 4 by weight gives the accent floor(0.15*4)=0, but its
+// remainder (0.6) beats the dominant color's remainder (0.4) out of that
+// SMALLER 4-slot pool, so it wins the leftover slot ON TOP OF its reserved
+// one -- 2 of 6 blobs (33%) for a 15%-weight color. Running Hamilton
+// directly against all 6 slots first already gives every real color >=1
+// whenever the math allows it (quotas 5.1/0.9 -> floor 5/0 -> the one
+// leftover slot goes to the larger remainder, 0.9, i.e. the accent -- final
+// 5/1, matching its real weight). The "must get >=1" guarantee is only
+// needed as a rare post-hoc top-up (borrowing 1 slot from whoever currently
+// holds the most) for the case direct Hamilton actually can't satisfy on
+// its own -- several similarly-low-weight colors where the largest
+// remainder happens to fall on the already-biggest quota.
+function allocateBlobCounts(weights) {
+  const n = weights.length
+  if (n === 0) return []
+  if (n === 1) return [NUM_BLOBS]
+  const quotas = weights.map(w => w * NUM_BLOBS)
+  const counts = quotas.map(Math.floor)
+  const remainders = quotas.map((q, i) => q - counts[i])
+  const leftover = NUM_BLOBS - counts.reduce((s, c) => s + c, 0)
+  const order = weights.map((_, i) => i).sort((a, b) => {
+    if (remainders[b] !== remainders[a]) return remainders[b] - remainders[a]
+    if (weights[b] !== weights[a]) return weights[b] - weights[a]
+    return a - b
+  })
+  for (let k = 0; k < leftover; k++) counts[order[k]] += 1
+  // Post-hoc minimum guarantee (see comment above): a color with real
+  // weight but 0 blobs borrows 1 from whichever color currently holds the
+  // most -- never taking a donor below 1 itself, since the donor search
+  // requires counts[j] > 1.
+  for (let i = 0; i < n; i++) {
+    if (weights[i] > 0 && counts[i] === 0) {
+      let donor = -1
+      for (let j = 0; j < n; j++) {
+        if (counts[j] > 1 && (donor === -1 || counts[j] > counts[donor])) donor = j
+      }
+      if (donor !== -1) { counts[donor] -= 1; counts[i] += 1 }
+    }
+  }
+  return counts
+}
+
+// The fixed antipodal pairs from makeBlobParams() above: (0,1), (2,3),
+// (4,5) — each is a mirror-through-center, phase+π pair, geometrically,
+// regardless of which color(s) end up assigned to its two slots.
+const BLOB_PAIRS = [[0, 1], [2, 3], [4, 5]]
+
+// assignColorsToPairs: places each color's allocateBlobCounts() share onto
+// the 3 fixed arenas above. Greedy round-robin per arena — give the first
+// slot to whichever color currently has the most blobs left to place, give
+// the second slot to the NEXT-largest color that still needs one (i.e.
+// prefer a DIFFERENT color per arena), and only fall back to the SAME
+// color for both slots when every other color has already been fully
+// placed. This maximizes how many arenas any given color shares with a
+// DIFFERENT color (each such arena is a real antipodal mirror pair, so its
+// two occupants' combined share is pinned near-constant by the same
+// geometry the antipodal fix already relies on) and only concentrates a
+// color into a same-color "full" pair for whatever's left once nothing
+// else needs a partner.
+//
+// This matters more than it looks: an earlier version of this function
+// filled whole SAME-color pairs first (floor(count/2) each), leaving only
+// the leftover odd blobs to share arenas. For an exactly-equal true-B&W
+// fallback ([0.5, 0.5] -> 3 blobs each), that produced 1 full pair per
+// color plus 1 shared arena — concentrating ALL of the pairing-based
+// balance guarantee into a single arena instead of spreading it across all
+// 3, which measured a 0.355 swing (range 0.45-0.80) in
+// simulate-blob-weights.mjs, most of the way back to the ORIGINAL
+// un-paired bug's 0.43 swing (0.29-0.72) this session already fixed once.
+// This round-robin version reproduces the exact already-shipped/verified
+// alternating (0,1,0,1,0,1) arrangement for that same equal-weight case
+// (falls out of the algorithm automatically, not a special case), which
+// measured a much tighter 0.158 swing (0.43-0.59) under the same sim.
+function assignColorsToPairs(counts, rotationSeed) {
+  const n = counts.length
+  const remaining = counts.slice()
+  const arenas = []
+  for (let p = 0; p < BLOB_PAIRS.length; p++) {
+    let a = -1
+    for (let i = 0; i < n; i++) {
+      if (remaining[i] > 0 && (a === -1 || remaining[i] > remaining[a])) a = i
+    }
+    remaining[a] -= 1
+    let b = -1
+    for (let i = 0; i < n; i++) {
+      if (i !== a && remaining[i] > 0 && (b === -1 || remaining[i] > remaining[b])) b = i
+    }
+    if (b === -1) b = a // nothing else left to place -- forced same-color pair
+    remaining[b] -= 1
+    arenas.push([a, b])
+  }
+  // Rotate WHICH physical arena (0, 1, or 2) each queue entry lands on, per
+  // cover — same reasoning as rotationFor() above: without this, the
+  // arena built first (always the most-dominant color, by construction of
+  // the greedy loop) would always land on physical pair (0,1) — blob 0's
+  // FIXED, same-every-song orbit — reintroducing the exact "always the
+  // same corner" bug rotationFor was written to fix, just one layer up, at
+  // the pair level instead of the single-blob level.
+  const rot = rotationSeed % BLOB_PAIRS.length
+  const colorByBlobIndex = new Array(NUM_BLOBS)
+  arenas.forEach(([a, b], i) => {
+    const [i0, i1] = BLOB_PAIRS[(i + rot) % BLOB_PAIRS.length]
+    colorByBlobIndex[i0] = a
+    colorByBlobIndex[i1] = b
+  })
+  return colorByBlobIndex
+}
+
+// Numeric verification of all of the above lives in
+// simulate-blob-weights.mjs (plain Node, run 2026-07-30) — it copies
+// makeBlobParams()'s rng/antipodal formulas and draw()'s IDW formula
+// verbatim and measures each color's real per-instant frame share on the
+// same 48x27 tiny-canvas grid. Actual printed results (10s window, 0.1s
+// steps, current gradientTuning.js T=50 defaults):
+//   3-color [0.6, 0.25, 0.15]  -> blob counts [4, 1, 1] -> mean share
+//     0.673 / 0.198 / 0.130, ranges [0.548,0.787] / [0.129,0.293] /
+//     [0.014,0.255] -- ordering matches weight ordering throughout (the
+//     dominant color's minimum, 0.548, always exceeds both minors' maximums).
+//   2-color accent [0.85, 0.15] (buildWeights()'s real single-hue+accent
+//     shape) -> blob counts [5, 1] -> mean share 0.802 / 0.198, ranges
+//     [0.707,0.871] / [0.129,0.293] -- accent never exceeds 0.293, never
+//     swings toward dominance.
+//   True B&W [0.5, 0.5] -> blob counts [3, 3] -> mean share 0.518 / 0.482,
+//     ranges [0.429,0.587] / [0.413,0.571] -- matches today's already-
+//     shipped equal-weight antipodal behavior (falls out to the same
+//     alternating 0,1,0,1,0,1 arrangement).
+function parseColors(hexArr, weightsArr, n) {
   const src = hexArr.length ? hexArr : ['#080808']
-  const rot = rotationFor(src)
-  return Array.from({ length: n }, (_, i) => [...hexToRgb(src[(i + rot) % src.length])])
+  const weights = (Array.isArray(weightsArr) && weightsArr.length === src.length)
+    ? weightsArr
+    : src.map(() => 1 / src.length)
+  const rot = rotationFor(src, BLOB_PAIRS.length)
+  const counts = allocateBlobCounts(weights)
+  const colorByBlobIndex = assignColorsToPairs(counts, rot)
+  return Array.from({ length: n }, (_, i) => [...hexToRgb(src[colorByBlobIndex[i]])])
 }
 
 function easeInOut(t) {
@@ -304,7 +455,7 @@ function pseudoNoise(x, y, t) {
   ) / 4
 }
 
-export default function AlbumGradientMesh({ colors = [], nextColors = [], active = true, shuffleKey = 0, entranceActive = false }) {
+export default function AlbumGradientMesh({ colors = [], nextColors = [], weights = [], nextWeights = [], active = true, shuffleKey = 0, entranceActive = false }) {
   const canvasRef          = useRef(null)
   const smallCanvasRef     = useRef(null)
   const activeRef          = useRef(active)
@@ -322,7 +473,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
 
   const st = useRef(null)
   if (!st.current) {
-    const initial = parseColors(colors, NUM_BLOBS)
+    const initial = parseColors(colors, weights, NUM_BLOBS)
     st.current = {
       steadyRgb:  initial.map(c => [...c]),
       outRgb:     initial.map(c => [...c]),
@@ -331,7 +482,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     }
   }
 
-  function startBlendTo(newHex) {
+  function startBlendTo(newHex, newWeights) {
     const s   = st.current
     const now = performance.now()
     if (s.blendStart >= 0 && (now - s.blendStart) < blendDurationMs()) {
@@ -340,7 +491,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     } else {
       s.outRgb = s.steadyRgb.map(c => [...c])
     }
-    s.inRgb      = parseColors(newHex, NUM_BLOBS)
+    s.inRgb      = parseColors(newHex, newWeights, NUM_BLOBS)
     s.blendStart = performance.now()
     if (!rafRef.current && mountedRef.current) startLoop()
   }
@@ -363,10 +514,10 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     if (nextColors.every(c => c === '#080808')) return
     if (entranceActiveRef.current) {
       pendingFromNextRef.current = true
-      pendingBlendRef.current = nextColors
+      pendingBlendRef.current = { colors: nextColors, weights: nextWeights }
       return
     }
-    startBlendTo(nextColors)
+    startBlendTo(nextColors, nextWeights)
     pendingFromNextRef.current = true
   }, [nextColors])
 
@@ -376,11 +527,11 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
       pendingFromNextRef.current = false
       pendingBlendRef.current = null
       const s = st.current
-      s.inRgb     = parseColors(colors, NUM_BLOBS)
-      s.steadyRgb = parseColors(colors, NUM_BLOBS)
+      s.inRgb     = parseColors(colors, weights, NUM_BLOBS)
+      s.steadyRgb = parseColors(colors, weights, NUM_BLOBS)
     } else {
-      if (entranceActiveRef.current) { pendingBlendRef.current = colors; return }
-      startBlendTo(colors)
+      if (entranceActiveRef.current) { pendingBlendRef.current = { colors, weights }; return }
+      startBlendTo(colors, weights)
     }
   }, [colors])
 
@@ -389,7 +540,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     if (!entranceActive && pendingBlendRef.current) {
       const pending = pendingBlendRef.current
       pendingBlendRef.current = null
-      startBlendTo(pending)
+      startBlendTo(pending.colors, pending.weights)
     }
   }, [entranceActive])
 
