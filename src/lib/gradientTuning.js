@@ -46,6 +46,36 @@ if (typeof window !== 'undefined') {
 }
 let version = 1
 
+// Cross-tab resurrection bug (found 2026-07-30, twice in one day): this
+// module's `overrides` is hydrated from localStorage ONCE, at load. If tab A
+// clears STORAGE_KEY (e.g. via devtools, or the board's own RESET ALL) while
+// tab B stayed open with a stale in-memory `overrides`, tab B never hears
+// about it — the browser's own `storage` event fires on OTHER tabs when
+// localStorage changes, which is exactly the gap here, but nothing was
+// listening. The next single dial touch in tab B then calls setDial(), which
+// spreads `{...overrides}` (tab B's stale copy, old values intact) into a
+// FRESH localStorage write — silently resurrecting an override that had
+// already been cleared elsewhere, with a couple of values changed. This is
+// the confirmed mechanism behind the SECOND "lava lamp is back" report,
+// which had different override values than the first (a stale board touched
+// again, not a fresh one). Listening for `storage` and re-hydrating closes
+// the gap: any tab with this module loaded now converges on whatever's
+// actually in localStorage, instead of trusting its own load-time snapshot
+// forever. Re-dispatches TUNING_EVENT so the Tune-button indicator and any
+// live renderer listeners pick up the correction immediately, same as a
+// local setDial/clearDials call would.
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key !== STORAGE_KEY) return
+    try { overrides = e.newValue ? JSON.parse(e.newValue) : {} }
+    catch { overrides = {} }
+    version++
+    window.dispatchEvent(new CustomEvent(TUNING_EVENT, {
+      detail: { id: '__external', committed: true, remount: true, server: true },
+    }))
+  })
+}
+
 // Monotonic counter — AlbumGradient.jsx compares it against its cached
 // CanvasGradient objects so BRIGHTNESS/BLEND turns invalidate the cache
 // without an event subscription in the draw loop.
@@ -141,19 +171,23 @@ export function setEngine(engine) {
 //     "creamy/averaged," closer to the pre-blob noise-field feel that never
 //     read as distinct pooled bodies — the literal opposite of "lava lamp."
 //
-// chromaScale nudged back up 0.70 -> 0.80 same day, once LiveScreen also
-// capped the palette itself to 2-3 colors (separate fix, same session): that
-// cap is what's actually load-bearing against "lava lamp" now — fewer
-// distinct hues for the 6 blobs to disagree about, independent of how
-// saturated each one is. With that in place, 0.70's blanket desaturation is
-// mostly just costing real color: live-checked Abraham Alexander's "Stay"
-// (/api/palette real output includes #a37538, chroma 0.42 — a genuinely
-// rich golden-brown by the numbers, no ugly-pocket penalty applies to it)
-// and it was reading as a flat, dull tan on screen — 0.70 was taking a
-// perfectly good brown and washing it out. 0.80 splits the difference: most
-// of the anti-oversaturation headroom from the color-count cap, without
-// deliberately dulling colors that were never the problem.
-export function chromaScale()      { return lerp(0.60, 1.00, T('BRIGHTNESS') / 100) }       // 50 → 0.80 (was 0.70, originally 0.82)
+// chromaScale nudged up 0.70 -> 0.80 same day (for a dull-brown complaint on
+// Abraham Alexander's "Stay"), then reverted right back down within the same
+// session once a sharper problem showed up: the mesh's chroma-preserving
+// blend (see AlbumGradientMesh.jsx's spatial-blend comment, 2026-07-28) means
+// wherever two blobs of different hue meet, chroma is the WEIGHTED MEAN of
+// both — it never dips at the seam. Turning chromaScale up doesn't just
+// enrich single-hue-dominated regions like that brown; it also pushes every
+// SEAM between two different colors to a more vivid, more distinct blend —
+// live-reported 2026-07-30 as "where the two colors are connecting is where
+// I'm having my major issues," directly after the 0.80 bump. That's the more
+// frequent, more disruptive complaint (lava-lamp seams) vs. the narrower one
+// (one dull brown), so back to 0.70. The brown-richness problem still
+// exists; it needs a fix that helps single-color regions without also
+// juicing every seam (e.g. damping chroma specifically where multiple blobs
+// have comparable weight, not a blanket multiplier) — not attempted here,
+// left for a future pass once the seam problem itself is confirmed calmer.
+export function chromaScale()      { return lerp(0.40, 1.00, T('BRIGHTNESS') / 100) }       // 50 → 0.70 (was 0.82)
 export function circleAlphaMuted() { return lerp(0.45, 0.79, T('BRIGHTNESS') / 100) }       // 50 → 0.62 (was 0.62, exact)
 export function circleAlphaSat()   { return lerp(0.21, 0.55, T('BRIGHTNESS') / 100) }       // 50 → 0.38 (was 0.38, exact)
 

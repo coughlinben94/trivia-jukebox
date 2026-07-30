@@ -300,9 +300,28 @@ export default async function handler(req, res) {
         // buried it under pink/purple/cyan regardless of how much real color
         // existed (reported live on "Free Ride" — a mostly warm-skin-tone
         // photo that came out reading as a neon wash instead of its own
-        // tone). Keep more of the real picks and add just ONE neon accent for
+        // tone). Keep more of the real picks and add just ONE accent for
         // motion/contrast instead of overpowering the album's actual color.
-        const accent = hslToHex(320, 0.85, Math.min(0.75, Math.max(0.25, avgLuma))); // neon pink only
+        //
+        // Accent hue used to be a FIXED 320° (neon pink) regardless of what
+        // the real color actually was — reported live 2026-07-30 on Black
+        // Match's "June" (a near-grayscale beach photo, one real muted tan
+        // #a57d61 survived): paired with hardcoded hot pink, it read as "a
+        // shit color," because a fixed neon accent has no relationship to
+        // whatever real hue it's forced next to — sometimes it'll clash,
+        // sometimes (as here) it always will against a warm muted tone.
+        // Deriving the accent FROM the real color's own hue instead (+150°,
+        // not the exact 180° complement — two hues at precisely opposite
+        // points and similar saturation can cancel toward a flat/muddy
+        // midpoint when the mesh blends them, same failure class as the
+        // OKLab hue-cancellation bug fixed elsewhere in this session) and
+        // toning saturation down from 0.85 to 0.55 (still reads as a
+        // distinct second color, not a neon slap) means the accent always
+        // has SOME relationship to the actual cover instead of being an
+        // unrelated fixed color bolted on.
+        const realHue = colors.length ? hexToHue(colors[0]) : 320;
+        const accentHue = (realHue + 150) % 360;
+        const accent = hslToHex(accentHue, 0.55, Math.min(0.75, Math.max(0.25, avgLuma)));
         colors = [...colors.slice(0, 4), accent];
       }
     }
