@@ -3,6 +3,7 @@ import { searchTracks, logout } from '../lib/spotify'
 import { supabase } from '../lib/supabase'
 import { slimTrack, songNeedsSlim } from '../lib/track'
 import { shuffleArray, resolveNext, resolveUpcoming, buildSessionOrder } from '../lib/shuffle'
+import { loadPlayed, savePlayed } from '../lib/playedStore'
 import { useSpotifyPlayer } from '../hooks/useSpotifyPlayer'
 import { prefetchPalette } from '../hooks/usePalette'
 import Player from './Player'
@@ -371,11 +372,38 @@ const [newSetName, setNewSetName] = useState('')
 
   const shuffleOrderRef = useRef([])
   const shuffleIdxRef = useRef(0)
-  // Ids played so far this session (cleared only when the tab reloads, i.e.
-  // once per night). Consulted by buildSessionOrder/resolveNext so pressing
-  // Shuffle-play again mid-night never repeats a song until every track in
-  // the library has had a turn — then a new lap starts and it clears itself.
-  const playedIdsRef = useRef(new Set())
+  // Ids played so far tonight, PER SET — one Set per set id, not one shared
+  // Set for the whole app. Consulted by buildSessionOrder/resolveNext so
+  // pressing Shuffle-play again never repeats a song until every track in
+  // that particular set has had a turn — then a new lap starts for that set
+  // and it clears itself (see shuffle.js's freshOrderFromPool).
+  //
+  // Previously this was a single shared Set across every set/theme, which
+  // had a real bug: exhausting a small set's pool (freshOrderFromPool's
+  // playedIds.clear()) wiped every OTHER set's play history too. That was
+  // invisible before 2026-07-29 because the whole thing lived only in memory
+  // and died on every page reload anyway — the moment it's persisted (see
+  // playedStore.js) a shared Set would make that bug real and visible, so
+  // it's per-set from the start here.
+  //
+  // playedSetsRef is a live in-memory cache (Map<setId, Set<songId>>);
+  // getPlayedSet lazily loads a set's history from localStorage
+  // (playedStore.js) the first time it's needed, which is what makes
+  // no-repeat survive the Jukebox<->Trivia OS full-page-navigation handoff
+  // between rounds, not just a single uninterrupted session.
+  const playedSetsRef = useRef(new Map())
+  const getPlayedSet = useCallback((setId) => {
+    let set = playedSetsRef.current.get(setId)
+    if (!set) {
+      set = loadPlayed(setId)
+      playedSetsRef.current.set(setId, set)
+    }
+    return set
+  }, [])
+  const persistPlayed = useCallback((setId) => {
+    const set = playedSetsRef.current.get(setId)
+    if (set) savePlayed(setId, set)
+  }, [])
   const debounceRef = useRef(null)
   const searchTokenRef = useRef(0)
   const shuffleDebounceRef = useRef(null)
@@ -469,11 +497,13 @@ const [newSetName, setNewSetName] = useState('')
     // first and startShuffle immediately after would shuffle the OLD active set.
     // Capturing targetSongs from setsRef before any state update sidesteps that race.
     clearTimeout(shuffleDebounceRef.current)
-    const order = buildSessionOrder(targetSongs, playedIdsRef.current)
+    const playedIds = getPlayedSet(lib)
+    const order = buildSessionOrder(targetSongs, playedIds)
     shuffleOrderRef.current = order
     shuffleIdxRef.current = 0
     const song = targetSongs.find(t => t.id === order[0])
-    playedIdsRef.current.add(song.id)
+    playedIds.add(song.id)
+    persistPlayed(lib)
     prefetchPalette(song.album?.images?.[0]?.url)
     // A new play supersedes any in-flight LiveScreen exit — clear liveEnding
     // so the fresh session doesn't mount into the outgoing animation state.
@@ -504,7 +534,9 @@ const [newSetName, setNewSetName] = useState('')
     // onClick, which would otherwise pass the click event as an arg.
     const tryPlay = (isRetry) => {
       const lib = libraryRef.current
-      const { order, idx, song } = resolveNext(shuffleOrderRef.current, shuffleIdxRef.current, lib, playedIdsRef.current)
+      const activeId = setsRef.current.activeId
+      const playedIds = getPlayedSet(activeId)
+      const { order, idx, song } = resolveNext(shuffleOrderRef.current, shuffleIdxRef.current, lib, playedIds)
       shuffleOrderRef.current = order
       shuffleIdxRef.current = idx
       if (!song) {
@@ -517,7 +549,8 @@ const [newSetName, setNewSetName] = useState('')
         addToast('No songs left to play in this set')
         return
       }
-      playedIdsRef.current.add(song.id)
+      playedIds.add(song.id)
+      persistPlayed(activeId)
       // A new play supersedes any in-flight LiveScreen exit — clear liveEnding
       // so the fresh session doesn't mount into the outgoing animation state.
       setLiveEnding(false)
@@ -650,11 +683,14 @@ const [newSetName, setNewSetName] = useState('')
     shuffleDebounceRef.current = setTimeout(async () => {
       if (library.length === 0) return
       setShuffleKey(k => k + 1)
-      const order = buildSessionOrder(library, playedIdsRef.current)
+      const activeId = setsRef.current.activeId
+      const playedIds = getPlayedSet(activeId)
+      const order = buildSessionOrder(library, playedIds)
       shuffleOrderRef.current = order
       shuffleIdxRef.current = 0
       const song = library.find(t => t.id === order[0])
-      playedIdsRef.current.add(song.id)
+      playedIds.add(song.id)
+      persistPlayed(activeId)
       // Warm the first song's palette during play startup so LiveScreen's
       // usePalette hits cache at mount instead of re-rendering mid-entrance.
       prefetchPalette(song.album?.images?.[0]?.url)

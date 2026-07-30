@@ -63,22 +63,41 @@ export default async function handler(req, res) {
     const candidates = medianCut(source, 12);
     const ranked = candidates
       .map(hex => {
-        const chroma = hexToChroma(hex);
-        const hue = hexToHue(hex);
-        const lightness = hexToLightness(hex);
+        const rawChroma = hexToChroma(hex);
+        const rawHue = hexToHue(hex);
+        const rawLightness = hexToLightness(hex);
+        // Recolor (not just discount) anything in the "ugly olive/khaki"
+        // pocket — see deuglify() below. Everything downstream (score,
+        // hue-gap dedup, the final output hex) operates on the RECOLORED
+        // values; only `rawChroma` survives separately, because the
+        // monochrome-fallback check further down must judge the art's real
+        // vividness, not a color this function invented.
+        const { hue, chroma, lightness, hex: displayHex } =
+          deuglify(rawHue, rawChroma, rawLightness, hex);
         // `score` (not `chroma`) drives sort order below — see uglyPenalty().
-        return { hex, chroma, hue, lightness, luma: hexToLuma(hex), score: chroma * uglyPenalty(hue, chroma, lightness) };
+        return {
+          hex: displayHex,
+          chroma,
+          hue,
+          lightness,
+          rawChroma,
+          luma: hexToLuma(hex),
+          score: chroma * uglyPenalty(hue, chroma, lightness),
+        };
       })
       // A near-black bucket (e.g. a two-tone black-and-one-color cover, where
       // black is the dominant channel) shouldn't ever surface as a "color" —
       // against the canvas's own near-black base it reads as a hole, not a
       // hue. Drop it here so it can't win a padding slot below even when
-      // there aren't enough vivid candidates to fill MIN_COLORS.
+      // there aren't enough vivid candidates to fill MIN_COLORS. Luma is
+      // read from the ORIGINAL pixel — deuglify only ever lifts lightness
+      // for pocket colors, never darkens, so judging near-blackness pre
+      // recolor is equivalent and simpler.
       .filter(c => c.luma >= LUMA_THRESHOLD)
       // Sort by the ugliness-discounted score, not raw chroma — see
-      // uglyPenalty() below. mostVivid/CHROMA_FLOOR checks further down
-      // still read each candidate's real (undiscounted) .chroma, so this
-      // only affects PICK ORDER, never "is there real color here at all."
+      // uglyPenalty() below. mostVivid further down reads each candidate's
+      // real, pre-recolor .rawChroma (not .chroma), so this only affects
+      // PICK ORDER, never "is there real color in the source art at all."
       .sort((a, b) => b.score - a.score);
 
     // Take every candidate with real color (chroma > 0.18), up to 8 — covers
@@ -201,8 +220,14 @@ export default async function handler(req, res) {
     // chroma, so ranked[0] is no longer guaranteed to be the highest-chroma
     // candidate — this must ask "how vivid is the single most vivid REAL
     // color" regardless of pick order, so it reads true chroma across all
-    // candidates directly rather than trusting sort position.
-    const mostVivid = ranked.length ? Math.max(...ranked.map(c => c.chroma)) : 0;
+    // candidates directly rather than trusting sort position. Reads
+    // `.rawChroma` specifically (the pre-deuglify value) — `.chroma` on each
+    // candidate may have been lifted by deuglify's recolor, and a cover this
+    // function had to invent vividness for is exactly the genuinely-gray
+    // case the monochrome fallback below exists to catch. Judging on the
+    // recolored value would let a faintly-khaki-tinted grayscale cover dodge
+    // the fallback it actually needs.
+    const mostVivid = ranked.length ? Math.max(...ranked.map(c => c.rawChroma)) : 0;
 
     // A SECOND, different failure mode: a cover can have plenty of raw
     // chroma (yellow/gold is a vivid hue) while still being a single hue
@@ -384,9 +409,12 @@ function hexToLightness(hex) {
 // same as the original hard-gated version — this only softens the edges.
 //
 // CHROMA_FLOOR note: a color deep in the pocket (weight≈1) tops out at
-// chroma 0.40 (below the chroma ramp's own upper edge) × 0.35 ≈ 0.14,
-// still under CHROMA_FLOOR (0.18) — so the core pocket is still an absolute
-// exclusion from the vivid pick, exactly as before. Only colors near an
+// chroma 0.26 (the chroma ramp's own lower edge, narrowed 2026-07-29 from
+// 0.40) × 0.35 ≈ 0.09, still under CHROMA_FLOOR (0.18) — so the core pocket
+// is still an absolute exclusion from the vivid pick, exactly as before
+// (and still catches the documented #5b6732 offender at chroma 0.21). Only
+// a real photographed green now needs chroma above ~0.33, not ~0.45, to
+// clear the ramp entirely. Only colors near an
 // edge (partial weight) can land a discounted score above the floor, and
 // that's intentional: they're only partly in ugly territory to begin with.
 function smoothstep(edge0, edge1, x) {
@@ -394,18 +422,25 @@ function smoothstep(edge0, edge1, x) {
   return t * t * (3 - 2 * t);
 }
 
-function uglyPenalty(hue, chroma, lightness) {
+// 0 (clean) to 1 (dead centre of the ugly pocket). Factored out of
+// uglyPenalty (2026-07-29) so the score discount and deuglify's recolor
+// below share one definition of "in the pocket" and can never disagree.
+function uglyWeight(hue, chroma, lightness) {
   const HUE_LO = 40, HUE_HI = 100, HUE_RAMP = 10;
   let hueWeight;
   if (hue < HUE_LO) hueWeight = smoothstep(HUE_LO - HUE_RAMP, HUE_LO, hue);
   else if (hue > HUE_HI) hueWeight = 1 - smoothstep(HUE_HI, HUE_HI + HUE_RAMP, hue);
   else hueWeight = 1;
-  if (hueWeight <= 0) return 1;
+  if (hueWeight <= 0) return 0;
 
-  // Ramps down from full weight at chroma 0.40 to none at 0.45 — vivid
-  // chartreuse/gold above that line reads as fresh, not sick.
-  const chromaWeight = 1 - smoothstep(0.40, 0.45, chroma);
-  if (chromaWeight <= 0) return 1;
+  // Ramps down from full weight at chroma 0.26 to none at 0.33 (narrowed
+  // 2026-07-29, was 0.40-0.45) — the wider ramp still caught real
+  // photographed grass/foliage green, which lands in the SAME 40-100deg hue
+  // band as the documented olive/khaki offender and can't be separated by
+  // hue alone. The offender (#5b6732) sits at chroma 0.21, well under this
+  // ramp's lower edge, so it's still fully discounted.
+  const chromaWeight = 1 - smoothstep(0.26, 0.33, chroma);
+  if (chromaWeight <= 0) return 0;
 
   // Ramps in/out over a 5%-lightness buffer on both sides of the 18%-55%
   // muddy band. Pantone 448C itself sits at 22.7%L, comfortably inside.
@@ -414,10 +449,63 @@ function uglyPenalty(hue, chroma, lightness) {
   if (lightness < LIGHT_LO) lightnessWeight = smoothstep(LIGHT_LO - LIGHT_RAMP, LIGHT_LO, lightness);
   else if (lightness > LIGHT_HI) lightnessWeight = 1 - smoothstep(LIGHT_HI, LIGHT_HI + LIGHT_RAMP, lightness);
   else lightnessWeight = 1;
-  if (lightnessWeight <= 0) return 1;
+  if (lightnessWeight <= 0) return 0;
 
-  const weight = hueWeight * chromaWeight * lightnessWeight;
+  return hueWeight * chromaWeight * lightnessWeight;
+}
+
+function uglyPenalty(hue, chroma, lightness) {
+  const weight = uglyWeight(hue, chroma, lightness);
   return 1 - weight * 0.65; // weight 1 → 0.35 (full discount), weight 0 → 1 (none)
+}
+
+// Recolors a candidate deep in the ugly olive/khaki pocket instead of just
+// discounting it out of the palette (2026-07-29) — nudges it toward a
+// nicer neighbor so the live background still derives its color from that
+// region of the album art, rather than losing the slot to an unrelated
+// color or (in the worst case) tripping the monochrome fallback below.
+// Scaled by uglyWeight so a color barely inside the pocket moves
+// imperceptibly, a color dead-center moves the full amount, and anything
+// outside the pocket (weight 0) passes through completely unchanged — same
+// continuity discipline as uglyPenalty's own ramps. This happens entirely
+// in the palette layer; the renderer still only draws what it's handed.
+//
+// Splits at hue 60°, not the pocket's own 40-100° midpoint (70°) — a muddy
+// hue already reads as green rather than brown/mustard by around 60°.
+// Rotates toward leaf green (105°, just past the pocket's own HUE_HI) or
+// bronze/amber (34°, just under HUE_LO) accordingly, and lifts chroma/
+// lightness together with the hue shift — Pantone 448C reads ugly because
+// it's desaturated AND mid-dark, not because of its hue angle alone;
+// rotating hue with no chroma/lightness change just gives a muddy green
+// instead of a muddy olive.
+function deuglify(hue, chroma, lightness, originalHex) {
+  const weight = uglyWeight(hue, chroma, lightness);
+  if (weight <= 0) return { hue, chroma, lightness, hex: originalHex };
+
+  const TARGET_HUE = hue >= 60 ? 105 : 34;
+  const MAX_ROT = 35; // stays recognizably the same underlying color
+  const rot = Math.max(-MAX_ROT, Math.min(MAX_ROT, weight * (TARGET_HUE - hue)));
+
+  const newHue = (hue + rot + 360) % 360;
+  const newChroma = Math.min(chroma + weight * 0.18, 0.42);
+  const newLightness = lightness + weight * (0.46 - lightness) * 0.7;
+
+  return {
+    hue: newHue,
+    chroma: newChroma,
+    lightness: newLightness,
+    hex: chromaHueLightnessToHex(newHue, newChroma, newLightness),
+  };
+}
+
+// Rebuilds a hex color from hue/chroma/lightness in the same cylindrical
+// model hexToChroma/hexToLightness read them from — chroma here is the HSL
+// cylinder's c = (1 - |2L-1|) * s — so deuglify's shifted values round-trip
+// back into a real, displayable color instead of an approximation.
+function chromaHueLightnessToHex(hue, chroma, lightness) {
+  const denom = 1 - Math.abs(2 * lightness - 1);
+  const s = denom > 0 ? Math.min(1, chroma / denom) : 0;
+  return hslToHex(hue, s, lightness);
 }
 
 function hexToHue(hex) {
