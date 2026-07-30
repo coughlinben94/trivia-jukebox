@@ -661,15 +661,9 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                 {/* Cap the collaborator list at 2 names — a song with a
                     handful of featured artists (5, in the reported case) was
                     wrapping to 3 italic lines on this audience-facing screen,
-                    which read as clutter rather than information. Two names
-                    joined by a comma still reads naturally as a duet/feature
-                    credit; beyond that, name the headliner and summarize the
-                    rest instead of listing every one. displayName (track.js)
-                    already sets the house style for "trim the title, don't
-                    show Spotify's full metadata verbatim" — same spirit here. */}
-                {shown.artists?.length > 2
-                  ? `${shown.artists[0].name} & others`
-                  : shown.artists?.map(a => a.name).join(', ')}
+                    which read as clutter rather than information. Just the
+                    two main artists, no "& others" suffix — simplest read. */}
+                {shown.artists?.slice(0, 2).map(a => a.name).join(', ')}
               </p>
             </motion.div>
           </>
