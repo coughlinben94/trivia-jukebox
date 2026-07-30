@@ -140,7 +140,20 @@ export function setEngine(engine) {
 //   - meshIdwPower down (3 -> 2 at 50): per its own comment, lower = more
 //     "creamy/averaged," closer to the pre-blob noise-field feel that never
 //     read as distinct pooled bodies — the literal opposite of "lava lamp."
-export function chromaScale()      { return lerp(0.40, 1.00, T('BRIGHTNESS') / 100) }       // 50 → 0.70 (was 0.82)
+//
+// chromaScale nudged back up 0.70 -> 0.80 same day, once LiveScreen also
+// capped the palette itself to 2-3 colors (separate fix, same session): that
+// cap is what's actually load-bearing against "lava lamp" now — fewer
+// distinct hues for the 6 blobs to disagree about, independent of how
+// saturated each one is. With that in place, 0.70's blanket desaturation is
+// mostly just costing real color: live-checked Abraham Alexander's "Stay"
+// (/api/palette real output includes #a37538, chroma 0.42 — a genuinely
+// rich golden-brown by the numbers, no ugly-pocket penalty applies to it)
+// and it was reading as a flat, dull tan on screen — 0.70 was taking a
+// perfectly good brown and washing it out. 0.80 splits the difference: most
+// of the anti-oversaturation headroom from the color-count cap, without
+// deliberately dulling colors that were never the problem.
+export function chromaScale()      { return lerp(0.60, 1.00, T('BRIGHTNESS') / 100) }       // 50 → 0.80 (was 0.70, originally 0.82)
 export function circleAlphaMuted() { return lerp(0.45, 0.79, T('BRIGHTNESS') / 100) }       // 50 → 0.62 (was 0.62, exact)
 export function circleAlphaSat()   { return lerp(0.21, 0.55, T('BRIGHTNESS') / 100) }       // 50 → 0.38 (was 0.38, exact)
 

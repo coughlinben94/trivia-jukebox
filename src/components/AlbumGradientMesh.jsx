@@ -191,6 +191,33 @@ function oklchToRgb(L, C, H) {
   return oklabToRgb([L, C * Math.cos(H), C * Math.sin(H)])
 }
 
+// Bakes a small tile of random black/white 1px dots ONCE and returns a
+// repeating canvas pattern, instead of the 700 individual fillRect() calls
+// (each with its own fillStyle string toggle and Math.random() pair) the
+// grain pass used to do every single animation frame (2026-07-30 — reported
+// live as visible chop, most noticeable on the spinning record, alongside
+// everything else this file already does per frame: the 48×48 IDW blend
+// loop, then a blur(24px) filter over the full canvas). One drawImage-backed
+// pattern fill replaces those 700 draw calls with effectively one, at the
+// same ~0.03-alpha sparse density. Static (not re-randomized per frame) is a
+// deliberate trade — at this density and alpha the difference from
+// per-frame noise is imperceptible against a moving color field, and a
+// static tile can be built once and reused for the component's whole
+// lifetime instead of costing anything per frame at all.
+const GRAIN_TILE = 256
+const GRAIN_DOTS = 45   // same density as the old 700-over-full-canvas version at ~1080p
+function makeGrainPattern(ctx) {
+  const tile = document.createElement('canvas')
+  tile.width = GRAIN_TILE
+  tile.height = GRAIN_TILE
+  const tctx = tile.getContext('2d')
+  for (let i = 0; i < GRAIN_DOTS; i++) {
+    tctx.fillStyle = Math.random() > 0.5 ? '#fff' : '#000'
+    tctx.fillRect(Math.random() * GRAIN_TILE, Math.random() * GRAIN_TILE, 1, 1)
+  }
+  return ctx.createPattern(tile, 'repeat')
+}
+
 // Shortest-arc hue interpolation (radians) — without this, lerping hue
 // straight (e.g. 10° -> 350°) sweeps the LONG way around the wheel through
 // every hue in between instead of the short 20° hop.
@@ -245,6 +272,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
   const pendingBlendRef    = useRef(null)
   const blobParams         = useMemo(makeBlobParams, [])
   const tinySizeRef        = useRef({ w: 48, h: 48 })
+  const grainPatternRef    = useRef(null)
 
   const st = useRef(null)
   if (!st.current) {
@@ -457,12 +485,14 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     ctx.filter = 'none'
 
     // Subtle grain — standard fix for 8-bit-panel banding on smooth dark
-    // gradients (a TV, not a computer monitor, is driving this).
+    // gradients (a TV, not a computer monitor, is driving this). Built once
+    // (see makeGrainPattern above) and reused every frame — was 700
+    // individual fillRect() calls per frame, now one pattern-filled
+    // fillRect() call.
+    if (!grainPatternRef.current) grainPatternRef.current = makeGrainPattern(ctx)
     ctx.globalAlpha = 0.03
-    for (let i = 0; i < 700; i++) {
-      ctx.fillStyle = Math.random() > 0.5 ? '#fff' : '#000'
-      ctx.fillRect(Math.random() * W, Math.random() * H, 1, 1)
-    }
+    ctx.fillStyle = grainPatternRef.current
+    ctx.fillRect(0, 0, W, H)
     ctx.globalAlpha = 1
   }
 
