@@ -343,9 +343,15 @@ export default async function handler(req, res) {
         // single-real-hue branch below), so this pair has to be a
         // deliberately-chosen fixed palette rather than something derived
         // per cover. 200° cool blue / 20° warm red-orange — true
-        // complementary (180° apart, same relationship as this file's
-        // single-accent fix below, not triadic — an earlier version of this
-        // comment called it "triadic," which was just wrong) — chosen to
+        // complementary (180° apart; an earlier version of this comment
+        // called it "triadic," which was just wrong). Complementary is
+        // deliberately KEPT here even though the single-accent branch below
+        // moved to triadic via pickAccentHue() on 2026-07-30 (see its
+        // comment): that move fixed a minority accent (weight 0.15, 1 blob
+        // of 6) pooling as an isolated hard-edged disc, a failure mode that
+        // needs a dominant field to be isolated IN. Here both colors are
+        // equal-weight (3 blobs each), so opposition reads as the intended
+        // two-bodies duel, not a floating patch — and the pair is chosen to
         // sit clear of the documented muddy-warm pocket (see uglyWeight/
         // deuglify above; the 20° accent brushes the generalized band's
         // lower hue ramp, but at 0.65 saturation it's far above the
@@ -404,56 +410,93 @@ export default async function handler(req, res) {
         // shit color," because a fixed neon accent has no relationship to
         // whatever real hue it's forced next to — sometimes it'll clash,
         // sometimes (as here) it always will against a warm muted tone.
-        // Deriving the accent from the real color's own hue, true
-        // complementary (+180°) — the standard, legible color-wheel
-        // relationship for pairing exactly one accent against one base hue.
-        // An earlier draft of this comment claimed BOTH of this mesh's blend
-        // paths (song-to-song crossfade AND the per-frame multi-blob spatial
-        // blend) work in polar space, so exact opposition couldn't cancel
-        // toward gray. Only half true, per a second-opinion review that
-        // actually traced AlbumGradientMesh.jsx's draw() loop: the crossfade
-        // (blendPairRgb) is genuinely polar (scalar L/C lerp, shortest-arc
-        // hue) and can't degenerate. The per-pixel spatial blend keeps
-        // chroma as a scalar mean (also can't collapse), but derives hue via
-        // `Math.atan2(bSum, aSum)` on the CARTESIAN SUM of each blob's a/b —
-        // near 180° apart, that sum vector's magnitude shrinks toward zero
-        // and its direction (the hue) becomes genuinely unstable, snapping
-        // rather than sweeping smoothly as blob weight shifts. What actually
-        // saves this in practice: the tiny-canvas result gets a 24px RGB
-        // blur before it ever reaches the screen, which averages that
-        // unstable seam into a plain neutral gray rather than a visible
-        // hue-flip — for a blurred ambient background that reads as a calm
-        // boundary, not a glitch, so 180° still stands, but because of the
-        // blur smoothing it over, not because the math was safe to begin
-        // with. Watch item: the exact seam position drifts with the per-
-        // frame wobble noise (see WOBBLE_PX); if it ever reads as visible
-        // shimmer rather than a static soft boundary, back off toward ~165°.
-        // Saturation toned down from 0.85 to 0.55 so the accent reads as a
-        // distinct second color, not a neon slap.
+        // Deriving from the real color's own hue fixed that and stays.
         //
-        // Toned down again, 0.55 -> 0.40 (2026-07-30, live report: Orleans'
-        // "Dance with Me" -- a warm sepia band photo -- reading as "the
-        // exact lava lamp thing" on the antipodal-paired mesh). Root cause
-        // traced live: this cover's real picks (#c79136/#efc45f, both gold)
-        // sit only 0.021 apart in OKLab's a/b plane -- so close pickGradientColors
-        // correctly reaches for this accent as a 3rd color -- but once
-        // reached, AlbumGradientMesh hands each of the 3 colors an EQUAL
-        // 2-of-6 blob share (i % 3), and antipodal pairing (see this file's
-        // blob-pairing fix, same day) locks that share to a stable ~1/3 by
-        // construction. An accent meant to be "just ONE accent... not
-        // overpowering" was structurally guaranteed the same weight as each
-        // real color combined -- a fixed, saturated, complementary-hue blob
-        // pair reads as a genuinely separate pooling color, not a contrast
-        // note. Lowering saturation is a source-side mitigation (softens
-        // the accent toward the blur-friendly neutral middle rather than a
-        // fully competing hue) -- it does NOT fix the underlying equal-
-        // blob-weight structure, which a second-opinion review flagged the
-        // same day as an open design question across every synthetic-accent
-        // cover, not just this one. If 0.40 still pools visibly, the real
-        // fix is giving the accent fewer/smaller blobs, not less saturation.
-        const realHue = colors.length ? hexToHue(colors[0]) : 320; // no real candidates survived at all — rare, arbitrary last resort
-        const accentHue = (realHue + 180) % 360;
-        const accent = hslToHex(accentHue, 0.40, Math.min(0.75, Math.max(0.25, avgLuma)));
+        // The OFFSET, however, moved twice. First derivation used true
+        // complementary (+180°). An earlier pass already documented the
+        // danger: AlbumGradientMesh's per-pixel spatial blend derives hue
+        // via `Math.atan2(bSum, aSum)` on the CARTESIAN SUM of each blob's
+        // a/b — near 180° apart the sum vector cancels toward zero and hue
+        // SNAPS instead of sweeping — and kept 180° anyway on the theory
+        // that the 24px screen blur averages the unstable seam into a calm
+        // boundary ("Watch item: ... if it ever reads as visible shimmer
+        // rather than a static soft boundary, back off toward ~165°").
+        // That watch item came due 2026-07-30 on Black Pumas' "Fast Car"
+        // (live palette ["#d72a1b","#397f85"], weights [0.85,0.15]):
+        // an isolated, sharply-bounded teal disc drifting across a flat red
+        // field, "never blending into the red." Reproduced offline by
+        // rendering the mesh's exact per-pixel math (simulate-accent-blob.mjs)
+        // — the measured mechanism is worth keeping on record because it
+        // rules out every other knob:
+        //   - The chroma-preserving blend (chroma = scalar weighted MEAN,
+        //     hue = atan2 of the vector sum) means a pixel only ever
+        //     DISPLAYS the accent's hue side once the accent's
+        //     chroma-weighted vector outweighs the base's:
+        //     share > C_base/(C_base+C_accent). Fast Car's red is OKLab
+        //     C=0.209 vs the sat-0.40 teal's C=0.070 — threshold 75%. So
+        //     the accent was invisible below 75% local dominance: only
+        //     2.9-5.5% of the frame showed any teal at all (vs its 19.8%
+        //     IDW weight share), everything else stayed pure red, and the
+        //     whole red-to-teal transition compressed into ~2 tiny-canvas
+        //     pixels (max neighbor ΔE_OK 0.13-0.14 — a hard edge the blur
+        //     can only round, not feather), ringed by a mustard halo where
+        //     the near-cancelled hue snaps through the yellow direction.
+        //   - Every previously-guessed lever was tested against that rig
+        //     and DISPROVEN: raising accent saturation to chroma-match the
+        //     base made the edge HARDER (max ΔE 0.196); halving the accent
+        //     blob's radius shrank the disc (1.2% area) but left the edge
+        //     identical (ΔE 0.143); blob count was already at the minimum
+        //     1 of 6. The earlier note here ("the real fix is giving the
+        //     accent fewer/smaller blobs, not less saturation") was a
+        //     reasonable guess and is simply wrong — no size/count/
+        //     saturation combination can feather a ~180° pair in this
+        //     renderer, because the sharpness comes from the blend math's
+        //     hue snap, not from the blob's footprint.
+        //   - Backing off to 165° (the watch item's own suggestion) still
+        //     measured 8 hard-seam pixels (max ΔE 0.088) — OKLab
+        //     separation was still ~150°, deep in cancellation territory.
+        //     At offsets ≤ ~120-135° the seam vanishes entirely (0 pixels
+        //     over ΔE 0.06/px, max 0.057): the sum vector never cancels,
+        //     so atan2 sweeps CONTINUOUSLY through intermediate hues and
+        //     the accent finally feathers into the base — visible accent
+        //     area rises toward its actual weight instead of pooling.
+        // So: triadic (120° away) — still a standard, legible color-wheel
+        // relationship derived from the cover's own hue, and the largest
+        // offset the mesh's blend can actually render as a gradient. Both
+        // the SIDE of the wheel and the exact hue are chosen per cover by
+        // pickAccentHue() below, and the 120° is measured in OKLAB hue
+        // (the space the cancellation actually happens in), not HSL:
+        // verification caught HSL-±120° spanning ~107°-149° OKLab
+        // depending on the base — a green base at HSL 152° landed at
+        // 149.3° OKLab and measured 14-15 hard-seam pixels, the same
+        // failure class, so the offset is pinned at 120° OKLab for every
+        // base instead. The sign matters because the swept arc between
+        // base and accent becomes visible intermediate color on screen,
+        // so the side whose arc stays clear of the muddy-warm pocket wins
+        // (rendered proof: red base, green side = accent wearing a wide
+        // baby-poop-mustard halo; same base, blue-violet side = melting
+        // through clean magenta — same geometry, night and day).
+        // The true-B&W branch above deliberately KEEPS its 200°/20°
+        // complementary pair: with two equal-weight colors at 3 blobs each,
+        // hard-ish seams read as the intended "two bodies dueling," and
+        // there is no isolated low-weight disc to feather — the failure
+        // mode is specific to a minority accent, not to opposition itself.
+        //
+        // Saturation history, for the record: 0.85 -> 0.55 ("neon slap"),
+        // then 0.55 -> 0.40 (2026-07-30, Orleans' "Dance with Me" pooling
+        // report, whose real structural cause — equal blob shares for a
+        // minority accent — was since fixed by buildWeights/
+        // allocateBlobCounts). 0.40 stands: the Fast Car rig confirmed
+        // saturation was never the isolation lever, and at a feathering
+        // offset 0.40 reads as a soft wash, which is the accent's whole job.
+        const ACCENT_SAT = 0.40;
+        const accentLight = Math.min(0.75, Math.max(0.25, avgLuma));
+        // no real candidates survived at all — rare, arbitrary last resort
+        // (the old code anchored this case at hue 320; same color, as hex,
+        // since pickAccentHue derives both HSL and OKLab hue from a hex)
+        const baseHex = colors.length ? colors[0] : hslToHex(320, 0.55, 0.45);
+        const accentHue = pickAccentHue(baseHex, ACCENT_SAT, accentLight);
+        const accent = hslToHex(accentHue, ACCENT_SAT, accentLight);
         // Accent placed at index 2, not appended at the end — LiveScreen's
         // client-side picker (pickGradientColors) only ever looks at indices
         // 0-2 (top 2, plus a 3rd from index 2 specifically when the top 2
@@ -787,17 +830,27 @@ export function relativeSaturation(chroma, lightness) {
   return Math.min(1, chroma / denom);
 }
 
+// The warm-valence hue band from uglyWeight's three-ramp model, factored
+// out (2026-07-30) so pickAccentHue below can integrate the SAME "where
+// does muddiness live on the wheel" band over a swept hue arc — one
+// definition, shared, so accent placement and mud detection can never
+// drift apart (same discipline as uglyPenalty/deuglify sharing
+// uglyWeight). Full weight 28°-88°, ramping in over 16°-28° and out over
+// 88°-102° — calibration notes in the uglyWeight comment below.
+export function warmPocketHueWeight(hue) {
+  const HUE_IN_LO = 16, HUE_IN_HI = 28, HUE_OUT_LO = 88, HUE_OUT_HI = 102;
+  if (hue < HUE_IN_HI) return smoothstep(HUE_IN_LO, HUE_IN_HI, hue);
+  if (hue > HUE_OUT_LO) return 1 - smoothstep(HUE_OUT_LO, HUE_OUT_HI, hue);
+  return 1;
+}
+
 // 0 (clean) to 1 (dead centre of the muddy-warm pocket). Factored out of
 // uglyPenalty (2026-07-29) so the score discount and deuglify's recolor
 // below share one definition of "in the pocket" and can never disagree.
 // Generalized 2026-07-30 from the original 40-100° absolute-chroma box to
 // the three-ramp model documented above.
 export function uglyWeight(hue, chroma, lightness) {
-  const HUE_IN_LO = 16, HUE_IN_HI = 28, HUE_OUT_LO = 88, HUE_OUT_HI = 102;
-  let hueWeight;
-  if (hue < HUE_IN_HI) hueWeight = smoothstep(HUE_IN_LO, HUE_IN_HI, hue);
-  else if (hue > HUE_OUT_LO) hueWeight = 1 - smoothstep(HUE_OUT_LO, HUE_OUT_HI, hue);
-  else hueWeight = 1;
+  const hueWeight = warmPocketHueWeight(hue);
   if (hueWeight <= 0) return 0;
 
   const REL_SAT_LO = 0.42, REL_SAT_HI = 0.55;
@@ -819,6 +872,103 @@ export function uglyWeight(hue, chroma, lightness) {
 function uglyPenalty(hue, chroma, lightness) {
   const weight = uglyWeight(hue, chroma, lightness);
   return 1 - weight * 0.65; // weight 1 → 0.35 (full discount), weight 0 → 1 (none)
+}
+
+// OKLab hue (degrees, 0-360) of a hex color — standard Björn Ottosson
+// sRGB→OKLab, reduced to just the hue angle. Duplicated from
+// AlbumGradientMesh.jsx's rgbToOklab rather than shared, same as every
+// other copy in this repo (the mesh, LiveScreen's ΔE picker, the sim
+// rigs) — api/ is serverless and this file's rule is no cross-layer
+// refactors without a bug to justify them. Needed by pickAccentHue below
+// because the mesh's cancellation problem lives in OKLab's a/b plane, so
+// only OKLab hue distance predicts it — HSL hue distance does not (the
+// 2026-07-30 verification sweep measured HSL-±120° spanning anywhere from
+// ~107° to ~149° in OKLab depending on the base hue).
+export function hexToOklabHueDeg(hex) {
+  const lin = v => { v = parseInt(v, 16) / 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  const r = lin(hex.slice(1, 3)), g = lin(hex.slice(3, 5)), b = lin(hex.slice(5, 7));
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  const a = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s;
+  const bb = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s;
+  return (Math.atan2(bb, a) * 180 / Math.PI + 360) % 360;
+}
+
+// Places the single-real-hue branch's synthetic accent: 120° from the
+// base — measured in OKLAB hue, not HSL hue — and this function picks the
+// SIGN. Why 120° at all (not the original 180° complementary) is
+// documented at the call site above: the mesh's per-pixel blend derives
+// hue from the a/b vector SUM, which cancels toward zero near opposition,
+// so the hue SNAPS instead of sweeping and the accent pools as an
+// isolated hard-edged disc (the Fast Car bug); ~120° is the largest
+// separation the blend renders as a continuous feathered gradient
+// (simulate-accent-blob.mjs: 0 hard-seam pixels vs 14-24 at 180°).
+//
+// Why the offset is applied in OKLab: the cancellation is a geometric
+// fact about the a/b plane, so the safety margin is an OKLab hue
+// distance. HSL-hue ±120° only lands near OKLab 120° for some bases —
+// the verification sweep caught HSL-±120° on a green base (HSL 152°)
+// mapping to 149.3° OKLab, back in cancellation territory. The metric
+// that separates "bug" from "renderer baseline" here is seam
+// PERSISTENCE, not any single frame: two differently-colored blob
+// centers crossing always spikes a transient seam (the ACCEPTED-good
+// references measure far worse single frames — the true-B&W duel pair
+// and the fixed Rocketship palette both show seam pixels in 61/61
+// sampled frames over 30s, worst 80/65 px — and the 24px screen blur is
+// what absorbs those on screen), but a near-cancellation pair wears its
+// seam as a STANDING ring around the accent: the HSL-±120° green case
+// measured seams in 48 of 61 frames — the exact persistence signature
+// of the original 180° Fast Car bug (also 48/61) — vs 17/61
+// (crossing-driven only) for the same base once the separation is
+// pinned at 120° OKLab, and 6/61 for Fast Car itself. The target OKLab
+// hue is inverted back to an HSL hue by scanning all 360 integer HSL
+// hues at the accent's own fixed saturation/lightness (the mapping is
+// monotonic; ~720 cheap conversions, once per cover, single-hue branch
+// only).
+//
+// The SIGN matters because the IDW blend actually DISPLAYS the
+// intermediate hues along the short arc between base and accent — that
+// arc becomes real on-screen color, so a side whose arc crosses the
+// muddy-warm pocket paints the mud as a halo around the accent. Rendered
+// proof in the rig: Fast Car's red base with the green-side accent wears
+// a wide mustard halo (3.1% of frame pixels in the pocket); the
+// blue-violet side melts through clean magenta (0.0%). Integrate
+// warmPocketHueWeight (the pocket's own hue band — shared definition,
+// see above) along each candidate's swept HSL arc at 1° steps and take
+// the cleaner side. Ties — both arcs fully clean, which happens for cool
+// bases whose OPPOSITE wedge is where the pocket lives — prefer the +
+// side: a warm pink/red accent against a cool base. A side effect worth
+// noting: an arc that ENDS deep in the pocket necessarily swept into it
+// (big penalty), so the chosen accent itself always lands clear of the
+// pocket — verified across all 360 integer base hues in
+// verify_accent_tmp.mjs (max warmPocketHueWeight of the chosen accent: 0).
+export function pickAccentHue(baseHex, accentSat, accentLight) {
+  const baseHslHue = hexToHue(baseHex);
+  const baseOkHue = hexToOklabHueDeg(baseHex);
+  // Invert "OKLab hue = target" to the HSL hue whose rendered accent (at
+  // the accent's own sat/lightness) lands closest to it.
+  const candidateFor = (sign) => {
+    const target = ((baseOkHue + sign * 120) % 360 + 360) % 360;
+    let bestH = 0, bestD = Infinity;
+    for (let h = 0; h < 360; h++) {
+      const d = hueDelta(hexToOklabHueDeg(hslToHex(h, accentSat, accentLight)), target);
+      if (d < bestD) { bestD = d; bestH = h; }
+    }
+    return bestH;
+  };
+  const arcPenalty = (accentHslHue) => {
+    let delta = ((accentHslHue - baseHslHue) % 360 + 360) % 360;
+    if (delta > 180) delta -= 360; // signed short arc, matches the on-screen sweep
+    const steps = Math.max(1, Math.round(Math.abs(delta)));
+    let sum = 0;
+    for (let k = 1; k <= steps; k++) {
+      sum += warmPocketHueWeight(((baseHslHue + delta * (k / steps)) % 360 + 360) % 360);
+    }
+    return sum;
+  };
+  const plusH = candidateFor(1), minusH = candidateFor(-1);
+  return arcPenalty(plusH) <= arcPenalty(minusH) ? plusH : minusH;
 }
 
 // Recolors a candidate deep in the muddy-warm pocket instead of just

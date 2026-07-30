@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { populationFactor, buildWeights, relativeSaturation, uglyWeight, deuglify, mergeHueSiblings } from '../../api/palette.js'
+import { populationFactor, buildWeights, relativeSaturation, uglyWeight, deuglify, mergeHueSiblings, warmPocketHueWeight, hexToOklabHueDeg, pickAccentHue } from '../../api/palette.js'
 
 // hue / chroma / lightness triplets for real live-library colors, computed
 // exactly the way api/palette.js's own hexToHue/hexToChroma/hexToLightness
@@ -149,6 +149,115 @@ describe('mergeHueSiblings (2026-07-30, the Rocketship hard-bisection fix)', () 
     expect(mergeHueSiblings(['#123456'], byHex, 25)).toEqual(['#123456'])
   })
 })
+
+// Real live-library colors for the pickAccentHue tests. FASTCAR_RED is the
+// production /api/palette colors[0] for Black Pumas' "Fast Car"
+// (["#d72a1b","#397f85"], weights [0.85,0.15], fetched live 2026-07-30 —
+// the isolated-teal-disc bug report). JUNE_TAN is Black Match's "June"
+// (the real single-hue muted tan that motivated deriving the accent from
+// the cover's own hue in the first place). ROCKETSHIP_BLUE is Llunr's
+// "Rocketship" dominant blue, standing in for a cool base. The 0.40/0.3725
+// sat/lightness are what the single-hue branch actually feeds
+// pickAccentHue for the Fast Car cover (ACCENT_SAT and the avgLuma clamp,
+// measured in simulate-accent-blob.mjs).
+const FASTCAR_RED     = '#d72a1b' // HSL hue 4.79, OKLab hue 29.88
+const FASTCAR_TEAL    = '#397f85' // the OLD 180-degree accent this fix replaces
+const JUNE_TAN        = '#a57d61' // OKLab hue 56.22
+const ROCKETSHIP_BLUE = '#1169b6' // OKLab hue 251.34
+const GREEN_STRESS    = '#2eb877' // HSL 152 — the base where HSL-±120 hit 149.3° OKLab
+const ACCENT_SAT = 0.40, ACCENT_L = 0.3725
+
+describe('warmPocketHueWeight (the pocket hue band, shared with uglyWeight)', () => {
+  it('matches the uglyWeight band: full weight 28-88, zero outside 16/102', () => {
+    expect(warmPocketHueWeight(10)).toBe(0)
+    expect(warmPocketHueWeight(58)).toBe(1)   // pocket centre
+    expect(warmPocketHueWeight(110)).toBe(0)
+    expect(warmPocketHueWeight(200)).toBe(0)  // cool hues never in the pocket
+  })
+  it('ramps smoothly across the edges instead of snapping', () => {
+    const onRamp = warmPocketHueWeight(22) // midway up the 16-28 in-ramp
+    expect(onRamp).toBeGreaterThan(0)
+    expect(onRamp).toBeLessThan(1)
+  })
+  it('agrees with uglyWeight on the original offender (regression: the factor-out changed nothing)', () => {
+    // MOWGLIS_OLIVE sits at hue 73.58, deep inside the band — uglyWeight
+    // full-catches it (tested above), so the band must report 1 here.
+    expect(warmPocketHueWeight(MOWGLIS_OLIVE.h)).toBe(1)
+  })
+})
+
+describe('hexToOklabHueDeg', () => {
+  it('reproduces the OKLab hues measured in the Fast Car rig (simulate-accent-blob.mjs)', () => {
+    expect(hexToOklabHueDeg(FASTCAR_RED)).toBeCloseTo(29.9, 1)
+    expect(hexToOklabHueDeg(FASTCAR_TEAL)).toBeCloseTo(202.9, 1)
+  })
+})
+
+describe('pickAccentHue (2026-07-30, the Fast Car isolated-accent-disc fix)', () => {
+  it('sends Fast Car\'s red to the blue-violet side, not the mustard-halo green side', () => {
+    // 227 is the HSL hue whose sat-0.40 accent (#394985) sits 120° from
+    // the red in OKLab — verified in verify_accent_tmp.mjs to render with
+    // ZERO hard-seam pixels and 0.0% muddy-pocket pixels at t=0/3/6,
+    // vs the old 180° teal's 14-24 seam px and 1.2-2.6% mud. The rejected
+    // +120 green side renders soft too but wears a 3.1% mustard halo.
+    const h = pickAccentHue(FASTCAR_RED, ACCENT_SAT, ACCENT_L)
+    expect(h).toBe(227)
+    expect(h).toBeGreaterThan(200) // blue-violet band, robust to retuning
+    expect(h).toBeLessThan(280)
+  })
+  it('pins the separation at ~120° in OKLab hue, not HSL hue', () => {
+    for (const base of [FASTCAR_RED, JUNE_TAN, ROCKETSHIP_BLUE, GREEN_STRESS]) {
+      const accHslHue = pickAccentHue(base, ACCENT_SAT, ACCENT_L)
+      // Rebuild the accent hex the branch will emit (same math as
+      // api/palette.js's hslToHex at ACCENT_SAT/ACCENT_L) and measure.
+      const accHex = hslToHexLocal(accHslHue, ACCENT_SAT, ACCENT_L)
+      const d0 = Math.abs(hexToOklabHueDeg(base) - hexToOklabHueDeg(accHex)) % 360
+      const sep = d0 > 180 ? 360 - d0 : d0
+      // ±3° covers the 1°-integer-HSL scan quantization.
+      expect(sep).toBeGreaterThan(117)
+      expect(sep).toBeLessThan(123)
+    }
+  })
+  it('never lands the accent inside the muddy-warm pocket, for any base hue', () => {
+    // An arc that ENDS deep in the pocket necessarily swept into it, so
+    // the cleaner-arc rule keeps the accent itself clean — full-360 sweep
+    // in verify_accent_tmp.mjs measured max pocket weight exactly 0;
+    // sample every 10° here to keep the suite fast.
+    for (let h = 0; h < 360; h += 10) {
+      const base = hslToHexLocal(h, 0.60, 0.45)
+      expect(warmPocketHueWeight(pickAccentHue(base, ACCENT_SAT, ACCENT_L))).toBe(0)
+    }
+  })
+  it('gives a cool base a warm accent on the clean-tie side (Rocketship blue -> pink/red)', () => {
+    // Both 120° arcs from a deep blue avoid the pocket entirely (the
+    // pocket sits in the wedge OPPOSITE the base) — the tie prefers the
+    // + side, a warm accent against a cool base.
+    const h = pickAccentHue(ROCKETSHIP_BLUE, ACCENT_SAT, ACCENT_L)
+    expect(h).toBe(350)
+    expect(warmPocketHueWeight(h)).toBe(0)
+  })
+  it('handles the single-real-muted-tan cover that motivated hue-derived accents (June)', () => {
+    const h = pickAccentHue(JUNE_TAN, ACCENT_SAT, ACCENT_L)
+    expect(h).toBe(260) // violet — clean side; the other side sweeps the whole pocket
+  })
+})
+
+// Local copy of api/palette.js's private hslToHex, only to rebuild the
+// accent hex the branch emits so the OKLab-separation test can measure it.
+function hslToHexLocal(h, s, l) {
+  const c = (1 - Math.abs(2 * l - 1)) * s
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
+  const m = l - c / 2
+  let r, g, b
+  if (h < 60)       [r, g, b] = [c, x, 0]
+  else if (h < 120)  [r, g, b] = [x, c, 0]
+  else if (h < 180)  [r, g, b] = [0, c, x]
+  else if (h < 240)  [r, g, b] = [0, x, c]
+  else if (h < 300)  [r, g, b] = [x, 0, c]
+  else               [r, g, b] = [c, 0, x]
+  const toHex = v => Math.min(255, Math.max(0, Math.round(v * 255))).toString(16).padStart(2, '0')
+  return '#' + toHex(r + m) + toHex(g + m) + toHex(b + m)
+}
 
 describe('deuglify (recolor, never drop)', () => {
   it('rotates a muddy brown to terracotta (hue 18) and lifts its relative saturation', () => {
