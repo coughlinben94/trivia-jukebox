@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { searchTracks, logout } from '../lib/spotify'
 import { supabase } from '../lib/supabase'
-import { slimTrack, songNeedsSlim } from '../lib/track'
+import { slimTrack, songNeedsSlim, hasTrim } from '../lib/track'
 import { shuffleArray, resolveNext, resolveUpcoming, buildSessionOrder } from '../lib/shuffle'
 import { loadPlayed, savePlayed } from '../lib/playedStore'
 import { useSpotifyPlayer } from '../hooks/useSpotifyPlayer'
@@ -481,10 +481,20 @@ const [newSetName, setNewSetName] = useState('')
       return
     }
 
-    const targetSongs = setsRef.current.items[lib].songs
-    if (!targetSongs.length) {
+    const allTargetSongs = setsRef.current.items[lib].songs
+    if (!allTargetSongs.length) {
       const setName = setsRef.current.items[lib].name ?? lib
       addToast(`“${setName}” has no songs — pick another theme`)
+      strip()
+      return
+    }
+    // Shuffle only ever plays songs someone's actually trimmed (see
+    // startShuffle's comment for why) — untrimmed songs stay in the library
+    // and visible in the grid, they just never come up in shuffle/skip.
+    const targetSongs = allTargetSongs.filter(hasTrim)
+    if (!targetSongs.length) {
+      const setName = setsRef.current.items[lib].name ?? lib
+      addToast(`“${setName}” has no trimmed songs — scrub a few songs first`)
       strip()
       return
     }
@@ -533,7 +543,13 @@ const [newSetName, setNewSetName] = useState('')
     // argument-free since it's also wired directly to the skip button's
     // onClick, which would otherwise pass the click event as an arg.
     const tryPlay = (isRetry) => {
-      const lib = libraryRef.current
+      // Trimmed-only, same as startShuffle/the ?lib= handoff — a song
+      // without a trim shouldn't come up on auto-advance or skip either.
+      // shuffle.js's resolveNext already treats any id missing from `lib` as
+      // "removed since the order was built" and skips it, so handing it the
+      // trimmed subset here (instead of the full library) gets untrimmed
+      // songs skipped for free, no change needed in shuffle.js itself.
+      const lib = libraryRef.current.filter(hasTrim)
       const activeId = setsRef.current.activeId
       const playedIds = getPlayedSet(activeId)
       const { order, idx, song } = resolveNext(shuffleOrderRef.current, shuffleIdxRef.current, lib, playedIds)
@@ -577,7 +593,10 @@ const [newSetName, setNewSetName] = useState('')
   }, [addToast])
 
   const onFadeStart = useCallback(() => {
-    const lib = libraryRef.current
+    // Trimmed-only, matching tryPlay above — the upcoming-track preview
+    // should never name a song that skip/auto-advance would then refuse to
+    // actually play.
+    const lib = libraryRef.current.filter(hasTrim)
     const upcoming = resolveUpcoming(shuffleOrderRef.current, shuffleIdxRef.current, lib)
     onUpcomingTrackRef.current?.(upcoming)
   }, [])
@@ -611,7 +630,8 @@ const [newSetName, setNewSetName] = useState('')
       // Warm the upcoming song's palette now, not at fade start — a cold
       // /api/palette fetch (0.5-1.5s) otherwise eats most of the 2.5s
       // encroachment window the gradient gets before the song switches.
-      const upcoming = resolveUpcoming(shuffleOrderRef.current, shuffleIdxRef.current, libraryRef.current)
+      // Trimmed-only, same reasoning as onFadeStart above.
+      const upcoming = resolveUpcoming(shuffleOrderRef.current, shuffleIdxRef.current, libraryRef.current.filter(hasTrim))
       prefetchPalette(upcoming?.album?.images?.[0]?.url)
     }
   }, [player.currentTrack?.uri])
@@ -681,14 +701,25 @@ const [newSetName, setNewSetName] = useState('')
   const startShuffle = useCallback(() => {
     clearTimeout(shuffleDebounceRef.current)
     shuffleDebounceRef.current = setTimeout(async () => {
-      if (library.length === 0) return
+      // Shuffle/skip only ever play songs someone's actually trimmed in
+      // SongDetailModal — an untrimmed song plays its full raw length with
+      // no fade-out/auto-advance trigger (stopMs defaults to duration_ms,
+      // see playTrackFn below), which doesn't fit a timed grading-break
+      // rotation the way a deliberately-trimmed clip does. Untrimmed songs
+      // stay in the library and visible in the grid, they just don't come
+      // up in shuffle until someone sets trim points for them.
+      const scrubbed = library.filter(hasTrim)
+      if (scrubbed.length === 0) {
+        addToast('No trimmed songs in this set — scrub a few songs first')
+        return
+      }
       setShuffleKey(k => k + 1)
       const activeId = setsRef.current.activeId
       const playedIds = getPlayedSet(activeId)
-      const order = buildSessionOrder(library, playedIds)
+      const order = buildSessionOrder(scrubbed, playedIds)
       shuffleOrderRef.current = order
       shuffleIdxRef.current = 0
-      const song = library.find(t => t.id === order[0])
+      const song = scrubbed.find(t => t.id === order[0])
       playedIds.add(song.id)
       persistPlayed(activeId)
       // Warm the first song's palette during play startup so LiveScreen's
@@ -1341,7 +1372,7 @@ function TrackRow({ track, index, inLibrary, onAdd }) {
 function LibraryCard({ track, isPlaying, isPaused, onRemove, onClick, onDragStart, onDragOver, onDragEnd }) {
   const img = track.album?.images?.[0]
   const artists = track.artists?.map(a => a.name).join(', ')
-  const hasTrim = track.startMs > 0 || (track.stopMs && track.stopMs < track.duration_ms - 1000)
+  const trimmed = hasTrim(track)
   return (
     <div
       className={`relative group rounded-xl overflow-hidden cursor-pointer select-none transition-[transform,box-shadow] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:scale-[1.02] hover:shadow-xl ${
@@ -1373,7 +1404,7 @@ function LibraryCard({ track, isPlaying, isPaused, onRemove, onClick, onDragStar
             <span className="text-white text-sm">⏸</span>
           </div>
         )}
-        {hasTrim && !isPlaying && !isPaused && (
+        {trimmed && !isPlaying && !isPaused && (
           <div className="absolute bottom-1.5 left-1.5 w-1.5 h-1.5 rounded-full bg-accent/60" />
         )}
         <button

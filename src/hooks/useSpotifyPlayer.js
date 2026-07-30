@@ -25,6 +25,25 @@ const fetchWithTimeout = (url, options, timeoutMs = NETWORK_TIMEOUT_MS) => {
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer))
 }
+
+// Same gap, different shape (2026-07-30): the Spotify SDK's own
+// player.pause() returns a Promise we don't control the way a fetch's
+// AbortController does — there's no signal to pass it, it just resolves
+// when Spotify acknowledges the pause. If that ack never comes, `await
+// player.pause()` blocks forever with no error, same as the unguarded
+// fetches above. Reproduced live: start a shuffle session, open a
+// DIFFERENT song's preview in SongDetailModal, hit its play button —
+// handlePlay's `await onStopLiveShuffle()` (which bottoms out in
+// fadeAndPause's `await playerRef.current?.pause()` below) never resolved,
+// so the preview's own playTrack call was never even reached. Races the
+// pause call against a timeout instead of awaiting it bare — proceeding
+// after the timeout (rather than throwing) is deliberate: the caller's
+// next step is always to force local volume/state anyway, so a slow-to-ack
+// pause shouldn't block that.
+const withTimeout = (promise, ms) => Promise.race([
+  promise,
+  new Promise(resolve => setTimeout(resolve, ms)),
+])
 // Manual stop (spacebar/iPad) needs to actually go quiet fast — the host hits
 // it because they're about to talk (read a question, make an announcement),
 // not because a song is musically ending. The full FADE_MS=2500 fade was
@@ -388,7 +407,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     const maxVol = maxVolumeRef.current
     await fadeVolume(maxVol, 0, gen, STOP_FADE_MS)
     if (genRef.current !== gen) return
-    await playerRef.current?.pause()
+    await withTimeout(playerRef.current?.pause(), 2000)
     // A newer call (e.g. playTrack) may have started while we awaited the
     // pause — don't zero the volume out from under it.
     if (genRef.current !== gen) return
@@ -400,7 +419,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     genRef.current += 1
     transitioningRef.current = false
     clearInterval(monitorRef.current)
-    await playerRef.current?.pause()
+    await withTimeout(playerRef.current?.pause(), 2000)
   }, [])
 
   // ─── Manual scrub ────────────────────────────────────────────────

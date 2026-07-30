@@ -245,7 +245,20 @@ export default async function handler(req, res) {
     const hueSpread = paletteHues.length > 1
       ? Math.max(...paletteHues.flatMap((h, i) => paletteHues.slice(i + 1).map(h2 => hueDelta(h, h2))))
       : 0;
-    const MONOCHROME_HUE_SPREAD_DEG = 40;
+    // Was a hardcoded 40deg, independent of HUE_GAP_DEG (the vivid-pick
+    // loop's own diversity bar, default 25deg) — contradicted it. Verified
+    // live 2026-07-30 on "Check Yes, Juliet" (We The Kings): a rust-red base
+    // + gold filigree, 29deg apart, cleared the vivid pick's 25deg gap as
+    // two genuinely distinct colors, then got told by THIS check "not
+    // diverse enough" and had one swapped for a neon pink accent instead —
+    // that accent blending with the red is what read as purple on screen.
+    // If the picker already accepted two colors as different at
+    // HUE_GAP_DEG apart, this check demanding MORE separation than that to
+    // believe the palette is genuinely multi-hue was never coherent — tying
+    // it to the same constant means "we couldn't even find two colors as
+    // far apart as our own diversity bar requires" is the only way to
+    // trigger this fallback now, not an independent, stricter bar.
+    const MONOCHROME_HUE_SPREAD_DEG = HUE_GAP_DEG;
 
     if (mostVivid < 0.15 || hueSpread < MONOCHROME_HUE_SPREAD_DEG) {
       const avgLuma = source.reduce((sum, p) => sum + luma(p), 0) / source.length / 255;

@@ -48,6 +48,15 @@ function stripTrailingDashTag(name) {
   return lastIndex === -1 ? name : name.slice(0, lastIndex)
 }
 
+// A song someone has actually opened in the trim editor and set custom
+// in/out points for, as opposed to one sitting at its default full-length
+// range (startMs 0, stopMs duration_ms). Single source of truth for both
+// the library grid's trim-indicator dot and shuffle's scrubbed-only filter
+// (see Jukebox.jsx) — previously duplicated inline in LibraryCard alone.
+export function hasTrim(track) {
+  return track.startMs > 0 || (track.stopMs != null && track.stopMs < track.duration_ms - 1000)
+}
+
 export function displayName(name) {
   if (!name) return name
   return stripTrailingDashTag(name.replace(PAREN_RE, '')).trim()
