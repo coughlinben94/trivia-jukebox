@@ -169,8 +169,19 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
     return () => { cancelled = true }
   }, [shown?.name])
 
-  const paletteColors          = usePalette(artUrl)
-  const upcomingPaletteColors  = usePalette(upcomingArtUrl)
+  const paletteColorsFull      = usePalette(artUrl)
+  const upcomingPaletteColorsFull = usePalette(upcomingArtUrl)
+  // Cap what the gradient actually draws from to 2 colors (2026-07-30) — the
+  // mesh renders 6 blobs, one palette hue per blob (see AlbumGradientMesh's
+  // parseColors), so handing it 5-8 distinct hues gives 6 blobs that many
+  // ways to disagree, reading as scattered pooled bodies ("lava lamp") no
+  // matter how the blend math is tuned. Feeding it only the top 2 means
+  // every blob is one of just two hues, so blobs of the same color overlap
+  // and reinforce each other into a wash instead of six separate patches.
+  // palette.js already ranks colors[] most-interesting-first, so slicing to
+  // 2 keeps the strongest pick plus its next-best, not an arbitrary pair.
+  const paletteColors          = paletteColorsFull.slice(0, 2)
+  const upcomingPaletteColors  = upcomingPaletteColorsFull.slice(0, 2)
 
   const tonearmCtrl = useAnimation()
   const flyCtrl     = useAnimation()
@@ -223,7 +234,13 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
 
         flyCtrl.start({
           y: 0, opacity: 1, scale: 1,
-          transition: { type: 'spring', stiffness: 120, damping: 28 },
+          // damping 22, not 28 (2026-07-30) — 28 was meaningfully overdamped
+          // for stiffness 120 (critical damping here is 2*sqrt(120)≈21.9),
+          // meaning the record's own landing spring floated down slowly with
+          // no bounce; 22 sits right at critical, so it lands just as
+          // cleanly but noticeably faster. Same value used in runTransition's
+          // fly-down below — keep them matched, it's the same motion.
+          transition: { type: 'spring', stiffness: 120, damping: 22 },
         })
 
         await sleep(1200)
@@ -445,18 +462,17 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         setArtOpacity(1)
         // Await the fly-down spring's OWN completion (controls.start()'s
         // promise resolves when the animation actually finishes) instead of
-        // a guessed sleep(500) — this spring's damping ratio (28 vs a
-        // critically-damped ~2*sqrt(120)≈21.9) is overdamped, so its real
-        // settle time isn't a fixed number and can run past 500ms on a
-        // loaded frame. The old fixed-sleep version fired ARM_ON on a timer
-        // that assumed the record had landed by then; when it hadn't, the
-        // arm visibly dropped to engaged while the record was still
-        // descending (live-observed 2026-07-30). Tying the arm cue to the
-        // record's actual landing removes that whole class of race — it
-        // can't drop early relative to a record that isn't there yet, or
-        // relative to one still mid-flight, because it now waits on the
-        // same promise that resolves when the flight is over.
-        await flyCtrl.start({ y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 28 } })
+        // a guessed sleep(500) — ties the arm cue to the record's actual
+        // landing so it can't drop early over an empty or still-descending
+        // turntable (live-observed 2026-07-30). This was ORIGINALLY damping
+        // 28, meaningfully overdamped for stiffness 120 (critical damping
+        // here is 2*sqrt(120)≈21.9) — meaning the awaited promise itself
+        // took a while to resolve, and the arm swing read as sluggish even
+        // after trimming the grace period below (also 2026-07-30). Retuned
+        // to damping 22 (right at critical, same change as the entrance
+        // sequence's identical spring above) — lands just as cleanly, no
+        // bounce, but the await resolves noticeably faster.
+        await flyCtrl.start({ y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 22 } })
 
         // The 500ms grace here used to run concurrently with an un-awaited
         // fly-down (the actual landing happened somewhere during it, timing
