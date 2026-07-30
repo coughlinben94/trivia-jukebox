@@ -55,71 +55,43 @@ const FONT_BODY    = "'DM Sans', system-ui, sans-serif"
 // a background box, and hold up against any hue the gradient lands on.
 const TEXT_SCRIM = '0 0 4px rgba(0,0,0,0.55), 0 0 10px rgba(0,0,0,0.45), 0 0 20px rgba(0,0,0,0.35)'
 
-// OKLab ΔE — same conversion formulas as AlbumGradientMesh.jsx's rgbToOklab
-// (Björn Ottosson), duplicated here rather than shared across the
-// client/serverless boundary, since it's a few lines and this is the only
-// other client-side consumer.
-function hexToRgb(hex) {
-  return [
-    parseInt(hex.slice(1, 3), 16),
-    parseInt(hex.slice(3, 5), 16),
-    parseInt(hex.slice(5, 7), 16),
-  ]
-}
-function srgbToLinear(c) { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4) }
-function cbrt(x) { return Math.sign(x) * Math.pow(Math.abs(x), 1 / 3) }
-function hexToOklab(hex) {
-  const [r, g, b] = hexToRgb(hex).map(srgbToLinear)
-  const l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b
-  const m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b
-  const s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b
-  const l_ = cbrt(l), m_ = cbrt(m), s_ = cbrt(s)
-  return [
-    0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
-    1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
-    0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
-  ]
-}
-// Distance in OKLab's a/b plane only — hue + chroma, lightness dropped.
-// Full OKLab ΔE (L+a+b together) was tried first and immediately caught a
-// real live miss: Marshmello/Kane Brown "Miles On It" (sky-blue truck
-// photo with a rust-orange bed) extracts as
-// #00bbea/#002cb5/#a54c09/#00638d/#0a6bdc -- bright cyan, dark indigo,
-// rust, teal, blue. Top 2 are both blue, just far apart in LIGHTNESS
-// (bright cyan vs. dark indigo) -- full ΔE reads that lightness gap as
-// "distinct enough" (0.374, clears any reasonable bar) and never reaches
-// for the rust 3rd, so the whole gradient reads as blue-on-blue with no
-// hint of the cover's other color. a/b-only distance isn't fooled by
-// lightness: those same two blues measure 0.140 apart in the a/b plane
-// (same hue family, correctly "too close"), while rust measures 0.27-0.34
-// from either -- comfortably distinct -- so the picker reaches for it.
-// Sanity-checked against the pair that motivated the ORIGINAL hue-only
-// rule's replacement (yellow #fdd33a vs. red #ce3b23, "clearly two
-// colors"): a/b distance 0.179, still clears the same 0.15 bar. Same
-// threshold value carries over; only the metric changed.
-function abPlaneDist(hexA, hexB) {
-  const [, a1, b1] = hexToOklab(hexA)
-  const [, a2, b2] = hexToOklab(hexB)
-  return Math.sqrt((a1 - a2) ** 2 + (b1 - b2) ** 2)
-}
-
-// 2 colors, 3 max (2026-07-30, revised twice same day). First pass gated
-// the 3rd color on hue delta alone (<50° apart = "too close, add a 3rd") --
-// a live scan disproved that (see abPlaneDist above for the metric that
-// replaced it, and its own history for why raw hue delta wasn't enough
-// either). Threshold 0.15 separates every real top-2 pair scanned in the
-// library: muddy-together pairs measured up to 0.145, genuinely-distinct
-// pairs started at 0.179. Also require the 3rd color to clear the same bar
-// against BOTH top-2 colors -- a 3rd pick that's itself close to one of
-// them doesn't rescue anything, it's just a wasted blob.
-const CLOSE_DIST = 0.15
-function pickGradientColors(full) {
-  if (full.length <= 2) return full
-  const top2 = full.slice(0, 2)
-  if (abPlaneDist(top2[0], top2[1]) >= CLOSE_DIST) return top2
-  const third = full[2]
-  const thirdHelps = abPlaneDist(third, top2[0]) >= CLOSE_DIST && abPlaneDist(third, top2[1]) >= CLOSE_DIST
-  return thirdHelps ? [top2[0], top2[1], third] : top2
+// Weight-based selection (2026-07-30, replaces the OKLab-distance 2-colors-
+// 3-max cap from earlier the same day, which itself replaced a hue-delta-
+// only version). Per the deep-debug root-cause review: capping to 2-3
+// regardless of how many real distinct colors palette.js found was itself
+// the core bug on covers like Sub-Radio's "1990something" -- the server
+// correctly extracted 5 genuinely distinct hues (yellow/teal/coral/purple/
+// pink), and every version of this function so far threw 3 of them away,
+// because the old rule only ever reached past index 2 when the top 2 were
+// "too close." Busy, colorful covers -- the ones a cap like that should
+// matter LEAST for -- got hit every time; a live scan found every cover
+// with 3+ real color families got clipped to 2, while the "reach for a
+// 3rd" trigger only ever fired on covers that already had 2 or fewer.
+//
+// Now that api/palette.js returns a real `weights` array (population-
+// derived, see buildWeights() there), there's no need to guess how many
+// colors are "safe" to show — pass all of them through, sorted by weight
+// so the least-significant colors are what gets dropped if there are more
+// colors than the mesh has blobs to represent (NUM_BLOBS, 6 -- importing
+// the renderer's own constant here would create a circular import between
+// LiveScreen and AlbumGradientMesh, so it's duplicated as
+// MAX_GRADIENT_COLORS; keep both in sync if NUM_BLOBS ever changes).
+const MAX_GRADIENT_COLORS = 6
+export function pickGradientColors(colors, weights) {
+  if (!colors.length) return { colors, weights }
+  if (colors.length <= MAX_GRADIENT_COLORS) return { colors, weights }
+  const paired = colors.map((hex, i) => [hex, weights[i]]).sort((a, b) => b[1] - a[1])
+  const top = paired.slice(0, MAX_GRADIENT_COLORS)
+  const keptWeight = top.reduce((s, [, w]) => s + w, 0)
+  return {
+    colors: top.map(([hex]) => hex),
+    // Renormalize so the kept colors' weights still sum to 1 after dropping
+    // the tail -- otherwise a heavily-truncated palette (8 colors -> 6)
+    // would hand the renderer weights that only sum to ~0.9, silently
+    // shrinking every blob instead of the dropped colors' share going to
+    // the ones that survived.
+    weights: top.map(([, w]) => w / keptWeight),
+  }
 }
 
 function preloadImage(url) {
@@ -236,11 +208,12 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
     return () => { cancelled = true }
   }, [shown?.name])
 
-  const paletteColorsFull      = usePalette(artUrl)
-  const upcomingPaletteColorsFull = usePalette(upcomingArtUrl)
+  const { colors: paletteColorsFull, weights: paletteWeightsFull } = usePalette(artUrl)
+  const { colors: upcomingPaletteColorsFull, weights: upcomingPaletteWeightsFull } = usePalette(upcomingArtUrl)
   // Cap what the gradient actually draws from — see pickGradientColors above
-  // for the 2-normally/3-when-needed logic and the two live cases (Killers,
-  // All Time Low) that pinned down the threshold.
+  // for the weight-based selection logic (2026-07-30, replaced the old
+  // 2-normally/3-when-needed hue-distance cap once a root-cause review
+  // traced it as the actual bug on busy multi-hue covers).
   //
   // useMemo, not a plain .slice()/pick every render: AlbumGradientMesh's
   // blend-trigger effects key off [colors]/[nextColors] BY REFERENCE
@@ -256,8 +229,8 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // during the fade-out like the onFadeStart/onUpcomingTrack plumbing
   // already intends. useMemo restores the same stable-unless-really-changed
   // reference usePalette itself provides.
-  const paletteColors         = useMemo(() => pickGradientColors(paletteColorsFull), [paletteColorsFull])
-  const upcomingPaletteColors = useMemo(() => pickGradientColors(upcomingPaletteColorsFull), [upcomingPaletteColorsFull])
+  const palette         = useMemo(() => pickGradientColors(paletteColorsFull, paletteWeightsFull), [paletteColorsFull, paletteWeightsFull])
+  const upcomingPalette = useMemo(() => pickGradientColors(upcomingPaletteColorsFull, upcomingPaletteWeightsFull), [upcomingPaletteColorsFull, upcomingPaletteWeightsFull])
 
   const tonearmCtrl = useAnimation()
   const flyCtrl     = useAnimation()
@@ -639,7 +612,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           motion matters most. Previously active={!isPaused || transitioning}
           froze the canvas RAF loop on pause, so the one moment the room stares
           at this screen the longest showed a dead frame. */}
-      <GradientBg colors={paletteColors} nextColors={upcomingPaletteColors} active={true} shuffleKey={shuffleKey} entranceActive={entranceActive} />
+      <GradientBg colors={palette.colors} weights={palette.weights} nextColors={upcomingPalette.colors} nextWeights={upcomingPalette.weights} active={true} shuffleKey={shuffleKey} entranceActive={entranceActive} />
 
       {/* Light vignette — kept subtle on purpose. This screen's whole job is
           showing off the album-gradient colors, so this only pulls focus
