@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, memo } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, memo } from 'react'
 import { motion, useAnimation } from 'framer-motion'
 import AlbumGradient from './AlbumGradient'
 import AlbumGradientMesh from './AlbumGradientMesh'
@@ -180,8 +180,23 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // and reinforce each other into a wash instead of six separate patches.
   // palette.js already ranks colors[] most-interesting-first, so slicing to
   // 2 keeps the strongest pick plus its next-best, not an arbitrary pair.
-  const paletteColors          = paletteColorsFull.slice(0, 2)
-  const upcomingPaletteColors  = upcomingPaletteColorsFull.slice(0, 2)
+  //
+  // useMemo, not a plain .slice() every render: AlbumGradientMesh's
+  // blend-trigger effects key off [colors]/[nextColors] BY REFERENCE
+  // (usePalette's own return value is stable across re-renders unless a
+  // real fetch resolves, which is what those effects rely on to fire once
+  // per actual color change, not once per render). A bare .slice() here
+  // hands GradientBg a NEW array every single LiveScreen re-render — and
+  // LiveScreen re-renders often (position ticks, spin/pause state, etc.) —
+  // so the mesh's crossfade kept restarting from t=0 continuously and never
+  // actually progressed until the render churn settled down well after the
+  // real track change, reading as "new song's colors don't show up until
+  // it's already playing" (live-reported 2026-07-30) instead of blending in
+  // during the fade-out like the onFadeStart/onUpcomingTrack plumbing
+  // already intends. useMemo restores the same stable-unless-really-changed
+  // reference usePalette itself provides.
+  const paletteColors         = useMemo(() => paletteColorsFull.slice(0, 2), [paletteColorsFull])
+  const upcomingPaletteColors = useMemo(() => upcomingPaletteColorsFull.slice(0, 2), [upcomingPaletteColorsFull])
 
   const tonearmCtrl = useAnimation()
   const flyCtrl     = useAnimation()
