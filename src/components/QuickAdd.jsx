@@ -1,13 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { searchTracks } from '../lib/spotify'
 import { supabase } from '../lib/supabase'
-import { slimTrack } from '../lib/track'
-
-function uid() { return Math.random().toString(36).slice(2) }
-
-function totalSongs(sets) {
-  return Object.values(sets?.items ?? {}).reduce((n, s) => n + (s.songs?.length ?? 0), 0)
-}
+import { slimTrack, uid, totalSongs } from '../lib/track'
 
 export default function QuickAdd() {
   const sessionIdRef = useRef(uid())

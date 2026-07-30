@@ -191,7 +191,13 @@ export function chromaScale()      { return lerp(0.40, 1.00, T('BRIGHTNESS') / 1
 export function circleAlphaMuted() { return lerp(0.45, 0.79, T('BRIGHTNESS') / 100) }       // 50 → 0.62 (was 0.62, exact)
 export function circleAlphaSat()   { return lerp(0.21, 0.55, T('BRIGHTNESS') / 100) }       // 50 → 0.38 (was 0.38, exact)
 
-export function orbitSpeed()       { return lerp(0.3, 1.9, T('MOTION') / 100) }             // 50 → 1.1 (was 1.1, exact)
+// Whole curve scaled x1.15 (2026-07-30, live request: "movement overall
+// brought up 15%") -- both endpoints multiplied rather than just shifting
+// the T=50 default, so the dial's relative feel across its whole 0-100
+// range stays the same, just 15% faster throughout. Breaks this file's
+// usual "T=50 reproduces yesterday's exact behavior" promise for MOTION
+// specifically -- a deliberate, requested change, not a bug.
+export function orbitSpeed()       { return lerp(0.345, 2.185, T('MOTION') / 100) }         // 50 → 1.265 (was 1.1 -- +15%)
 
 export function blobRadius()       { return lerp(0.30, 0.70, T('SIZE') / 100) }             // 50 → 0.50 (was 0.50, exact)
 
@@ -225,7 +231,7 @@ export function exportSnippet() {
     lines.push('// AlbumGradient.jsx — inside buildBlobGradient, replace the peakAlpha lerp:', `const peakAlpha = lerp(${fmt(circleAlphaMuted())}, ${fmt(circleAlphaSat())}, chroma)`)
   }
   if (isOverridden('MOTION')) {
-    lines.push('', '// AlbumGradient.jsx makeCircleParams / AlbumGradientMesh.jsx makeBlobParams —', '// replace the "1.1 /" numerator in xFreq/yFreq:', `const ORBIT_SPEED = ${fmt(orbitSpeed())}`)
+    lines.push('', '// AlbumGradient.jsx makeCircleParams / AlbumGradientMesh.jsx makeBlobParams —', '// replace the ORBIT_SPEED numerator in xFreq/yFreq (speed / (10 + ...)):', `const ORBIT_SPEED = ${fmt(orbitSpeed())}`)
   }
   if (isOverridden('SIZE')) {
     lines.push('', '// Both makeCircleParams/makeBlobParams — replace "radius: 0.50 + rng(i, 6) * 0.13":', `radius: ${fmt(blobRadius())} + rng(i, 6) * 0.13`)

@@ -373,9 +373,30 @@ export default async function handler(req, res) {
         // shimmer rather than a static soft boundary, back off toward ~165°.
         // Saturation toned down from 0.85 to 0.55 so the accent reads as a
         // distinct second color, not a neon slap.
+        //
+        // Toned down again, 0.55 -> 0.40 (2026-07-30, live report: Orleans'
+        // "Dance with Me" -- a warm sepia band photo -- reading as "the
+        // exact lava lamp thing" on the antipodal-paired mesh). Root cause
+        // traced live: this cover's real picks (#c79136/#efc45f, both gold)
+        // sit only 0.021 apart in OKLab's a/b plane -- so close pickGradientColors
+        // correctly reaches for this accent as a 3rd color -- but once
+        // reached, AlbumGradientMesh hands each of the 3 colors an EQUAL
+        // 2-of-6 blob share (i % 3), and antipodal pairing (see this file's
+        // blob-pairing fix, same day) locks that share to a stable ~1/3 by
+        // construction. An accent meant to be "just ONE accent... not
+        // overpowering" was structurally guaranteed the same weight as each
+        // real color combined -- a fixed, saturated, complementary-hue blob
+        // pair reads as a genuinely separate pooling color, not a contrast
+        // note. Lowering saturation is a source-side mitigation (softens
+        // the accent toward the blur-friendly neutral middle rather than a
+        // fully competing hue) -- it does NOT fix the underlying equal-
+        // blob-weight structure, which a second-opinion review flagged the
+        // same day as an open design question across every synthetic-accent
+        // cover, not just this one. If 0.40 still pools visibly, the real
+        // fix is giving the accent fewer/smaller blobs, not less saturation.
         const realHue = colors.length ? hexToHue(colors[0]) : 320; // no real candidates survived at all — rare, arbitrary last resort
         const accentHue = (realHue + 180) % 360;
-        const accent = hslToHex(accentHue, 0.55, Math.min(0.75, Math.max(0.25, avgLuma)));
+        const accent = hslToHex(accentHue, 0.40, Math.min(0.75, Math.max(0.25, avgLuma)));
         // Accent placed at index 2, not appended at the end — LiveScreen's
         // client-side picker (pickGradientColors) only ever looks at indices
         // 0-2 (top 2, plus a 3rd from index 2 specifically when the top 2

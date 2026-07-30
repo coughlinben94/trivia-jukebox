@@ -61,3 +61,9 @@ export function displayName(name) {
   if (!name) return name
   return stripTrailingDashTag(name.replace(PAREN_RE, '')).trim()
 }
+
+export function uid() { return Math.random().toString(36).slice(2) }
+
+export function totalSongs(sets) {
+  return Object.values(sets?.items ?? {}).reduce((n, s) => n + (s.songs?.length ?? 0), 0)
+}

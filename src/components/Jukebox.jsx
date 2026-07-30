@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { searchTracks, logout } from '../lib/spotify'
 import { supabase } from '../lib/supabase'
-import { slimTrack, songNeedsSlim, hasTrim } from '../lib/track'
+import { slimTrack, songNeedsSlim, hasTrim, uid, totalSongs } from '../lib/track'
 import { shuffleArray, resolveNext, resolveUpcoming, buildSessionOrder } from '../lib/shuffle'
 import { loadPlayed, savePlayed } from '../lib/playedStore'
 import { useSpotifyPlayer } from '../hooks/useSpotifyPlayer'
@@ -12,7 +12,6 @@ import LiveScreen from './LiveScreen'
 import TestScreen from './TestScreen'
 import SongDetailModal from './SongDetailModal'
 
-function uid() { return Math.random().toString(36).slice(2) }
 
 function calcRuntime(songs) {
   let ms = 0
@@ -39,10 +38,6 @@ function loadSets() {
   } catch {
     return { activeId: 'main', items: { main: { name: 'Main Library', songs: [] } } }
   }
-}
-
-function totalSongs(sets) {
-  return Object.values(sets?.items ?? {}).reduce((n, s) => n + (s.songs?.length ?? 0), 0)
 }
 
 // Guard 3 catch-up: `remote` has moved on past `baseline` (the last sets we
@@ -953,10 +948,12 @@ const [newSetName, setNewSetName] = useState('')
     )
   }, [library, librarySearch])
 
-  const libraryGrid = useMemo(() => (
+  const libraryGrid = useMemo(() => {
+    const indexById = new Map(library.map((t, i) => [t.id, i]))
+    return (
     <div className="grid grid-cols-4 gap-2">
       {filteredLibrary.map((track) => {
-        const i = library.indexOf(track)
+        const i = indexById.get(track.id)
         return (
           <LibraryCard
             key={track.id}
@@ -972,8 +969,9 @@ const [newSetName, setNewSetName] = useState('')
         )
       })}
     </div>
+    )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [filteredLibrary, library, playingId, player.isPaused])
+  }, [filteredLibrary, library, playingId, player.isPaused])
 
   const resultsList = useMemo(() => (
     <div key={resultsKey}>

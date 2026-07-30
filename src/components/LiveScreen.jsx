@@ -80,34 +80,45 @@ function hexToOklab(hex) {
     0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
   ]
 }
-function oklabDeltaE(hexA, hexB) {
-  const [L1, a1, b1] = hexToOklab(hexA)
-  const [L2, a2, b2] = hexToOklab(hexB)
-  return Math.sqrt((L1 - L2) ** 2 + (a1 - a2) ** 2 + (b1 - b2) ** 2)
+// Distance in OKLab's a/b plane only — hue + chroma, lightness dropped.
+// Full OKLab ΔE (L+a+b together) was tried first and immediately caught a
+// real live miss: Marshmello/Kane Brown "Miles On It" (sky-blue truck
+// photo with a rust-orange bed) extracts as
+// #00bbea/#002cb5/#a54c09/#00638d/#0a6bdc -- bright cyan, dark indigo,
+// rust, teal, blue. Top 2 are both blue, just far apart in LIGHTNESS
+// (bright cyan vs. dark indigo) -- full ΔE reads that lightness gap as
+// "distinct enough" (0.374, clears any reasonable bar) and never reaches
+// for the rust 3rd, so the whole gradient reads as blue-on-blue with no
+// hint of the cover's other color. a/b-only distance isn't fooled by
+// lightness: those same two blues measure 0.140 apart in the a/b plane
+// (same hue family, correctly "too close"), while rust measures 0.27-0.34
+// from either -- comfortably distinct -- so the picker reaches for it.
+// Sanity-checked against the pair that motivated the ORIGINAL hue-only
+// rule's replacement (yellow #fdd33a vs. red #ce3b23, "clearly two
+// colors"): a/b distance 0.179, still clears the same 0.15 bar. Same
+// threshold value carries over; only the metric changed.
+function abPlaneDist(hexA, hexB) {
+  const [, a1, b1] = hexToOklab(hexA)
+  const [, a2, b2] = hexToOklab(hexB)
+  return Math.sqrt((a1 - a2) ** 2 + (b1 - b2) ** 2)
 }
 
-// 2 colors, 3 max (2026-07-30, revised same day after a second-opinion
-// review). First pass gated the 3rd color on hue delta alone (<50° apart =
-// "too close, add a 3rd"). A live scan of the real library disproved that:
-// hue ignores lightness/chroma, so it both fired on genuinely distinct
-// pairs that just happened to sit within 50° of hue (yellow #fdd33a vs.
-// red #ce3b23, 38.7° apart, OKLab ΔE 0.358 — clearly two colors, still got
-// a needless 3rd seam hue) and, separately, added a 3rd color in a dozen
-// cases where that 3rd was itself a near-duplicate of one of the top 2 —
-// dead weight, not a rescue. OKLab ΔE measures lightness, chroma, and hue
-// together, which is what "reads as one muddy color" actually depends on.
-// Threshold 0.15 separates every real top-2 pair scanned in the library:
-// muddy-together pairs measured up to ΔE 0.145, genuinely-distinct pairs
-// started at 0.358. Also require the 3rd color to clear the same bar
-// against BOTH top-2 colors — a 3rd pick that's itself close to one of
+// 2 colors, 3 max (2026-07-30, revised twice same day). First pass gated
+// the 3rd color on hue delta alone (<50° apart = "too close, add a 3rd") --
+// a live scan disproved that (see abPlaneDist above for the metric that
+// replaced it, and its own history for why raw hue delta wasn't enough
+// either). Threshold 0.15 separates every real top-2 pair scanned in the
+// library: muddy-together pairs measured up to 0.145, genuinely-distinct
+// pairs started at 0.179. Also require the 3rd color to clear the same bar
+// against BOTH top-2 colors -- a 3rd pick that's itself close to one of
 // them doesn't rescue anything, it's just a wasted blob.
-const CLOSE_DELTA_E = 0.15
+const CLOSE_DIST = 0.15
 function pickGradientColors(full) {
   if (full.length <= 2) return full
   const top2 = full.slice(0, 2)
-  if (oklabDeltaE(top2[0], top2[1]) >= CLOSE_DELTA_E) return top2
+  if (abPlaneDist(top2[0], top2[1]) >= CLOSE_DIST) return top2
   const third = full[2]
-  const thirdHelps = oklabDeltaE(third, top2[0]) >= CLOSE_DELTA_E && oklabDeltaE(third, top2[1]) >= CLOSE_DELTA_E
+  const thirdHelps = abPlaneDist(third, top2[0]) >= CLOSE_DIST && abPlaneDist(third, top2[1]) >= CLOSE_DIST
   return thirdHelps ? [top2[0], top2[1], third] : top2
 }
 

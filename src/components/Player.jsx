@@ -1,10 +1,6 @@
 import { useRef, useState } from 'react'
 import { displayName } from '../lib/track'
-
-function fmt(ms) {
-  const s = Math.floor(ms / 1000)
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
-}
+import { fmt } from './ScrubberControls'
 
 export default function Player({ player, isPlaying, onPlay, onStop, onSkip, library, runtime }) {
   const { currentTrack, position, duration, seek, volume, setVolume } = player
