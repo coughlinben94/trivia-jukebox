@@ -67,8 +67,9 @@ export default async function handler(req, res) {
         const rawChroma = hexToChroma(hex);
         const rawHue = hexToHue(hex);
         const rawLightness = hexToLightness(hex);
-        // Recolor (not just discount) anything in the "ugly olive/khaki"
-        // pocket — see deuglify() below. Everything downstream (score,
+        // Recolor (not just discount) anything in the muddy-warm
+        // (brown/mustard/khaki/olive) pocket — see deuglify() below.
+        // Everything downstream (score,
         // hue-gap dedup, the final output hex) operates on the RECOLORED
         // values; only `rawChroma` survives separately, because the
         // monochrome-fallback check further down must judge the art's real
@@ -128,12 +129,16 @@ export default async function handler(req, res) {
     // anywhere near its hue neighborhood, nothing else competes for that
     // slot, so it still got picked here regardless of rank position — the
     // live re-check after deploy confirmed #5b6732 came through unchanged.
-    // Gating the floor on `.score` is actually an absolute exclusion, not
-    // just a raised bar: uglyPenalty only ever discounts when chroma < 0.45,
-    // so the highest possible discounted score is 0.45*0.35 = 0.1575 — always
-    // below CHROMA_FLOOR (0.18). Every penalized candidate fails this check,
-    // full stop, and gets deferred to the last-resort padding loop below
-    // instead of an automatic pick here.
+    // Gating the floor on `.score` is an absolute exclusion for the deep
+    // pocket, not just a raised bar: full uglyWeight requires relative
+    // saturation <= 0.42, which caps chroma at 0.42 (the rel-sat
+    // denominator never exceeds 1), so a fully-penalized score tops out at
+    // 0.42*0.35 ≈ 0.147 — below CHROMA_FLOOR (0.18). Anything the recolor
+    // leaves fully in the pocket fails this check and gets deferred to the
+    // last-resort padding loop below instead of an automatic pick here.
+    // (In practice deuglify recolors a deep-pocket candidate OUT of the
+    // pocket before this score is computed — that's the designed path:
+    // the region keeps its slot, wearing a fixed color.)
     const vivid = [];
     for (const c of ranked) {
       if (c.score <= CHROMA_FLOOR) continue;
@@ -309,8 +314,12 @@ export default async function handler(req, res) {
         // complementary (180° apart, same relationship as this file's
         // single-accent fix below, not triadic — an earlier version of this
         // comment called it "triadic," which was just wrong) — chosen to
-        // sit clear of the documented ugly olive/khaki pocket (hue 40-100°,
-        // see uglyWeight/deuglify above). Saturation eased from the old 0.85
+        // sit clear of the documented muddy-warm pocket (see uglyWeight/
+        // deuglify above; the 20° accent brushes the generalized band's
+        // lower hue ramp, but at 0.65 saturation it's far above the
+        // rel-sat dullness gate that actually defines mud, and synthetic
+        // colors never pass through uglyWeight anyway). Saturation eased
+        // from the old 0.85
         // (same tone-down as the single-accent branch, 0.85 -> 0.55) to
         // 0.65 — still needs to carry the WHOLE gradient alone here since
         // there's no real color backing it up, so a bit richer than the
@@ -599,81 +608,129 @@ function hexToLightness(hex) {
 }
 
 // Discounts a candidate's chroma for the SORT score only (never the real
-// .chroma value other checks read) when it falls in a hue+chroma+lightness
-// pocket that reads as bile/decay almost regardless of the rest of a cover's
-// palette — drab olive/khaki through mustard-brown, hue 40°-100° combined,
-// gated to moderate-or-lower chroma (<0.45) and mid lightness (18%-55%).
-// This is the same territory as Pantone 448C ("the world's ugliest color,"
-// researched for Australia's 2012 plain-cigarette-packaging law) — a flat
-// murky brown-green that tested as least-liked across age/gender groups;
-// color-preference research (Palmer & Schloss, "An ecological valence theory
-// of human color preference," PNAS 2010) ties that reaction to the hue
-// calling up decay/mold/bile, largely independent of how saturated it is.
+// .chroma value other checks read) when it falls in the "muddy warm" pocket
+// that reads as dirt/bile/decay almost regardless of the rest of a cover's
+// palette. Originally (2026-07-29) this was a hardcoded hue 40°-100° box
+// gated on ABSOLUTE chroma (full weight under 0.26, gone by 0.33), tuned
+// against exactly one live complaint (#5b6732, The Mowgli's "I Feel Good
+// About This"). A 2026-07-30 scan of the full live library — all 140
+// covers, 651 output colors fetched from the production /api/palette,
+// swatch-rendered and visually judged — showed that box missed almost
+// everything in the same perceptual category: 44 output colors read as
+// genuinely muddy, and the old box gave 41 of them weight 0. The misses
+// fell in two groups the box could never catch:
+//   1. Browns/tans BELOW hue 40 — #8b6b4d (Kyrie, hue 29), #906940
+//      (Sweet Annie, hue 31), #a88a6e (Mary Was The Marrying Kind, hue
+//      29): the literal "poopy brown" complaint, entirely outside a
+//      40-100 hue gate.
+//   2. Mustards/khakis whose ABSOLUTE chroma clears 0.33 while still
+//      reading flat — #b18e55 (I Could Drive You Crazy, chroma 0.361),
+//      #a17336 (White Walls, 0.420), #a69652 (Love Like That, 0.329):
+//      max-min chroma says "vivid enough," the eye says baby-poop
+//      mustard, because what matters is chroma relative to what that
+//      LIGHTNESS can carry, not chroma in the absolute.
 //
-// Deliberately narrow so it does NOT touch true greens (~100°-160°,
-// forest/spring green), teals/blues (~160°-250°), dusty rose/mauve, or
-// terracotta/rust (~10°-30°) — all sit outside this hue band — and does NOT
-// touch a vivid, bright version of the SAME hue (a saturated chartreuse or
-// golden Dijon-yellow reads as fresh, not sick, which is why chroma/
-// lightness gate it as much as hue does). Verified against a real offender:
-// "I Feel Good About This" (The Mowgli's) extracted #5b6732 — hue 73.5°,
-// chroma 0.21, lightness 30% — squarely inside this pocket, and it read as
-// "pukey" blended live against that cover's rust-reds.
+// The same scan also disproved the tempting fully-hue-agnostic theory
+// ("muddy = low relative saturation at mid lightness, on any hue"): muted
+// teals (#3c7f7e Umbrella, #5e9a9e), slate blues (#516891 Nine in the
+// Afternoon), and dusty plums (#8146b8 1990something) sit at the SAME low
+// relative saturation and mid lightness as the browns and read as
+// perfectly good moody/dusty colors, not dirt. That matches the
+// color-preference literature this pocket was built on: Palmer & Schloss
+// ("An ecological valence theory of human color preference," PNAS 2010)
+// found dark orange (brown) and dark yellow (olive) rated FAR below other
+// colors of the same hues, while dark red, green, and blue took no such
+// hit — the dislike trough is hue-specific (rot/waste associations), even
+// though "muted" itself is hue-agnostic. Pantone 448C ("the world's
+// ugliest color," Australia's plain-cigarette-packaging research) sits in
+// the same warm band. So the model is: a hue-AGNOSTIC dullness measure
+// (relativeSaturation below) deciding HOW muddy a color can be, gated by
+// a warm-hue valence band deciding WHERE muddiness applies at all.
+// Muddiness = the product of three continuous ramps:
 //
-// Each of the three gates (hue/chroma/lightness) ramps in over a buffer
-// zone via smoothstep rather than snapping at a hard line, so a color a
-// hair on either side of an edge — chroma 0.449 vs 0.451, hue 99° vs 101° —
-// gets nearly the same treatment instead of one being fully caught and the
-// other fully waved through. The three ramps multiply together into one
-// combined `weight` (0 = clean, 1 = dead center of the pocket), which then
-// interpolates the penalty between 1 (no discount) and 0.35 (full discount).
-// A color deep in the pocket on all three axes still lands at exactly 0.35,
-// same as the original hard-gated version — this only softens the edges.
+//   hue — warm-valence band, full weight 28°-88°, ramping in over 16°-28°
+//     and out over 88°-102°. Terracotta/rust below ~16° reads as clay,
+//     not dirt (the scan's hue 3-20 low-saturation brick/clay colors all
+//     passed visual inspection), and true greens above ~102° read as
+//     foliage (#5da23d at hue 101, #6caf55 at 105 both read clean).
+//   dullness — relativeSaturation (chroma / max chroma the HSL cylinder
+//     holds at that lightness; the lightness-relative measure, same idea
+//     as a color-appearance model's saturation correlate, colorfulness
+//     judged against brightness) at full weight below 0.42, ramping out
+//     by 0.55. Calibrated on the scan: every visually-muddy survivor sat
+//     at 0.25-0.50; the clean warm controls (#b37a1f amber, rel-sat 0.70;
+//     #cbb622 gold, 0.71; #eeb435, 0.84) all cleared 0.55. This replaces
+//     the old absolute-chroma gate and is what catches group 2 above.
+//     Multiplied by a neutrality guard (ramps in over chroma 0.05-0.12):
+//     a warm-TINTED near-gray isn't muddy, it's gray — recoloring it
+//     would invent a hue the art doesn't have, and CHROMA_FLOOR plus the
+//     monochrome fallback already own the gray case.
+//   lightness — mid band 18%-55% as before (Pantone 448C sits at 22.7%L),
+//     but the top ramp widened 0.05 → 0.10: the scan's dirty-cardboard
+//     tans (#ba9675, lightness 0.59, on Morning Light) were escaping
+//     through the old 0.55-0.60 ramp, while genuinely-fine sand/parchment
+//     (#ccb28e, lightness 0.68) stays outside the wider one too.
 //
-// CHROMA_FLOOR note: a color deep in the pocket (weight≈1) tops out at
-// chroma 0.26 (the chroma ramp's own lower edge, narrowed 2026-07-29 from
-// 0.40) × 0.35 ≈ 0.09, still under CHROMA_FLOOR (0.18) — so the core pocket
-// is still an absolute exclusion from the vivid pick, exactly as before
-// (and still catches the documented #5b6732 offender at chroma 0.21). Only
-// a real photographed green now needs chroma above ~0.33, not ~0.45, to
-// clear the ramp entirely. Only colors near an
-// edge (partial weight) can land a discounted score above the floor, and
-// that's intentional: they're only partly in ugly territory to begin with.
+// Verified against the full 651-color scan before shipping: 44 colors
+// caught at weight > 0.3 (all visually muddy on inspection), ZERO colors
+// with relative saturation >= 0.55 caught, every cool-hue color untouched,
+// and the original offender #5b6732 (hue 73.6°, rel-sat 0.35, lightness
+// 30%) still lands at weight 1.0.
+//
+// Each ramp uses smoothstep over a buffer zone rather than snapping at a
+// hard line, so a color a hair on either side of an edge gets nearly the
+// same treatment instead of one being fully caught and the other fully
+// waved through. The ramps multiply into one combined `weight` (0 =
+// clean, 1 = dead center of the pocket), which interpolates the penalty
+// between 1 (no discount) and 0.35 (full discount), same as always.
 function smoothstep(edge0, edge1, x) {
   const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
 }
 
-// 0 (clean) to 1 (dead centre of the ugly pocket). Factored out of
+// HSL-cylinder saturation: chroma as a fraction of the maximum chroma the
+// cylinder can hold at that lightness (1 - |2L - 1|). This is the
+// hue-agnostic "dullness" axis uglyWeight ranks on — absolute chroma 0.36
+// is most of what lightness 0.20 can carry (rich), but barely a third of
+// what 0.50 can (flat). Same quantity chromaHueLightnessToHex already
+// inverts to rebuild a hex. This is deliberately NOT hexToChroma's
+// near-white-instability problem coming back (see that comment): here the
+// value only ever gates a PENALTY, it never ranks a color upward, and the
+// lightness band in uglyWeight keeps the unstable near-white/near-black
+// ends out of play anyway.
+export function relativeSaturation(chroma, lightness) {
+  const denom = 1 - Math.abs(2 * lightness - 1);
+  if (denom <= 0) return 0;
+  return Math.min(1, chroma / denom);
+}
+
+// 0 (clean) to 1 (dead centre of the muddy-warm pocket). Factored out of
 // uglyPenalty (2026-07-29) so the score discount and deuglify's recolor
 // below share one definition of "in the pocket" and can never disagree.
-function uglyWeight(hue, chroma, lightness) {
-  const HUE_LO = 40, HUE_HI = 100, HUE_RAMP = 10;
+// Generalized 2026-07-30 from the original 40-100° absolute-chroma box to
+// the three-ramp model documented above.
+export function uglyWeight(hue, chroma, lightness) {
+  const HUE_IN_LO = 16, HUE_IN_HI = 28, HUE_OUT_LO = 88, HUE_OUT_HI = 102;
   let hueWeight;
-  if (hue < HUE_LO) hueWeight = smoothstep(HUE_LO - HUE_RAMP, HUE_LO, hue);
-  else if (hue > HUE_HI) hueWeight = 1 - smoothstep(HUE_HI, HUE_HI + HUE_RAMP, hue);
+  if (hue < HUE_IN_HI) hueWeight = smoothstep(HUE_IN_LO, HUE_IN_HI, hue);
+  else if (hue > HUE_OUT_LO) hueWeight = 1 - smoothstep(HUE_OUT_LO, HUE_OUT_HI, hue);
   else hueWeight = 1;
   if (hueWeight <= 0) return 0;
 
-  // Ramps down from full weight at chroma 0.26 to none at 0.33 (narrowed
-  // 2026-07-29, was 0.40-0.45) — the wider ramp still caught real
-  // photographed grass/foliage green, which lands in the SAME 40-100deg hue
-  // band as the documented olive/khaki offender and can't be separated by
-  // hue alone. The offender (#5b6732) sits at chroma 0.21, well under this
-  // ramp's lower edge, so it's still fully discounted.
-  const chromaWeight = 1 - smoothstep(0.26, 0.33, chroma);
-  if (chromaWeight <= 0) return 0;
+  const REL_SAT_LO = 0.42, REL_SAT_HI = 0.55;
+  const NEUTRAL_LO = 0.05, NEUTRAL_HI = 0.12; // neutrality guard — see block comment above
+  const dullWeight = (1 - smoothstep(REL_SAT_LO, REL_SAT_HI, relativeSaturation(chroma, lightness)))
+    * smoothstep(NEUTRAL_LO, NEUTRAL_HI, chroma);
+  if (dullWeight <= 0) return 0;
 
-  // Ramps in/out over a 5%-lightness buffer on both sides of the 18%-55%
-  // muddy band. Pantone 448C itself sits at 22.7%L, comfortably inside.
-  const LIGHT_LO = 0.18, LIGHT_HI = 0.55, LIGHT_RAMP = 0.05;
+  const LIGHT_LO = 0.18, LIGHT_HI = 0.55, LIGHT_RAMP_LO = 0.05, LIGHT_RAMP_HI = 0.10;
   let lightnessWeight;
-  if (lightness < LIGHT_LO) lightnessWeight = smoothstep(LIGHT_LO - LIGHT_RAMP, LIGHT_LO, lightness);
-  else if (lightness > LIGHT_HI) lightnessWeight = 1 - smoothstep(LIGHT_HI, LIGHT_HI + LIGHT_RAMP, lightness);
+  if (lightness < LIGHT_LO) lightnessWeight = smoothstep(LIGHT_LO - LIGHT_RAMP_LO, LIGHT_LO, lightness);
+  else if (lightness > LIGHT_HI) lightnessWeight = 1 - smoothstep(LIGHT_HI, LIGHT_HI + LIGHT_RAMP_HI, lightness);
   else lightnessWeight = 1;
   if (lightnessWeight <= 0) return 0;
 
-  return hueWeight * chromaWeight * lightnessWeight;
+  return hueWeight * dullWeight * lightnessWeight;
 }
 
 function uglyPenalty(hue, chroma, lightness) {
@@ -681,7 +738,7 @@ function uglyPenalty(hue, chroma, lightness) {
   return 1 - weight * 0.65; // weight 1 → 0.35 (full discount), weight 0 → 1 (none)
 }
 
-// Recolors a candidate deep in the ugly olive/khaki pocket instead of just
+// Recolors a candidate deep in the muddy-warm pocket instead of just
 // discounting it out of the palette (2026-07-29) — nudges it toward a
 // nicer neighbor so the live background still derives its color from that
 // region of the album art, rather than losing the slot to an unrelated
@@ -692,24 +749,50 @@ function uglyPenalty(hue, chroma, lightness) {
 // continuity discipline as uglyPenalty's own ramps. This happens entirely
 // in the palette layer; the renderer still only draws what it's handed.
 //
-// Splits at hue 60°, not the pocket's own 40-100° midpoint (70°) — a muddy
-// hue already reads as green rather than brown/mustard by around 60°.
-// Rotates toward leaf green (105°, just past the pocket's own HUE_HI) or
-// bronze/amber (34°, just under HUE_LO) accordingly, and lifts chroma/
-// lightness together with the hue shift — Pantone 448C reads ugly because
-// it's desaturated AND mid-dark, not because of its hue angle alone;
-// rotating hue with no chroma/lightness change just gives a muddy green
-// instead of a muddy olive.
-function deuglify(hue, chroma, lightness, originalHex) {
+// Recoloring (not dropping) is a deliberate choice re-examined during the
+// 2026-07-30 generalization, against the alternative of skipping a muddy
+// pick and promoting the next-ranked candidate: on the covers that
+// actually produce mud (sepia photos, wood, skin tones — see Abraham
+// Alexander's "Stay" in the padding comments above) the muddy color IS
+// the dominant region, often most of the image. Skipping it either hands
+// the background to a tiny unrelated accent, or leaves so few distinct
+// hue families that the hue-gap diversity pass and the monochrome
+// fallback both degrade — and buildWeights would then hand the surviving
+// colors that region's population share, overstating THEIR area instead.
+// Recoloring keeps the region's slot, its population weight, and its hue
+// family; it only fixes the color. (The score penalty below still demotes
+// anything the recolor leaves partially muddy, so "try the next color
+// first" already happens implicitly through sort order.)
+//
+// Splits at hue 60° — a muddy hue already reads as green rather than
+// brown/mustard by around 60°. At/above 60 it rotates toward leaf green
+// (108°, just past the pocket's upper ramp). Below 60 — the browns/tans/
+// mustards the 2026-07-30 generalization added — it rotates toward
+// terracotta (18°, just inside the lower ramp): the same live scan that
+// calibrated uglyWeight showed low-saturation hue-3-to-20 brick/clay
+// reading fine while the identical treatment a step yellower reads as
+// dirt, so terracotta is the nearest hue where "muted warm" stops being
+// "muddy." (The old target was 34° bronze — meaningless once the pocket
+// reaches down past 20°: most browns ARE ~30°, and rotating them to 34
+// was a near-no-op that left the chroma lift to do all the work.) Chroma
+// and lightness lift together with the hue shift, as before — Pantone
+// 448C reads ugly because it's desaturated AND mid-dark, not because of
+// its hue angle alone. The lift cap moved from a flat 0.42 to
+// max(chroma, 0.45): the scan's mustards arrive at chroma 0.39-0.42
+// already, so the old hard ceiling would have zeroed the lift for exactly
+// the colors that need it most, and Math.min against a value below the
+// input would have REDUCED chroma — max() keeps the rule "lift, never
+// reduce."
+export function deuglify(hue, chroma, lightness, originalHex) {
   const weight = uglyWeight(hue, chroma, lightness);
   if (weight <= 0) return { hue, chroma, lightness, hex: originalHex };
 
-  const TARGET_HUE = hue >= 60 ? 105 : 34;
+  const TARGET_HUE = hue >= 60 ? 108 : 18;
   const MAX_ROT = 35; // stays recognizably the same underlying color
   const rot = Math.max(-MAX_ROT, Math.min(MAX_ROT, weight * (TARGET_HUE - hue)));
 
   const newHue = (hue + rot + 360) % 360;
-  const newChroma = Math.min(chroma + weight * 0.18, 0.42);
+  const newChroma = Math.min(chroma + weight * 0.18, Math.max(chroma, 0.45));
   const newLightness = lightness + weight * (0.46 - lightness) * 0.7;
 
   return {

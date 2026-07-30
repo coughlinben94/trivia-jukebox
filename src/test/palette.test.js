@@ -1,5 +1,18 @@
 import { describe, it, expect } from 'vitest'
-import { populationFactor, buildWeights } from '../../api/palette.js'
+import { populationFactor, buildWeights, relativeSaturation, uglyWeight, deuglify } from '../../api/palette.js'
+
+// hue / chroma / lightness triplets for real live-library colors, computed
+// exactly the way api/palette.js's own hexToHue/hexToChroma/hexToLightness
+// compute them. Each is a real output color from the 2026-07-30 full-library
+// scan (140 covers, 651 colors, via the production /api/palette).
+const KYRIE_BROWN   = { hex: '#8b6b4d', h: 29.03, c: 62 / 255, L: 216 / 510 }   // Kyrie (Mr. Mister) — flat "poopy" brown
+const MUSTARD_TAN   = { hex: '#b18e55', h: 37.17, c: 92 / 255, L: 262 / 510 }   // I Could Drive You Crazy (Sierra Ferrell)
+const KHAKI         = { hex: '#a69652', h: 48.57, c: 84 / 255, L: 248 / 510 }   // Love Like That (Mayer Hawthorne)
+const MOWGLIS_OLIVE = { hex: '#5b6732', h: 73.58, c: 53 / 255, L: 153 / 510 }   // I Feel Good About This — the pocket's original 2026-07-29 offender
+const MUTED_TEAL    = { hex: '#3c7f7e', h: 179.10, c: 67 / 255, L: 187 / 510 }  // Umbrella (Train) — dusty but NOT muddy
+const DUSTY_PLUM    = { hex: '#8146b8', h: 271.05, c: 114 / 255, L: 254 / 510 } // 1990something (Sub-Radio)
+const RICH_AMBER    = { hex: '#b37a1f', h: 36.89, c: 148 / 255, L: 210 / 510 }  // clean warm control from the scan
+const BRICK_CLAY    = { hex: '#8f4c33', h: 16.30, c: 92 / 255, L: 194 / 510 }   // Free (Drake White) — terracotta, reads fine
 
 describe('populationFactor', () => {
   it('returns 1.0 at popRel=1 (the largest bucket)', () => {
@@ -39,5 +52,78 @@ describe('buildWeights', () => {
     const w = buildWeights([{ population: null }, { population: null }])
     expect(w[0]).toBeCloseTo(0.5, 5)
     expect(w[1]).toBeCloseTo(0.5, 5)
+  })
+})
+
+describe('relativeSaturation', () => {
+  it('reports the same chroma as rich at low lightness but flat at mid lightness', () => {
+    // Absolute chroma 0.36 is most of what L=0.20 can carry...
+    expect(relativeSaturation(0.36, 0.20)).toBeCloseTo(0.9, 5)
+    // ...but barely a third of what L=0.50 can — this asymmetry is what the
+    // old absolute-chroma gate (full weight under 0.26, gone by 0.33) could
+    // never express, and why the scan's mustards slipped through it.
+    expect(relativeSaturation(0.36, 0.50)).toBeCloseTo(0.36, 5)
+  })
+  it('is safe at the lightness poles (denominator 0) and clamps to 1', () => {
+    expect(relativeSaturation(0, 0)).toBe(0)
+    expect(relativeSaturation(0, 1)).toBe(0)
+    expect(relativeSaturation(0.9, 0.9)).toBe(1)
+  })
+})
+
+describe('uglyWeight (generalized muddy-warm pocket, 2026-07-30)', () => {
+  it('fully catches the flat browns below hue 40 that the old 40-100 box gave weight 0', () => {
+    // Kyrie's #8b6b4d (hue 29): the literal "poopy brown" category.
+    expect(uglyWeight(KYRIE_BROWN.h, KYRIE_BROWN.c, KYRIE_BROWN.L)).toBeGreaterThan(0.99)
+  })
+  it('catches mustards whose ABSOLUTE chroma cleared the old 0.33 gate', () => {
+    // #b18e55: chroma 0.361 sailed past the old gate entirely, but its
+    // relative saturation is only 0.371 — flat for lightness 0.51.
+    expect(MUSTARD_TAN.c).toBeGreaterThan(0.33)
+    expect(uglyWeight(MUSTARD_TAN.h, MUSTARD_TAN.c, MUSTARD_TAN.L)).toBeGreaterThan(0.99)
+    expect(uglyWeight(KHAKI.h, KHAKI.c, KHAKI.L)).toBeGreaterThan(0.99)
+  })
+  it('still fully catches the pocket\'s original documented offender (regression)', () => {
+    expect(uglyWeight(MOWGLIS_OLIVE.h, MOWGLIS_OLIVE.c, MOWGLIS_OLIVE.L)).toBeGreaterThan(0.99)
+  })
+  it('leaves equally-dull COOL hues alone — dullness is hue-agnostic, muddiness is not', () => {
+    // Same low rel-sat, mid lightness as the browns; visually read as
+    // moody/dusty, not dirty, in the 2026-07-30 scan — and Palmer & Schloss
+    // found no preference trough for dark blue/purple the way there is for
+    // dark orange/yellow.
+    expect(uglyWeight(MUTED_TEAL.h, MUTED_TEAL.c, MUTED_TEAL.L)).toBe(0)
+    expect(uglyWeight(DUSTY_PLUM.h, DUSTY_PLUM.c, DUSTY_PLUM.L)).toBe(0)
+  })
+  it('leaves saturated warm colors alone — rel-sat >= 0.55 is clean at any hue', () => {
+    expect(uglyWeight(RICH_AMBER.h, RICH_AMBER.c, RICH_AMBER.L)).toBe(0)
+  })
+  it('leaves terracotta/brick below the hue ramp essentially alone', () => {
+    expect(uglyWeight(BRICK_CLAY.h, BRICK_CLAY.c, BRICK_CLAY.L)).toBeLessThan(0.05)
+  })
+  it('ignores warm-tinted near-grays (neutrality guard) instead of inventing color for them', () => {
+    expect(uglyWeight(30, 0.03, 0.4)).toBe(0)
+  })
+})
+
+describe('deuglify (recolor, never drop)', () => {
+  it('rotates a muddy brown to terracotta (hue 18) and lifts its relative saturation', () => {
+    const d = deuglify(KYRIE_BROWN.h, KYRIE_BROWN.c, KYRIE_BROWN.L, KYRIE_BROWN.hex)
+    expect(d.hue).toBeCloseTo(18, 1)
+    expect(relativeSaturation(d.chroma, d.lightness))
+      .toBeGreaterThan(relativeSaturation(KYRIE_BROWN.c, KYRIE_BROWN.L))
+    expect(d.hex).not.toBe(KYRIE_BROWN.hex)
+  })
+  it('still lifts a mustard already at chroma 0.36+ (the old flat 0.42 cap zeroed this lift)', () => {
+    const d = deuglify(MUSTARD_TAN.h, MUSTARD_TAN.c, MUSTARD_TAN.L, MUSTARD_TAN.hex)
+    expect(d.chroma).toBeGreaterThan(MUSTARD_TAN.c)
+    expect(d.chroma).toBeLessThanOrEqual(0.45)
+  })
+  it('rotates the original olive offender to leaf green (hue 108), as the 2026-07-29 fix intended', () => {
+    const d = deuglify(MOWGLIS_OLIVE.h, MOWGLIS_OLIVE.c, MOWGLIS_OLIVE.L, MOWGLIS_OLIVE.hex)
+    expect(d.hue).toBeCloseTo(108, 1)
+  })
+  it('passes a clean color through byte-identical', () => {
+    const d = deuglify(200, 0.3, 0.4, '#123456')
+    expect(d).toEqual({ hue: 200, chroma: 0.3, lightness: 0.4, hex: '#123456' })
   })
 })
