@@ -603,62 +603,6 @@ const [newSetName, setNewSetName] = useState('')
 
   const player = useSpotifyPlayer({ onAdvance: advanceToNext, onFadeStart })
 
-  // Name/artist buffer: hide the title for the first and last 3s of the
-  // song's *trimmed* play window (startMs/stopMs from the library, not raw
-  // duration_ms) so it doesn't flash on right at the fade-in or vanish mid-word
-  // right at the fade-out. Keyed off player.position (real playback time), so
-  // it tracks pauses correctly instead of a wall-clock timer. Only a boolean
-  // crosses into LiveScreen's props — it flips twice a song, not 3.3x/sec —
-  // so it doesn't defeat the memo() that keeps LiveScreen off the position tick.
-  const playingSong = useMemo(
-    () => library.find(t => t.id === playingId) ?? null,
-    [library, playingId]
-  )
-  // Wall-clock stamp of the last confirmed track change — the fallback
-  // signal nameVisible reaches for below when player.position stalls. Set
-  // in the player.currentTrack?.uri effect further down, right where
-  // playingId itself gets resynced to the new track.
-  const trackChangeAtRef = useRef(Date.now())
-  // Ticks once a second purely so the nameVisible memo below gets a chance
-  // to re-evaluate its wall-clock fallback even when player.position itself
-  // hasn't changed value (a stuck position is exactly the failure mode the
-  // fallback exists for — if position never changes, a memo keyed only on
-  // position would never re-run to notice enough real time has passed).
-  const [nameVisibleTick, setNameVisibleTick] = useState(0)
-  useEffect(() => {
-    const id = setInterval(() => setNameVisibleTick(t => t + 1), 1000)
-    return () => clearInterval(id)
-  }, [])
-  const nameVisible = useMemo(() => {
-    if (!playingSong) return true
-    const start = playingSong.startMs ?? 0
-    const stop = playingSong.stopMs ?? playingSong.duration_ms ?? 0
-    if (stop - start <= 6000) return true  // window too short for a 3s/3s buffer — just show it
-    if ((player.position - start) >= 3000 && (stop - player.position) >= 3000) return true
-    // Defensive fallback (2026-07-30): player.position was observed frozen
-    // at startMs for an entire song during a live test — most likely SDK
-    // polling starvation specific to that (automated/backgrounded) browser
-    // context, but the failure mode this creates is worth hardening against
-    // regardless of cause: with only the position check above, a position
-    // that never advances means `position - start >= 3000` never becomes
-    // true and the name hides for the WHOLE song with no way to recover.
-    // If real wall-clock time has clearly passed the point where the name
-    // should have opened by now (with slack past 3s for LiveScreen's own
-    // ~2.8s reveal choreography on top), show it anyway — degrading a stuck
-    // position to "shows anyway" instead of "never shows." Gated on
-    // !player.isPaused: a genuine pause right after a track change also
-    // freezes position, and that's the position-based gate working as
-    // designed (survive pauses correctly, per the original comment above) —
-    // this fallback must not override a real pause into showing the name
-    // early just because the clock kept ticking while the song didn't.
-    if (!player.isPaused) {
-      const sinceChange = Date.now() - trackChangeAtRef.current
-      if (sinceChange > 6000 && (stop - player.position) >= 3000) return true
-    }
-    return false
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playingSong, player.position, player.isPaused, nameVisibleTick])
-
   const registerUpcomingTrackHandler = useCallback(fn => {
     onUpcomingTrackRef.current = fn
   }, [])
@@ -671,10 +615,6 @@ const [newSetName, setNewSetName] = useState('')
 
   useEffect(() => {
     if (player.currentTrack) {
-      // Stamp the moment this track was confirmed — nameVisible's wall-clock
-      // fallback (above) measures elapsed time from here, not from whenever
-      // player.position last happened to update.
-      trackChangeAtRef.current = Date.now()
       const match = libraryRef.current.find(t => t.uri === player.currentTrack.uri)
       if (match) setPlayingId(match.id)
       if (pendingLiveOpenRef.current) {
@@ -1255,7 +1195,6 @@ const [newSetName, setNewSetName] = useState('')
           onClose={closeLive}
           shuffleKey={shuffleKey}
           onUpcomingTrack={registerUpcomingTrackHandler}
-          nameVisible={nameVisible}
         />
       )}
 

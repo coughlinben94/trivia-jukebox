@@ -100,7 +100,7 @@ function Tonearm({ controls }) {
 // forcing a re-render of everything under Jukebox. None of this component's props
 // change on that cadence, so memo() keeps it from redoing its render work — title-fit
 // measurement, palette lookups, the whole record/tonearm JSX tree — 3.3x/second for nothing.
-function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpcomingTrack, nameVisible = true }) {
+function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpcomingTrack }) {
   // Read once per mount, not per render — avoids re-checking localStorage/URL
   // on every position-tick re-render this component already gets a lot of.
   const [useMeshGradient] = useState(getMeshGradientFlag)
@@ -377,13 +377,10 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // paints, so on the render where currentTrack.uri first changes, the OLD
   // textVisible/transitioning values (from the just-finished previous reveal)
   // are what actually gets painted — the hide would only land on the NEXT
-  // frame. Combined with Jukebox's nameVisible (computed off player.position,
-  // which can be one render tick stale relative to this component learning
-  // about the new track — see Jukebox's own currentTrack-uri effect), that
-  // stale frame COULD read as "opacity 1" if nameVisible also happened to be
-  // true against mismatched data. useLayoutEffect fires synchronously before
-  // paint, so the hide is guaranteed to land in the SAME frame as the uri
-  // change — no stale frame is ever actually painted.
+  // frame, which is how the new title was observed sitting at full opacity
+  // over an empty turntable for a beat before cutting out. useLayoutEffect
+  // fires synchronously before paint, so the hide is guaranteed to land in
+  // the SAME frame as the uri change — no stale frame is ever painted.
   useLayoutEffect(() => {
     if (!currentTrack || !shown || currentTrack.uri === shown.uri) return
     setTextInstant(true)
@@ -636,23 +633,15 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
               <Tonearm controls={tonearmCtrl} />
             </div>
 
-            {/* Track info — hidden during transitions, before entrance completes, and
-                during the 3s-in/3s-out buffer around each song's trimmed play window
-                (nameVisible, computed in Jukebox from player.position vs startMs/stopMs).
-                The buffer reveal/hide now fires in isolation — nothing else on screen is
-                moving when it does, unlike the old transition-endpoint reveal this duration
-                was originally tuned for (that one had a record settling into place to mask
-                a quick cut). 0.25s linear-ish ease read as a snap with no cover story, so
-                the buffer case gets its own slower expo ease-out plus a small rise/sink —
-                enough weight to read as a deliberate fade, not a pop. textInstant (0-duration)
-                still wins for the hide-on-track-change cut, which should stay instant. */}
+            {/* Track info — hidden during transitions and before entrance completes.
+                (2026-07-30: tried gating this on a 3s-in/3s-out buffer keyed off
+                playback position, reverted — added a class of timing bugs, e.g.
+                the name hiding for a whole song if position ever stalled, that
+                weren't worth the polish.) */}
             <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{
-                opacity: transitioning ? 0 : (textVisible && nameVisible ? 1 : 0),
-                y: transitioning ? -6 : (textVisible && nameVisible ? 0 : 8),
-              }}
-              transition={textInstant ? { duration: 0 } : { duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+              initial={{ opacity: 0, y: 0 }}
+              animate={{ opacity: transitioning ? 0 : (textVisible ? 1 : 0), y: transitioning ? -6 : 0 }}
+              transition={textInstant ? { duration: 0 } : { duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
             >
               <h1
                 ref={titleRef}
