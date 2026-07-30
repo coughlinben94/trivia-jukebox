@@ -55,6 +55,50 @@ const FONT_BODY    = "'DM Sans', system-ui, sans-serif"
 // a background box, and hold up against any hue the gradient lands on.
 const TEXT_SCRIM = '0 0 4px rgba(0,0,0,0.55), 0 0 10px rgba(0,0,0,0.45), 0 0 20px rgba(0,0,0,0.35)'
 
+// Hue only (0-360), same formula as api/palette.js's hexToHue — duplicated
+// here rather than shared across the client/serverless boundary, since it's
+// a few lines and this is the only client-side consumer.
+function hexToHue(hex) {
+  const r = parseInt(hex.slice(1, 3), 16) / 255
+  const g = parseInt(hex.slice(3, 5), 16) / 255
+  const b = parseInt(hex.slice(5, 7), 16) / 255
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min
+  if (d === 0) return 0
+  let h
+  if (max === r) h = ((g - b) / d) % 6
+  else if (max === g) h = (b - r) / d + 2
+  else h = (r - g) / d + 4
+  h *= 60
+  return h < 0 ? h + 360 : h
+}
+
+function hueDelta(a, b) {
+  const d = Math.abs(a - b) % 360
+  return d > 180 ? 360 - d : d
+}
+
+// 2 colors, 3 max (2026-07-30) — palette.js's own picks are guaranteed
+// ≥25° apart in hue, which is enough to count as "diverse" for its own
+// dedup purposes but not always enough to look like two different colors
+// on screen: two DARK, similarly-saturated hues 25-45° apart (verified live:
+// The Killers' "Shot At The Night", #760a52/#520a76, 40° apart) still read
+// as one muddy color once blended. On the other hand, handing the mesh 3
+// colors UNCONDITIONALLY brought back multi-pool "lava lamp" on covers
+// whose top colors are already well-separated (verified live: All Time
+// Low's "Dear Maria, Count Me In", yellow/blue ~138° apart — a 3rd color
+// only added a second unwanted seam hue with nothing to fix). So: normally
+// just the top 2: if palette.js already picked them >2 hue-gaps apart
+// (2x its own HUE_GAP_DEG floor, i.e. genuinely distinguishable, not just
+// past its minimum bar), trust that and stop there. Only reach for a 3rd
+// when the top 2 are close enough to risk reading as one color.
+const SAME_ISH_HUE_DEG = 50
+function pickGradientColors(full) {
+  if (full.length <= 2) return full
+  const top2 = full.slice(0, 2)
+  const closeHues = hueDelta(hexToHue(top2[0]), hexToHue(top2[1])) < SAME_ISH_HUE_DEG
+  return closeHues ? [top2[0], top2[1], full[2]] : top2
+}
+
 function preloadImage(url) {
   return new Promise(resolve => {
     const img = new Image()
@@ -171,22 +215,11 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
 
   const paletteColorsFull      = usePalette(artUrl)
   const upcomingPaletteColorsFull = usePalette(upcomingArtUrl)
-  // Cap what the gradient actually draws from to 3 colors (2026-07-30, was
-  // 2) — the mesh renders 6 blobs, one palette hue per blob (see
-  // AlbumGradientMesh's parseColors), so handing it 5-8 distinct hues gives
-  // 6 blobs that many ways to disagree, reading as scattered pooled bodies
-  // ("lava lamp") no matter how the blend math is tuned. But 2 turned out
-  // too tight: palette.js's own hue-diversity gap only guarantees adjacent
-  // picks are ≥25° apart, which two DARK, similarly-lightness/chroma colors
-  // can clear while still reading as "one color" — live-verified on The
-  // Killers' "Shot At The Night" cover, whose real palette.js output is
-  // ["#760a52" dark magenta, "#520a76" dark purple (40° apart, both dark),
-  // "#0a6d76" teal (a genuinely different family)]. Capping at 2 kept the
-  // two similar dark tones and dropped the one color that would've actually
-  // read as a second color. 3 keeps that safety net without going back to
-  // the original lava-lamp problem.
+  // Cap what the gradient actually draws from — see pickGradientColors above
+  // for the 2-normally/3-when-needed logic and the two live cases (Killers,
+  // All Time Low) that pinned down the threshold.
   //
-  // useMemo, not a plain .slice() every render: AlbumGradientMesh's
+  // useMemo, not a plain .slice()/pick every render: AlbumGradientMesh's
   // blend-trigger effects key off [colors]/[nextColors] BY REFERENCE
   // (usePalette's own return value is stable across re-renders unless a
   // real fetch resolves, which is what those effects rely on to fire once
@@ -200,8 +233,8 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // during the fade-out like the onFadeStart/onUpcomingTrack plumbing
   // already intends. useMemo restores the same stable-unless-really-changed
   // reference usePalette itself provides.
-  const paletteColors         = useMemo(() => paletteColorsFull.slice(0, 3), [paletteColorsFull])
-  const upcomingPaletteColors = useMemo(() => upcomingPaletteColorsFull.slice(0, 3), [upcomingPaletteColorsFull])
+  const paletteColors         = useMemo(() => pickGradientColors(paletteColorsFull), [paletteColorsFull])
+  const upcomingPaletteColors = useMemo(() => pickGradientColors(upcomingPaletteColorsFull), [upcomingPaletteColorsFull])
 
   const tonearmCtrl = useAnimation()
   const flyCtrl     = useAnimation()
