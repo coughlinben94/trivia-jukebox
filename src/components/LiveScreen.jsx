@@ -458,7 +458,12 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         // same promise that resolves when the flight is over.
         await flyCtrl.start({ y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 28 } })
 
-        await sleep(500)   // brief settle after landing, same grace period as before
+        // The 500ms grace here used to run concurrently with an un-awaited
+        // fly-down (the actual landing happened somewhere during it, timing
+        // unverified) — now that we AWAIT the real landing above, this delay
+        // is pure extra wait stacked on top of it, and it read as sluggish
+        // (2026-07-30). Trimmed to a beat, not a pause.
+        await sleep(120)
         tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 22 } })
         await sleep(200)
         setTextInstant(false)
