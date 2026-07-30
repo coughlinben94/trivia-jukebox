@@ -55,48 +55,60 @@ const FONT_BODY    = "'DM Sans', system-ui, sans-serif"
 // a background box, and hold up against any hue the gradient lands on.
 const TEXT_SCRIM = '0 0 4px rgba(0,0,0,0.55), 0 0 10px rgba(0,0,0,0.45), 0 0 20px rgba(0,0,0,0.35)'
 
-// Hue only (0-360), same formula as api/palette.js's hexToHue — duplicated
-// here rather than shared across the client/serverless boundary, since it's
-// a few lines and this is the only client-side consumer.
-function hexToHue(hex) {
-  const r = parseInt(hex.slice(1, 3), 16) / 255
-  const g = parseInt(hex.slice(3, 5), 16) / 255
-  const b = parseInt(hex.slice(5, 7), 16) / 255
-  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min
-  if (d === 0) return 0
-  let h
-  if (max === r) h = ((g - b) / d) % 6
-  else if (max === g) h = (b - r) / d + 2
-  else h = (r - g) / d + 4
-  h *= 60
-  return h < 0 ? h + 360 : h
+// OKLab ΔE — same conversion formulas as AlbumGradientMesh.jsx's rgbToOklab
+// (Björn Ottosson), duplicated here rather than shared across the
+// client/serverless boundary, since it's a few lines and this is the only
+// other client-side consumer.
+function hexToRgb(hex) {
+  return [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+  ]
+}
+function srgbToLinear(c) { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4) }
+function cbrt(x) { return Math.sign(x) * Math.pow(Math.abs(x), 1 / 3) }
+function hexToOklab(hex) {
+  const [r, g, b] = hexToRgb(hex).map(srgbToLinear)
+  const l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b
+  const m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b
+  const s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b
+  const l_ = cbrt(l), m_ = cbrt(m), s_ = cbrt(s)
+  return [
+    0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+    1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+    0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+  ]
+}
+function oklabDeltaE(hexA, hexB) {
+  const [L1, a1, b1] = hexToOklab(hexA)
+  const [L2, a2, b2] = hexToOklab(hexB)
+  return Math.sqrt((L1 - L2) ** 2 + (a1 - a2) ** 2 + (b1 - b2) ** 2)
 }
 
-function hueDelta(a, b) {
-  const d = Math.abs(a - b) % 360
-  return d > 180 ? 360 - d : d
-}
-
-// 2 colors, 3 max (2026-07-30) — palette.js's own picks are guaranteed
-// ≥25° apart in hue, which is enough to count as "diverse" for its own
-// dedup purposes but not always enough to look like two different colors
-// on screen: two DARK, similarly-saturated hues 25-45° apart (verified live:
-// The Killers' "Shot At The Night", #760a52/#520a76, 40° apart) still read
-// as one muddy color once blended. On the other hand, handing the mesh 3
-// colors UNCONDITIONALLY brought back multi-pool "lava lamp" on covers
-// whose top colors are already well-separated (verified live: All Time
-// Low's "Dear Maria, Count Me In", yellow/blue ~138° apart — a 3rd color
-// only added a second unwanted seam hue with nothing to fix). So: normally
-// just the top 2: if palette.js already picked them >2 hue-gaps apart
-// (2x its own HUE_GAP_DEG floor, i.e. genuinely distinguishable, not just
-// past its minimum bar), trust that and stop there. Only reach for a 3rd
-// when the top 2 are close enough to risk reading as one color.
-const SAME_ISH_HUE_DEG = 50
+// 2 colors, 3 max (2026-07-30, revised same day after a second-opinion
+// review). First pass gated the 3rd color on hue delta alone (<50° apart =
+// "too close, add a 3rd"). A live scan of the real library disproved that:
+// hue ignores lightness/chroma, so it both fired on genuinely distinct
+// pairs that just happened to sit within 50° of hue (yellow #fdd33a vs.
+// red #ce3b23, 38.7° apart, OKLab ΔE 0.358 — clearly two colors, still got
+// a needless 3rd seam hue) and, separately, added a 3rd color in a dozen
+// cases where that 3rd was itself a near-duplicate of one of the top 2 —
+// dead weight, not a rescue. OKLab ΔE measures lightness, chroma, and hue
+// together, which is what "reads as one muddy color" actually depends on.
+// Threshold 0.15 separates every real top-2 pair scanned in the library:
+// muddy-together pairs measured up to ΔE 0.145, genuinely-distinct pairs
+// started at 0.358. Also require the 3rd color to clear the same bar
+// against BOTH top-2 colors — a 3rd pick that's itself close to one of
+// them doesn't rescue anything, it's just a wasted blob.
+const CLOSE_DELTA_E = 0.15
 function pickGradientColors(full) {
   if (full.length <= 2) return full
   const top2 = full.slice(0, 2)
-  const closeHues = hueDelta(hexToHue(top2[0]), hexToHue(top2[1])) < SAME_ISH_HUE_DEG
-  return closeHues ? [top2[0], top2[1], full[2]] : top2
+  if (oklabDeltaE(top2[0], top2[1]) >= CLOSE_DELTA_E) return top2
+  const third = full[2]
+  const thirdHelps = oklabDeltaE(third, top2[0]) >= CLOSE_DELTA_E && oklabDeltaE(third, top2[1]) >= CLOSE_DELTA_E
+  return thirdHelps ? [top2[0], top2[1], third] : top2
 }
 
 function preloadImage(url) {

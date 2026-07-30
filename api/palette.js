@@ -290,19 +290,19 @@ export default async function handler(req, res) {
       if (mostVivid < 0.15) {
         // Genuinely nothing real to lean on (true B&W/grayscale) — no real
         // hue to derive a color-wheel relationship FROM (unlike the
-        // single-real-hue branch below), so this triad has to be a
+        // single-real-hue branch below), so this pair has to be a
         // deliberately-chosen fixed palette rather than something derived
-        // per cover. Evenly spaced 120° apart (true triadic — the standard
-        // relationship for a fixed pair, same logic as this file's
-        // true-complementary fix for the single-accent case below) and
-        // chosen to sit clear of the documented ugly olive/khaki pocket
-        // (hue 40-100°, see uglyWeight/deuglify above): 200° cool blue,
-        // 20° warm red-orange, exactly opposite. Saturation eased from the
-        // old 0.85 (same tone-down as the single-accent branch, 0.85 ->
-        // 0.55) to 0.65 — still needs to carry the WHOLE gradient alone here
-        // since there's no real color backing it up, so a bit richer than
-        // the single-accent case, but 0.85 read as the same "neon slap"
-        // this whole pass is fixing.
+        // per cover. 200° cool blue / 20° warm red-orange — true
+        // complementary (180° apart, same relationship as this file's
+        // single-accent fix below, not triadic — an earlier version of this
+        // comment called it "triadic," which was just wrong) — chosen to
+        // sit clear of the documented ugly olive/khaki pocket (hue 40-100°,
+        // see uglyWeight/deuglify above). Saturation eased from the old 0.85
+        // (same tone-down as the single-accent branch, 0.85 -> 0.55) to
+        // 0.65 — still needs to carry the WHOLE gradient alone here since
+        // there's no real color backing it up, so a bit richer than the
+        // single-accent case, but 0.85 read as the same "neon slap" this
+        // whole pass is fixing.
         //
         // Originally shipped as a 3-hue "triadic" (140/260/20) with the
         // leftover near-gray candidates kept after it, on the theory that
@@ -310,14 +310,26 @@ export default async function handler(req, res) {
         // to 3 of these 5 entries. A second-opinion review actually traced
         // that picker's logic against this exact array: it takes the top 2
         // entries, then adds a 3rd ONLY if those top 2 are hue-close
-        // (<50°) — and since these hues are fixed and always ≥120° apart by
-        // construction, the picker NEVER reaches past the first 2. The 3rd
-        // accent and both grays were dead weight on every single true-B&W
-        // cover, unconditionally. Simplified to exactly the 2 hues that were
-        // actually ever displayed, so what's in the code matches what's on
-        // screen.
+        // (originally <50° hue delta, since replaced by an OKLab ΔE test —
+        // see LiveScreen.jsx) — and since these hues are fixed and always
+        // 180° apart by construction, the picker NEVER reaches past the
+        // first 2. The 3rd accent and both grays were dead weight on every
+        // single true-B&W cover, unconditionally. Simplified to exactly the
+        // 2 hues that were actually ever displayed, so what's in the code
+        // matches what's on screen.
+        //
+        // Lightness floor raised 0.25 -> 0.38 (2026-07-30, second-opinion
+        // review): at low avgLuma the old 0.25 floor combined with this
+        // branch's own 0.65 saturation produces OKLab chroma ~0.07-0.09 —
+        // a muted dark slate vs. dark brown, not the "richer, carries the
+        // whole gradient" color this branch's own reasoning calls for.
+        // Raising the floor keeps dark true-B&W covers (verified live:
+        // "Shot At The Night," "Always Be My Baby," "DEVOTION," "Dreams" —
+        // all 4 land in this exact branch and, since it's a fixed pair, all
+        // 4 shared one identical near-mud background under the old floor)
+        // legible without pushing the light end past what 0.75 already caps.
         const accentHues = [200, 20];
-        colors = accentHues.map(h => hslToHex(h, 0.65, Math.min(0.75, Math.max(0.25, avgLuma))));
+        colors = accentHues.map(h => hslToHex(h, 0.65, Math.min(0.75, Math.max(0.38, avgLuma))));
       } else {
         // There IS a real color here, just one hue family (a rich solid-gold
         // cover, or a warm skin-tone photo like Edgar Winter's "Free Ride") —

@@ -251,7 +251,7 @@ function oklchToRgb(L, C, H) {
 // static tile can be built once and reused for the component's whole
 // lifetime instead of costing anything per frame at all.
 const GRAIN_TILE = 256
-const GRAIN_DOTS = 45   // same density as the old 700-over-full-canvas version at ~1080p
+const GRAIN_DOTS = 45   // ~same density as the old 700-over-full-canvas version at ~1MP (not 1080p -- 45/256^2 is roughly 2x 700/1080p's dots-per-px^2; invisible at 0.03 alpha either way)
 function makeGrainPattern(ctx) {
   const tile = document.createElement('canvas')
   tile.width = GRAIN_TILE
