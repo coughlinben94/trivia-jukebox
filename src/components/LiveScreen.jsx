@@ -606,11 +606,21 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
 
             {/* Track info — hidden during transitions, before entrance completes, and
                 during the 3s-in/3s-out buffer around each song's trimmed play window
-                (nameVisible, computed in Jukebox from player.position vs startMs/stopMs) */}
+                (nameVisible, computed in Jukebox from player.position vs startMs/stopMs).
+                The buffer reveal/hide now fires in isolation — nothing else on screen is
+                moving when it does, unlike the old transition-endpoint reveal this duration
+                was originally tuned for (that one had a record settling into place to mask
+                a quick cut). 0.25s linear-ish ease read as a snap with no cover story, so
+                the buffer case gets its own slower expo ease-out plus a small rise/sink —
+                enough weight to read as a deliberate fade, not a pop. textInstant (0-duration)
+                still wins for the hide-on-track-change cut, which should stay instant. */}
             <motion.div
-              initial={{ opacity: 0, y: 0 }}
-              animate={{ opacity: transitioning ? 0 : (textVisible && nameVisible ? 1 : 0), y: transitioning ? -6 : 0 }}
-              transition={textInstant ? { duration: 0 } : { duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{
+                opacity: transitioning ? 0 : (textVisible && nameVisible ? 1 : 0),
+                y: transitioning ? -6 : (textVisible && nameVisible ? 0 : 8),
+              }}
+              transition={textInstant ? { duration: 0 } : { duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
             >
               <h1
                 ref={titleRef}
