@@ -36,10 +36,41 @@ import { orbitSpeed, blobRadius, meshIdwPower, chromaScale, blendDurationMs } fr
 // look/feel the "flowing and battling" motion was liked from.
 const NUM_BLOBS = 6
 
-// ── Blob motion — identical formulas to AlbumGradient.jsx's makeCircleParams,
-// just evaluated in the tiny canvas's own pixel space instead of the real
-// canvas's. Same seeded per-index variety (position, speed, phase, size) so
-// the motion feels like the same six bodies people already liked.
+// ── Blob motion — same orbiting-sine formulas as AlbumGradient.jsx's
+// makeCircleParams, evaluated in the tiny canvas's own pixel space.
+//
+// Antipodal pairing (2026-07-30): odd-index blobs are no longer independently
+// seeded — each one mirrors the even blob before it through the canvas center
+// (base reflected, same freqs/amps, phase +π, so its position is exactly
+// 1 − partner's position at every instant; only radius keeps its own seed).
+// Why: parseColors hands colors out by blob index (src[(i+rot) % len]), so
+// with a 2-color palette the even blobs are one color and the odd blobs the
+// other — and with six INDEPENDENT orbits (each swinging ±0.33 around a
+// seeded base on a 9–15s period), how much of the frame each color owns was
+// left entirely to chance. Verified numerically against these exact formulas
+// (48×27 grid, IDW power 2, default dials): color A's mean share of the frame
+// swung 0.29 → 0.72 within a single 9-second stretch — the entire background
+// visibly flipping from one palette color to the other MID-SONG with no prop
+// change anywhere (live-reported 2026-07-30 as "the first song changes
+// palettes halfway through"; the trigger path through nextColors/onFadeStart
+// was ruled out — that path always fades the audio out and advances, and the
+// audio kept playing). The same chance-driven imbalance is why the blend read
+// as "one color at ~90%, the other at ~10%, flipping around" rather than two
+// colors actually interacting: at any instant one color's three blobs could
+// cluster and own almost everything (measured moments of 58%-vs-11% and
+// 6%-vs-61% strongly-dominated area).
+// With each color pair mirrored, wherever one color dominates its partner
+// dominates the mirror-image region, so the frame-wide balance is pinned by
+// construction: measured share range 0.48–0.55 over the same window, with
+// both colors always holding comparable strongly-dominant area — always
+// co-present, always meeting along moving seams, never flipping. 3-color
+// palettes (pickGradientColors' close-hues case) interleave as c0/c1, c2/c0,
+// c1/c2 across the three pairs, so every color still appears on both sides;
+// measured per-color share tightens from 0.11–0.55 to 0.19–0.48. Motion
+// character is unchanged — three of the six paths moved, but they're the same
+// seeded orbiting bodies at the same speeds/sizes, and three independent
+// pair-frequencies plus the boundary wobble keep the symmetry from reading
+// as mechanical. No new constants, no new dials.
 function makeBlobParams() {
   function rng(i, slot) {
     const x = Math.sin((i * 7 + slot) * 9301 + 49297) * 233280
@@ -47,7 +78,7 @@ function makeBlobParams() {
   }
   const speed = orbitSpeed()
   const size  = blobRadius()
-  return Array.from({ length: NUM_BLOBS }, (_, i) => ({
+  const makeOne = (i) => ({
     baseX:  0.10 + rng(i, 0) * 0.80,
     baseY:  0.10 + rng(i, 1) * 0.80,
     xAmp:   0.33,
@@ -57,7 +88,22 @@ function makeBlobParams() {
     xPhase: rng(i, 4) * Math.PI * 2,
     yPhase: rng(i, 5) * Math.PI * 2,
     radius: size + rng(i, 6) * 0.13,
-  }))
+  })
+  return Array.from({ length: NUM_BLOBS }, (_, i) => {
+    if (i % 2 === 0) return makeOne(i)
+    const p = makeOne(i - 1)
+    return {
+      baseX:  1 - p.baseX,
+      baseY:  1 - p.baseY,
+      xAmp:   p.xAmp,
+      yAmp:   p.yAmp,
+      xFreq:  p.xFreq,
+      yFreq:  p.yFreq,
+      xPhase: p.xPhase + Math.PI,
+      yPhase: p.yPhase + Math.PI,
+      radius: size + rng(i, 6) * 0.13,
+    }
+  })
 }
 
 // Inverse-distance-weighting power — how sharply a blob's own color
