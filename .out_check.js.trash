@@ -1,0 +1,385 @@
+// src/components/AlbumGradientMesh.jsx
+import { useEffect, useRef, useMemo } from "react";
+
+// src/lib/gradientTuning.js
+var STORAGE_KEY = "trivia_gradient_tuning";
+var lerp = (a, b, t) => a + (b - a) * t;
+var DIALS = [
+  { id: "BRIGHTNESS", label: "BRIGHTNESS", commit: "live" },
+  { id: "MOTION", label: "MOTION", commit: "release", remount: true },
+  { id: "SIZE", label: "SIZE", commit: "release", remount: true },
+  { id: "BLEND", label: "BLEND", commit: "live" },
+  { id: "VARIETY", label: "VARIETY", commit: "release", server: true },
+  { id: "CROSSFADE", label: "CROSSFADE", commit: "live" }
+];
+var DIAL_BY_ID = Object.fromEntries(DIALS.map((d) => [d.id, d]));
+var DEFAULT_VALUE = 50;
+var overrides = {};
+if (typeof window !== "undefined") {
+  try {
+    overrides = JSON.parse(localStorage.getItem(STORAGE_KEY)) ?? {};
+  } catch {
+    overrides = {};
+  }
+}
+function T(id) {
+  return overrides[id] ?? DEFAULT_VALUE;
+}
+function chromaScale() {
+  return lerp(0.4, 1, T("BRIGHTNESS") / 100);
+}
+function orbitSpeed() {
+  return lerp(0.3, 1.9, T("MOTION") / 100);
+}
+function blobRadius() {
+  return lerp(0.3, 0.7, T("SIZE") / 100);
+}
+function meshIdwPower() {
+  return lerp(1, 3, T("BLEND") / 100);
+}
+function blendDurationMs() {
+  return lerp(12e3, 3e3, T("CROSSFADE") / 100);
+}
+
+// src/components/AlbumGradientMesh.jsx
+var NUM_BLOBS = 6;
+function makeBlobParams() {
+  function rng(i, slot) {
+    const x = Math.sin((i * 7 + slot) * 9301 + 49297) * 233280;
+    return x - Math.floor(x);
+  }
+  const speed = orbitSpeed();
+  const size = blobRadius();
+  return Array.from({ length: NUM_BLOBS }, (_, i) => ({
+    baseX: 0.1 + rng(i, 0) * 0.8,
+    baseY: 0.1 + rng(i, 1) * 0.8,
+    xAmp: 0.33,
+    yAmp: 0.33,
+    xFreq: speed / (10 + rng(i, 2) * 7),
+    yFreq: speed / (10 + rng(i, 3) * 7),
+    xPhase: rng(i, 4) * Math.PI * 2,
+    yPhase: rng(i, 5) * Math.PI * 2,
+    radius: size + rng(i, 6) * 0.13
+  }));
+}
+var WOBBLE_PX = 2.2;
+var WOBBLE_FLOW_SPEED = 0.6;
+function hexToRgb(hex) {
+  if (!hex || hex.length < 7) return [8, 8, 8];
+  return [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16)
+  ];
+}
+function rotationFor(src) {
+  if (!src.length) return 0;
+  const hex = src[0] || "#000000";
+  let sum = 0;
+  for (let k = 1; k < hex.length; k++) sum += hex.charCodeAt(k);
+  return sum % src.length;
+}
+function parseColors(hexArr, n) {
+  const src = hexArr.length ? hexArr : ["#080808"];
+  const rot = rotationFor(src);
+  return Array.from({ length: n }, (_, i) => [...hexToRgb(src[(i + rot) % src.length])]);
+}
+function easeInOut(t) {
+  t = Math.max(0, Math.min(1, t));
+  return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+}
+function lerp2(a, b, t) {
+  return a + (b - a) * t;
+}
+function srgbToLinear(c) {
+  c /= 255;
+  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+function linearToSrgb(c) {
+  c = c <= 31308e-7 ? c * 12.92 : 1.055 * Math.pow(Math.max(c, 0), 1 / 2.4) - 0.055;
+  return Math.max(0, Math.min(255, c * 255));
+}
+function cbrt(x) {
+  return Math.sign(x) * Math.pow(Math.abs(x), 1 / 3);
+}
+function rgbToOklab([r, g, b]) {
+  r = srgbToLinear(r);
+  g = srgbToLinear(g);
+  b = srgbToLinear(b);
+  const l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b;
+  const m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b;
+  const s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b;
+  const l_ = cbrt(l), m_ = cbrt(m), s_ = cbrt(s);
+  return [
+    0.2104542553 * l_ + 0.793617785 * m_ - 0.0040720468 * s_,
+    1.9779984951 * l_ - 2.428592205 * m_ + 0.4505937099 * s_,
+    0.0259040371 * l_ + 0.7827717662 * m_ - 0.808675766 * s_
+  ];
+}
+function oklabToRgb([L, a, b]) {
+  const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+  const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+  const s_ = L - 0.0894841775 * a - 1.291485548 * b;
+  const l = l_ * l_ * l_, m = m_ * m_ * m_, s = s_ * s_ * s_;
+  const r = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+  const g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+  const bb = -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s;
+  return [linearToSrgb(r), linearToSrgb(g), linearToSrgb(bb)];
+}
+function rgbToOklch(rgb) {
+  const [L, a, b] = rgbToOklab(rgb);
+  return [L, Math.sqrt(a * a + b * b), Math.atan2(b, a)];
+}
+function oklchToRgb(L, C, H) {
+  return oklabToRgb([L, C * Math.cos(H), C * Math.sin(H)]);
+}
+function hueLerp(h1, h2, t) {
+  let delta = h2 - h1;
+  delta = ((delta + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+  return h1 + delta * t;
+}
+function blendPairRgb(rgbA, rgbB, t) {
+  const [La, Ca, Ha] = rgbToOklch(rgbA);
+  const [Lb, Cb, Hb] = rgbToOklch(rgbB);
+  return oklchToRgb(lerp2(La, Lb, t), lerp2(Ca, Cb, t), hueLerp(Ha, Hb, t));
+}
+function pseudoNoise(x, y, t) {
+  return (Math.sin(x * 1.3 + t) + Math.sin(y * 1.4 - t * 0.7) + Math.sin((x + y) * 0.9 + t * 1.1) + Math.sin((x - y) * 1.1 - t * 0.5)) / 4;
+}
+function AlbumGradientMesh({ colors = [], nextColors = [], active = true, shuffleKey = 0, entranceActive = false }) {
+  const canvasRef = useRef(null);
+  const smallCanvasRef = useRef(null);
+  const activeRef = useRef(active);
+  const mountedRef = useRef(true);
+  const rafRef = useRef(null);
+  const isFirst = useRef(true);
+  const isFirstNext = useRef(true);
+  const isFirstKey = useRef(true);
+  const pendingFromNextRef = useRef(false);
+  const entranceActiveRef = useRef(entranceActive);
+  const pendingBlendRef = useRef(null);
+  const blobParams = useMemo(makeBlobParams, []);
+  const tinySizeRef = useRef({ w: 48, h: 48 });
+  const st = useRef(null);
+  if (!st.current) {
+    const initial = parseColors(colors, NUM_BLOBS);
+    st.current = {
+      steadyRgb: initial.map((c) => [...c]),
+      outRgb: initial.map((c) => [...c]),
+      inRgb: initial.map((c) => [...c]),
+      blendStart: -1
+    };
+  }
+  function startBlendTo(newHex) {
+    const s = st.current;
+    const now = performance.now();
+    if (s.blendStart >= 0 && now - s.blendStart < blendDurationMs()) {
+      const t = easeInOut(Math.min((now - s.blendStart) / blendDurationMs(), 1));
+      s.outRgb = s.outRgb.map((c, i) => blendPairRgb(c, s.inRgb[i], t));
+    } else {
+      s.outRgb = s.steadyRgb.map((c) => [...c]);
+    }
+    s.inRgb = parseColors(newHex, NUM_BLOBS);
+    s.blendStart = performance.now();
+    if (!rafRef.current && mountedRef.current) startLoop();
+  }
+  useEffect(() => {
+    if (isFirstKey.current) {
+      isFirstKey.current = false;
+      return;
+    }
+    const s = st.current;
+    s.blendStart = -1;
+    pendingFromNextRef.current = false;
+  }, [shuffleKey]);
+  useEffect(() => {
+    if (isFirstNext.current) {
+      isFirstNext.current = false;
+      return;
+    }
+    if (!nextColors.length) return;
+    if (nextColors.every((c) => c === "#080808")) return;
+    if (entranceActiveRef.current) {
+      pendingFromNextRef.current = true;
+      pendingBlendRef.current = nextColors;
+      return;
+    }
+    startBlendTo(nextColors);
+    pendingFromNextRef.current = true;
+  }, [nextColors]);
+  useEffect(() => {
+    if (isFirst.current) {
+      isFirst.current = false;
+      return;
+    }
+    if (pendingFromNextRef.current) {
+      pendingFromNextRef.current = false;
+      pendingBlendRef.current = null;
+      const s = st.current;
+      s.inRgb = parseColors(colors, NUM_BLOBS);
+      s.steadyRgb = parseColors(colors, NUM_BLOBS);
+    } else {
+      if (entranceActiveRef.current) {
+        pendingBlendRef.current = colors;
+        return;
+      }
+      startBlendTo(colors);
+    }
+  }, [colors]);
+  useEffect(() => {
+    entranceActiveRef.current = entranceActive;
+    if (!entranceActive && pendingBlendRef.current) {
+      const pending = pendingBlendRef.current;
+      pendingBlendRef.current = null;
+      startBlendTo(pending);
+    }
+  }, [entranceActive]);
+  useEffect(() => {
+    activeRef.current = active;
+    if (active && !rafRef.current && mountedRef.current) startLoop();
+  }, [active]);
+  function startLoop() {
+    rafRef.current = requestAnimationFrame(tick);
+  }
+  function tick(ts) {
+    draw(ts);
+    if (mountedRef.current && (activeRef.current || st.current.blendStart >= 0)) {
+      rafRef.current = requestAnimationFrame(tick);
+    } else {
+      rafRef.current = null;
+    }
+  }
+  function draw(ts) {
+    const canvas = canvasRef.current;
+    const small = smallCanvasRef.current;
+    if (!canvas || !small) return;
+    const W = canvas.width, H = canvas.height;
+    if (!W || !H) return;
+    const ctx = canvas.getContext("2d");
+    const sctx = small.getContext("2d");
+    const { w: SW, h: SH } = tinySizeRef.current;
+    const s = st.current;
+    let liveColors;
+    if (s.blendStart >= 0) {
+      const t = easeInOut(Math.min((ts - s.blendStart) / blendDurationMs(), 1));
+      liveColors = s.outRgb.map((c, i) => blendPairRgb(c, s.inRgb[i], t));
+      if (t >= 1) {
+        s.steadyRgb = s.inRgb.map((c) => [...c]);
+        s.blendStart = -1;
+      }
+    } else {
+      liveColors = s.steadyRgb;
+    }
+    const oklabColors = liveColors.map(rgbToOklab);
+    const idwPower = meshIdwPower();
+    const chromaScl = chromaScale();
+    const tSec = ts / 1e3;
+    const wobT = tSec * WOBBLE_FLOW_SPEED;
+    const blobs = blobParams.map((p, i) => {
+      const color = oklabColors[i % oklabColors.length];
+      return {
+        cx: (p.baseX + p.xAmp * Math.sin(tSec * p.xFreq * Math.PI * 2 + p.xPhase)) * SW,
+        cy: (p.baseY + p.yAmp * Math.sin(tSec * p.yFreq * Math.PI * 2 + p.yPhase)) * SH,
+        r: p.radius * Math.max(SW, SH),
+        color,
+        // Chroma magnitude of this blob's a/b vector, precomputed once per
+        // blob per frame (static — doesn't depend on pixel position). Used
+        // by the polar blend below so a low-chroma blob can't destabilize
+        // the hue vote the way its raw a/b would.
+        chroma: Math.sqrt(color[1] * color[1] + color[2] * color[2])
+      };
+    });
+    const img = sctx.getImageData(0, 0, SW, SH);
+    const data = img.data;
+    for (let y = 0; y < SH; y++) {
+      for (let x = 0; x < SW; x++) {
+        const wob = pseudoNoise(x * 0.15, y * 0.15, wobT) * WOBBLE_PX;
+        let wSum = 0, L = 0, aSum = 0, bSum = 0, chromaSum = 0;
+        for (let i = 0; i < blobs.length; i++) {
+          const bl = blobs[i];
+          const dx = x - bl.cx, dy = y - bl.cy;
+          const d = Math.sqrt(dx * dx + dy * dy) + wob;
+          const dn = Math.max(0.02, d / bl.r);
+          const w = 1 / Math.pow(dn, idwPower);
+          wSum += w;
+          L += w * bl.color[0];
+          aSum += w * bl.color[1];
+          bSum += w * bl.color[2];
+          chromaSum += w * bl.chroma;
+        }
+        L /= wSum;
+        const hue = Math.atan2(bSum, aSum);
+        const C = chromaSum / wSum;
+        let a = C * Math.cos(hue);
+        let b = C * Math.sin(hue);
+        a *= chromaScl;
+        b *= chromaScl;
+        const [r, g, bb] = oklabToRgb([L, a, b]);
+        const idx = (y * SW + x) * 4;
+        data[idx] = r;
+        data[idx + 1] = g;
+        data[idx + 2] = bb;
+        data[idx + 3] = 255;
+      }
+    }
+    sctx.putImageData(img, 0, 0);
+    ctx.filter = "blur(24px)";
+    ctx.clearRect(0, 0, W, H);
+    const pad = Math.max(W, H) * 0.06;
+    ctx.drawImage(small, -pad, -pad, W + pad * 2, H + pad * 2);
+    ctx.filter = "none";
+    ctx.globalAlpha = 0.03;
+    for (let i = 0; i < 700; i++) {
+      ctx.fillStyle = Math.random() > 0.5 ? "#fff" : "#000";
+      ctx.fillRect(Math.random() * W, Math.random() * H, 1, 1);
+    }
+    ctx.globalAlpha = 1;
+  }
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const small = document.createElement("canvas");
+    smallCanvasRef.current = small;
+    function resize() {
+      const p = canvas.parentElement;
+      const w = Math.round((p ? p.clientWidth : 0) || window.innerWidth);
+      const h = Math.round((p ? p.clientHeight : 0) || window.innerHeight);
+      canvas.width = w;
+      canvas.height = h;
+      const aspect = w / h;
+      const tw = aspect >= 1 ? 48 : Math.max(24, Math.round(48 * aspect));
+      const th = aspect >= 1 ? Math.max(24, Math.round(48 / aspect)) : 48;
+      tinySizeRef.current = { w: tw, h: th };
+      small.width = tw;
+      small.height = th;
+    }
+    resize();
+    window.addEventListener("resize", resize);
+    if (activeRef.current) startLoop();
+    return () => {
+      mountedRef.current = false;
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+      window.removeEventListener("resize", resize);
+    };
+  }, [blobParams]);
+  return /* @__PURE__ */ React.createElement(
+    "canvas",
+    {
+      ref: canvasRef,
+      style: {
+        position: "absolute",
+        inset: 0,
+        width: "100%",
+        height: "100%",
+        zIndex: 0,
+        display: "block",
+        willChange: "transform",
+        transform: "translateZ(0)"
+      }
+    }
+  );
+}
+export {
+  AlbumGradientMesh as default
+};

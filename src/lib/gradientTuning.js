@@ -151,43 +151,23 @@ export function setEngine(engine) {
 // board existed, so a dial sitting at 50 draws exactly what shipped yesterday.
 // (They were off by a hair — 0.85/0.625/0.40 vs 0.82/0.62/0.38 — which broke
 // the board's core promise that "touch nothing, change nothing".)
-// BRIGHTNESS/BLEND defaults lowered 2026-07-30 (T=50 now resolves to a
-// calmer value than the original hardcoded constant, unlike every other
-// dial here which reproduces yesterday's exact behavior at 50). Today's
-// palette.js fixes (recolor real green/gold instead of flattening them
-// toward neon fallbacks) feed the mesh renderer real, more vivid, more
-// varied color than it saw when these dials were tuned — AlbumGradientMesh
-// itself already warned about exactly this ("no built-in dampening...
-// every pixel is a full-strength blend of real palette hues, which read as
-// more saturated throughout") and LiveScreen.jsx flagged it as a watch-item.
-// Reported live: distinct saturated color pools drifting independently read
-// as "lava lamp," not ambient wash. Two levers, chosen deliberately over a
-// third (blobRadius/SIZE, left untouched — more overlap would ALSO smooth
-// pooling, but changing three knobs at once from an unverified guess is
-// worse than two well-targeted ones):
-//   - chromaScale down (0.82 -> 0.70 at 50): less saturated throughout,
-//     directly countering the oversaturation the mesh's own comment predicted.
-//   - meshIdwPower down (3 -> 2 at 50): per its own comment, lower = more
-//     "creamy/averaged," closer to the pre-blob noise-field feel that never
-//     read as distinct pooled bodies — the literal opposite of "lava lamp."
 //
-// chromaScale nudged up 0.70 -> 0.80 same day (for a dull-brown complaint on
-// Abraham Alexander's "Stay"), then reverted right back down within the same
-// session once a sharper problem showed up: the mesh's chroma-preserving
-// blend (see AlbumGradientMesh.jsx's spatial-blend comment, 2026-07-28) means
-// wherever two blobs of different hue meet, chroma is the WEIGHTED MEAN of
-// both — it never dips at the seam. Turning chromaScale up doesn't just
-// enrich single-hue-dominated regions like that brown; it also pushes every
-// SEAM between two different colors to a more vivid, more distinct blend —
-// live-reported 2026-07-30 as "where the two colors are connecting is where
-// I'm having my major issues," directly after the 0.80 bump. That's the more
-// frequent, more disruptive complaint (lava-lamp seams) vs. the narrower one
-// (one dull brown), so back to 0.70. The brown-richness problem still
-// exists; it needs a fix that helps single-color regions without also
-// juicing every seam (e.g. damping chroma specifically where multiple blobs
-// have comparable weight, not a blanket multiplier) — not attempted here,
-// left for a future pass once the seam problem itself is confirmed calmer.
-export function chromaScale()      { return lerp(0.40, 1.00, T('BRIGHTNESS') / 100) }       // 50 → 0.70 (was 0.82)
+// RESTORED 2026-07-30 evening: chromaScale 50 → 0.82 and meshIdwPower
+// 50 → 3 — the 2026-07-27 values, per owner call ("looked real nice back
+// then"). The same-day lowering to 0.70/2 was compensation for weight-
+// driven blob pooling ("distinct saturated pools read as lava lamp"), and
+// that pooling is gone at the root: AlbumGradientMesh went back to the
+// equal alternating color split (22/30 covers broken under weights vs
+// 27/30 clean under equal split, 30-cover live audit), and displayed mud
+// is now bounded by the renderer's own output-stage guard (mudRescue in
+// src/lib/mudModel.js) instead of by keeping everything desaturated.
+// Lerp endpoints re-centered so 50 lands on the restored constants while
+// the dials keep meaningful travel both directions. The brown-richness
+// note from the lowered era stays relevant: damping chroma specifically
+// where multiple blobs have comparable weight (not a blanket multiplier)
+// remains the candidate future pass if seams ever need calming WITHOUT
+// muting single-color regions.
+export function chromaScale()      { return lerp(0.64, 1.00, T('BRIGHTNESS') / 100) }       // 50 → 0.82 (restored 07-27 value)
 export function circleAlphaMuted() { return lerp(0.45, 0.79, T('BRIGHTNESS') / 100) }       // 50 → 0.62 (was 0.62, exact)
 export function circleAlphaSat()   { return lerp(0.21, 0.55, T('BRIGHTNESS') / 100) }       // 50 → 0.38 (was 0.38, exact)
 
@@ -201,7 +181,7 @@ export function orbitSpeed()       { return lerp(0.345, 2.185, T('MOTION') / 100
 
 export function blobRadius()       { return lerp(0.30, 0.70, T('SIZE') / 100) }             // 50 → 0.50 (was 0.50, exact)
 
-export function meshIdwPower()     { return lerp(1, 3, T('BLEND') / 100) }                  // 50 → 2 (was 3)
+export function meshIdwPower()     { return lerp(2, 4, T('BLEND') / 100) }                  // 50 → 3 (restored 07-27 value)
 export function circleFalloffPow() { return lerp(0.2, 2.8, T('BLEND') / 100) }              // 50 → 1.5 (was 1.5, exact)
 
 export function blendDurationMs()  { return lerp(12000, 3000, T('CROSSFADE') / 100) }       // 50 → 7500 (was 7500, exact)

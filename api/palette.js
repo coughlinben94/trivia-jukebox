@@ -1,5 +1,13 @@
 import sharp from 'sharp';
 import { resolvePaletteConfig } from '../src/lib/paletteDefaults.js';
+import { smoothstep, relativeSaturation, warmPocketHueWeight, uglyWeight } from '../src/lib/mudModel.js';
+
+// Mud-pocket model moved to src/lib/mudModel.js (2026-07-30) so the mesh
+// renderer's displayed-pixel rescue shares ONE definition of ugly with this
+// file's candidate gating/recolor. Re-exported here so existing imports
+// (src/test/palette.test.js) keep working. Full calibration history stays
+// in the comments below, where the model was built.
+export { smoothstep, relativeSaturation, warmPocketHueWeight, uglyWeight };
 
 export default async function handler(req, res) {
   const { url } = req.query;
@@ -489,14 +497,40 @@ export default async function handler(req, res) {
         // allocateBlobCounts). 0.40 stands: the Fast Car rig confirmed
         // saturation was never the isolation lever, and at a feathering
         // offset 0.40 reads as a soft wash, which is the accent's whole job.
-        const ACCENT_SAT = 0.40;
+        // Accent saturation is no longer fixed (was 0.40, 2026-07-30 evening
+        // revision): under the restored equal 3/3 blob split the accent owns
+        // area by orbit, but the mesh's chroma-weighted hue vote still
+        // decides what a pixel DISPLAYS — a pixel only leans past the
+        // angular midpoint toward the accent when the accent's chroma-
+        // weighted share beats the base's: share > C_base/(C_base+C_accent).
+        // Measured live (Secret Garden): base C 0.192 vs fixed-0.40-sat
+        // accent C 0.078 -> threshold 71% -> the accent's true hue showed
+        // only in its blob cores and the field read ONE color. Pinning the
+        // RATIO instead (C_accent = 0.55 x C_base -> threshold ~64.5%) keeps
+        // accent presence proportional to how vivid the base actually is.
+        // Solved by scanning HSL sat at the accent's own hue/lightness
+        // against real OKLab chroma; clamped [0.25, 0.65] — floor keeps
+        // presence on very muted bases, cap is the B&W branch's own
+        // "carries the gradient alone" sat so it can never cross into neon.
+        // Two passes because pickAccentHue's arc test depends on sat: pick
+        // hue at the old provisional 0.40, solve sat at that hue, re-pick.
+        const ACCENT_PROVISIONAL_SAT = 0.40;
+        const ACCENT_CHROMA_RATIO = 0.55;
+        const ACCENT_SAT_MIN = 0.25, ACCENT_SAT_MAX = 0.65;
         const accentLight = Math.min(0.75, Math.max(0.25, avgLuma));
         // no real candidates survived at all — rare, arbitrary last resort
         // (the old code anchored this case at hue 320; same color, as hex,
         // since pickAccentHue derives both HSL and OKLab hue from a hex)
         const baseHex = colors.length ? colors[0] : hslToHex(320, 0.55, 0.45);
-        const accentHue = pickAccentHue(baseHex, ACCENT_SAT, accentLight);
-        const accent = hslToHex(accentHue, ACCENT_SAT, accentLight);
+        const provisionalHue = pickAccentHue(baseHex, ACCENT_PROVISIONAL_SAT, accentLight);
+        const targetC = ACCENT_CHROMA_RATIO * hexToOklabChroma(baseHex);
+        let accentSat = ACCENT_SAT_MIN, bestD = Infinity;
+        for (let s = ACCENT_SAT_MIN; s <= ACCENT_SAT_MAX + 1e-9; s += 0.05) {
+          const d = Math.abs(hexToOklabChroma(hslToHex(provisionalHue, s, accentLight)) - targetC);
+          if (d < bestD) { bestD = d; accentSat = s; }
+        }
+        const accentHue = pickAccentHue(baseHex, accentSat, accentLight);
+        const accent = hslToHex(accentHue, accentSat, accentLight);
         // Accent placed at index 2, not appended at the end — LiveScreen's
         // client-side picker (pickGradientColors) only ever looks at indices
         // 0-2 (top 2, plus a 3rd from index 2 specifically when the top 2
@@ -809,10 +843,7 @@ function hexToLightness(hex) {
 // waved through. The ramps multiply into one combined `weight` (0 =
 // clean, 1 = dead center of the pocket), which interpolates the penalty
 // between 1 (no discount) and 0.35 (full discount), same as always.
-function smoothstep(edge0, edge1, x) {
-  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
-  return t * t * (3 - 2 * t);
-}
+// smoothstep: see src/lib/mudModel.js
 
 // HSL-cylinder saturation: chroma as a fraction of the maximum chroma the
 // cylinder can hold at that lightness (1 - |2L - 1|). This is the
@@ -824,11 +855,7 @@ function smoothstep(edge0, edge1, x) {
 // value only ever gates a PENALTY, it never ranks a color upward, and the
 // lightness band in uglyWeight keeps the unstable near-white/near-black
 // ends out of play anyway.
-export function relativeSaturation(chroma, lightness) {
-  const denom = 1 - Math.abs(2 * lightness - 1);
-  if (denom <= 0) return 0;
-  return Math.min(1, chroma / denom);
-}
+// relativeSaturation: see src/lib/mudModel.js
 
 // The warm-valence hue band from uglyWeight's three-ramp model, factored
 // out (2026-07-30) so pickAccentHue below can integrate the SAME "where
@@ -837,37 +864,14 @@ export function relativeSaturation(chroma, lightness) {
 // drift apart (same discipline as uglyPenalty/deuglify sharing
 // uglyWeight). Full weight 28°-88°, ramping in over 16°-28° and out over
 // 88°-102° — calibration notes in the uglyWeight comment below.
-export function warmPocketHueWeight(hue) {
-  const HUE_IN_LO = 16, HUE_IN_HI = 28, HUE_OUT_LO = 88, HUE_OUT_HI = 102;
-  if (hue < HUE_IN_HI) return smoothstep(HUE_IN_LO, HUE_IN_HI, hue);
-  if (hue > HUE_OUT_LO) return 1 - smoothstep(HUE_OUT_LO, HUE_OUT_HI, hue);
-  return 1;
-}
+// warmPocketHueWeight: see src/lib/mudModel.js
 
 // 0 (clean) to 1 (dead centre of the muddy-warm pocket). Factored out of
 // uglyPenalty (2026-07-29) so the score discount and deuglify's recolor
 // below share one definition of "in the pocket" and can never disagree.
 // Generalized 2026-07-30 from the original 40-100° absolute-chroma box to
 // the three-ramp model documented above.
-export function uglyWeight(hue, chroma, lightness) {
-  const hueWeight = warmPocketHueWeight(hue);
-  if (hueWeight <= 0) return 0;
-
-  const REL_SAT_LO = 0.42, REL_SAT_HI = 0.55;
-  const NEUTRAL_LO = 0.05, NEUTRAL_HI = 0.12; // neutrality guard — see block comment above
-  const dullWeight = (1 - smoothstep(REL_SAT_LO, REL_SAT_HI, relativeSaturation(chroma, lightness)))
-    * smoothstep(NEUTRAL_LO, NEUTRAL_HI, chroma);
-  if (dullWeight <= 0) return 0;
-
-  const LIGHT_LO = 0.18, LIGHT_HI = 0.55, LIGHT_RAMP_LO = 0.05, LIGHT_RAMP_HI = 0.10;
-  let lightnessWeight;
-  if (lightness < LIGHT_LO) lightnessWeight = smoothstep(LIGHT_LO - LIGHT_RAMP_LO, LIGHT_LO, lightness);
-  else if (lightness > LIGHT_HI) lightnessWeight = 1 - smoothstep(LIGHT_HI, LIGHT_HI + LIGHT_RAMP_HI, lightness);
-  else lightnessWeight = 1;
-  if (lightnessWeight <= 0) return 0;
-
-  return hueWeight * dullWeight * lightnessWeight;
-}
+// uglyWeight: see src/lib/mudModel.js (calibration documented above)
 
 function uglyPenalty(hue, chroma, lightness) {
   const weight = uglyWeight(hue, chroma, lightness);
@@ -884,6 +888,21 @@ function uglyPenalty(hue, chroma, lightness) {
 // only OKLab hue distance predicts it — HSL hue distance does not (the
 // 2026-07-30 verification sweep measured HSL-±120° spanning anywhere from
 // ~107° to ~149° in OKLab depending on the base hue).
+// OKLab chroma (a/b magnitude) of a hex color — sibling of hexToOklabHueDeg
+// below, same matrix. Needed by the accent-saturation solve above because
+// the mesh's hue-vote visibility threshold is a ratio of OKLab chromas, so
+// the accent's sat must be chosen against real OKLab chroma, not HSL sat.
+export function hexToOklabChroma(hex) {
+  const lin = v => { v = parseInt(v, 16) / 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  const r = lin(hex.slice(1, 3)), g = lin(hex.slice(3, 5)), b = lin(hex.slice(5, 7));
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  const a = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s;
+  const bb = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s;
+  return Math.hypot(a, bb);
+}
+
 export function hexToOklabHueDeg(hex) {
   const lin = v => { v = parseInt(v, 16) / 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
   const r = lin(hex.slice(1, 3)), g = lin(hex.slice(3, 5)), b = lin(hex.slice(5, 7));

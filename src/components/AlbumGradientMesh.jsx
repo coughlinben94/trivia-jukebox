@@ -1,5 +1,6 @@
 import { useEffect, useRef, useMemo } from 'react'
 import { orbitSpeed, blobRadius, meshIdwPower, chromaScale, blendDurationMs } from '../lib/gradientTuning.js'
+import { mudRescue } from '../lib/mudModel.js'
 
 // Canvas2D "soft mesh" gradient background — third generation. Same prop
 // contract as AlbumGradient.jsx (colors/nextColors/active/shuffleKey/
@@ -182,161 +183,69 @@ function rotationFor(src, mod = src.length) {
   return sum % mod
 }
 
-// Weight-proportional blob allocation (2026-07-30). Colors used to get an
-// automatic equal share (src[(i+rot) % src.length] handed every blob index
-// in turn) — with the antipodal pairing above making each color's share
-// STABLE instead of lucky, "equal" became a real structural guarantee, and
-// that's exactly what turned a single small accent hue (the synthetic
-// color api/palette.js mixes in for a single-real-hue cover, via
-// buildWeights()'s ACCENT_WEIGHT=0.15) into a fully competing third of the
-// frame — live-reported as "the exact lava lamp thing" on Orleans' "Dance
-// with Me." Task 1/2 today threaded a real `weights` array (sums to 1,
-// parallel to colors) all the way from api/palette.js's bucket population
-// through LiveScreen's pickGradientColors, specifically so blob count could
-// finally track how much of the cover a color actually is.
+// Equal split RESTORED 2026-07-30 (owner call, end of the weighted-palette
+// day): every palette color gets an equal alternating share of the 6 blobs
+// — src[(i+rot) % len] — the exact math that was live on 2026-07-27 and
+// remembered as "looked real nice." The weight-driven blob allocation that
+// replaced it earlier today (Hamilton apportionment + greedy arena
+// assignment) measured 22/30 covers broken in a 30-cover live audit: a
+// 15%-weight color got exactly 1 of 6 blobs, and 1 blob is either
+// INVISIBLE (mean 2% frame share — it loses the chroma-weighted hue vote
+// everywhere but its own core; reported as "one color on screen") or a
+// LONE ORBITING DISC (a compact pool circling one fixed orbit all song;
+// reported as "lava lamp" / "blue blob going round and round"). Equal
+// split scored 27/30 clean on the same covers, same math, same frames.
+// Weights still order the palette server-side (most-dominant first) and
+// still gate LiveScreen's >6-color cap; the renderer just no longer sizes
+// by them. The weights/nextWeights props stay accepted-and-unused so the
+// engine A/B contract with LiveScreen needs no change.
 //
-// allocateBlobCounts: Hamilton/largest-remainder apportionment of the 6
-// blob slots by weight. NOT the "reserve 1 slot per color, then apportion
-// the remaining 6-n by weight among all colors" version literally spelled
-// out in the weighted-palette plan doc — verified numerically
-// (simulate-blob-weights.mjs) that version backfires for a low-weight
-// accent specifically: for a real buildWeights()-shaped 2-color
-// [0.85, 0.15] palette, reserving 1 to each color first then apportioning
-// the remaining 4 by weight gives the accent floor(0.15*4)=0, but its
-// remainder (0.6) beats the dominant color's remainder (0.4) out of that
-// SMALLER 4-slot pool, so it wins the leftover slot ON TOP OF its reserved
-// one -- 2 of 6 blobs (33%) for a 15%-weight color. Running Hamilton
-// directly against all 6 slots first already gives every real color >=1
-// whenever the math allows it (quotas 5.1/0.9 -> floor 5/0 -> the one
-// leftover slot goes to the larger remainder, 0.9, i.e. the accent -- final
-// 5/1, matching its real weight). The "must get >=1" guarantee is only
-// needed as a rare post-hoc top-up (borrowing 1 slot from whoever currently
-// holds the most) for the case direct Hamilton actually can't satisfy on
-// its own -- several similarly-low-weight colors where the largest
-// remainder happens to fall on the already-biggest quota.
-function allocateBlobCounts(weights) {
-  const n = weights.length
-  if (n === 0) return []
-  if (n === 1) return [NUM_BLOBS]
-  const quotas = weights.map(w => w * NUM_BLOBS)
-  const counts = quotas.map(Math.floor)
-  const remainders = quotas.map((q, i) => q - counts[i])
-  const leftover = NUM_BLOBS - counts.reduce((s, c) => s + c, 0)
-  const order = weights.map((_, i) => i).sort((a, b) => {
-    if (remainders[b] !== remainders[a]) return remainders[b] - remainders[a]
-    if (weights[b] !== weights[a]) return weights[b] - weights[a]
-    return a - b
-  })
-  for (let k = 0; k < leftover; k++) counts[order[k]] += 1
-  // Post-hoc minimum guarantee (see comment above): a color with real
-  // weight but 0 blobs borrows 1 from whichever color currently holds the
-  // most -- never taking a donor below 1 itself, since the donor search
-  // requires counts[j] > 1.
-  for (let i = 0; i < n; i++) {
-    if (weights[i] > 0 && counts[i] === 0) {
-      let donor = -1
-      for (let j = 0; j < n; j++) {
-        if (counts[j] > 1 && (donor === -1 || counts[j] > counts[donor])) donor = j
-      }
-      if (donor !== -1) { counts[donor] -= 1; counts[i] += 1 }
-    }
-  }
-  return counts
-}
-
-// The fixed antipodal pairs from makeBlobParams() above: (0,1), (2,3),
-// (4,5) — each is a mirror-through-center, phase+π pair, geometrically,
-// regardless of which color(s) end up assigned to its two slots.
-const BLOB_PAIRS = [[0, 1], [2, 3], [4, 5]]
-
-// assignColorsToPairs: places each color's allocateBlobCounts() share onto
-// the 3 fixed arenas above. Greedy round-robin per arena — give the first
-// slot to whichever color currently has the most blobs left to place, give
-// the second slot to the NEXT-largest color that still needs one (i.e.
-// prefer a DIFFERENT color per arena), and only fall back to the SAME
-// color for both slots when every other color has already been fully
-// placed. This maximizes how many arenas any given color shares with a
-// DIFFERENT color (each such arena is a real antipodal mirror pair, so its
-// two occupants' combined share is pinned near-constant by the same
-// geometry the antipodal fix already relies on) and only concentrates a
-// color into a same-color "full" pair for whatever's left once nothing
-// else needs a partner.
-//
-// This matters more than it looks: an earlier version of this function
-// filled whole SAME-color pairs first (floor(count/2) each), leaving only
-// the leftover odd blobs to share arenas. For an exactly-equal true-B&W
-// fallback ([0.5, 0.5] -> 3 blobs each), that produced 1 full pair per
-// color plus 1 shared arena — concentrating ALL of the pairing-based
-// balance guarantee into a single arena instead of spreading it across all
-// 3, which measured a 0.355 swing (range 0.45-0.80) in
-// simulate-blob-weights.mjs, most of the way back to the ORIGINAL
-// un-paired bug's 0.43 swing (0.29-0.72) this session already fixed once.
-// This round-robin version reproduces the exact already-shipped/verified
-// alternating (0,1,0,1,0,1) arrangement for that same equal-weight case
-// (falls out of the algorithm automatically, not a special case), which
-// measured a much tighter 0.158 swing (0.43-0.59) under the same sim.
-function assignColorsToPairs(counts, rotationSeed) {
-  const n = counts.length
-  const remaining = counts.slice()
-  const arenas = []
-  for (let p = 0; p < BLOB_PAIRS.length; p++) {
-    let a = -1
-    for (let i = 0; i < n; i++) {
-      if (remaining[i] > 0 && (a === -1 || remaining[i] > remaining[a])) a = i
-    }
-    remaining[a] -= 1
-    let b = -1
-    for (let i = 0; i < n; i++) {
-      if (i !== a && remaining[i] > 0 && (b === -1 || remaining[i] > remaining[b])) b = i
-    }
-    if (b === -1) b = a // nothing else left to place -- forced same-color pair
-    remaining[b] -= 1
-    arenas.push([a, b])
-  }
-  // Rotate WHICH physical arena (0, 1, or 2) each queue entry lands on, per
-  // cover — same reasoning as rotationFor() above: without this, the
-  // arena built first (always the most-dominant color, by construction of
-  // the greedy loop) would always land on physical pair (0,1) — blob 0's
-  // FIXED, same-every-song orbit — reintroducing the exact "always the
-  // same corner" bug rotationFor was written to fix, just one layer up, at
-  // the pair level instead of the single-blob level.
-  const rot = rotationSeed % BLOB_PAIRS.length
-  const colorByBlobIndex = new Array(NUM_BLOBS)
-  arenas.forEach(([a, b], i) => {
-    const [i0, i1] = BLOB_PAIRS[(i + rot) % BLOB_PAIRS.length]
-    colorByBlobIndex[i0] = a
-    colorByBlobIndex[i1] = b
-  })
-  return colorByBlobIndex
-}
-
-// Numeric verification of all of the above lives in
-// simulate-blob-weights.mjs (plain Node, run 2026-07-30) — it copies
-// makeBlobParams()'s rng/antipodal formulas and draw()'s IDW formula
-// verbatim and measures each color's real per-instant frame share on the
-// same 48x27 tiny-canvas grid. Actual printed results (10s window, 0.1s
-// steps, current gradientTuning.js T=50 defaults):
-//   3-color [0.6, 0.25, 0.15]  -> blob counts [4, 1, 1] -> mean share
-//     0.673 / 0.198 / 0.130, ranges [0.548,0.787] / [0.129,0.293] /
-//     [0.014,0.255] -- ordering matches weight ordering throughout (the
-//     dominant color's minimum, 0.548, always exceeds both minors' maximums).
-//   2-color accent [0.85, 0.15] (buildWeights()'s real single-hue+accent
-//     shape) -> blob counts [5, 1] -> mean share 0.802 / 0.198, ranges
-//     [0.707,0.871] / [0.129,0.293] -- accent never exceeds 0.293, never
-//     swings toward dominance.
-//   True B&W [0.5, 0.5] -> blob counts [3, 3] -> mean share 0.518 / 0.482,
-//     ranges [0.429,0.587] / [0.413,0.571] -- matches today's already-
-//     shipped equal-weight antipodal behavior (falls out to the same
-//     alternating 0,1,0,1,0,1 arrangement).
-function parseColors(hexArr, weightsArr, n) {
+// With modulo assignment over the fixed antipodal arenas ((0,1),(2,3),
+// (4,5), odd mirrors even), the two slots of every arena get DIFFERENT
+// colors at every palette length 2-6 (len 2: (c0,c1)x3; len 3: (c0,c1),
+// (c2,c0),(c1,c2); len 4: (c0,c1),(c2,c3),(c0,c1); len 5: (c0,c1),
+// (c2,c3),(c4,c0)) — so the antipodal balance-pinning (frame share range
+// ~0.43-0.59, no mid-song 90/10 flips) applies to every arena at every
+// palette size. That stabilizer is the one piece of the weighted-era work
+// that stays: it fixes a measured 07-27 defect (0.29→0.72 share swings)
+// without changing the look class.
+function parseColors(hexArr, n) {
   const src = hexArr.length ? hexArr : ['#080808']
-  const weights = (Array.isArray(weightsArr) && weightsArr.length === src.length)
-    ? weightsArr
-    : src.map(() => 1 / src.length)
-  const rot = rotationFor(src, BLOB_PAIRS.length)
-  const counts = allocateBlobCounts(weights)
-  const colorByBlobIndex = assignColorsToPairs(counts, rot)
-  return Array.from({ length: n }, (_, i) => [...hexToRgb(src[colorByBlobIndex[i]])])
+  const rot = rotationFor(src, src.length)
+  return Array.from({ length: n }, (_, i) => [...hexToRgb(src[(i + rot) % src.length])])
+}
+
+// ── HSL helpers for the displayed-mud guard in draw() ───────────────────────
+// Port of api/palette.js's cylinder math minus hex formatting. The mud
+// bands (src/lib/mudModel.js) were calibrated in HSL hue/rel-sat/lightness,
+// so the guard converts each candidate pixel INTO that space rather than
+// refitting the bands in OKLab — one definition of mud, no drift. At
+// 48x27 = 1,296 px this is noise next to the per-pixel IDW loop.
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), c = mx - mn, l = (mx + mn) / 2
+  let h = 0
+  if (c > 0) {
+    if (mx === r) h = ((g - b) / c) % 6
+    else if (mx === g) h = (b - r) / c + 2
+    else h = (r - g) / c + 4
+    h *= 60
+    if (h < 0) h += 360
+  }
+  return [h, c, l]
+}
+function hslToRgb(h, s, l) {
+  const c = (1 - Math.abs(2 * l - 1)) * s
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
+  const m = l - c / 2
+  let r, g, b
+  if (h < 60)       [r, g, b] = [c, x, 0]
+  else if (h < 120)  [r, g, b] = [x, c, 0]
+  else if (h < 180)  [r, g, b] = [0, c, x]
+  else if (h < 240)  [r, g, b] = [0, x, c]
+  else if (h < 300)  [r, g, b] = [x, 0, c]
+  else               [r, g, b] = [c, 0, x]
+  return [(r + m) * 255, (g + m) * 255, (b + m) * 255]
 }
 
 function easeInOut(t) {
@@ -455,6 +364,9 @@ function pseudoNoise(x, y, t) {
   ) / 4
 }
 
+// weights/nextWeights are accepted and UNUSED since the 2026-07-30 equal-
+// split restore (see parseColors) — kept so LiveScreen's GradientBg line
+// and the engine A/B contract with AlbumGradient.jsx need no change.
 export default function AlbumGradientMesh({ colors = [], nextColors = [], weights = [], nextWeights = [], active = true, shuffleKey = 0, entranceActive = false }) {
   const canvasRef          = useRef(null)
   const smallCanvasRef     = useRef(null)
@@ -473,7 +385,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
 
   const st = useRef(null)
   if (!st.current) {
-    const initial = parseColors(colors, weights, NUM_BLOBS)
+    const initial = parseColors(colors, NUM_BLOBS)
     st.current = {
       steadyRgb:  initial.map(c => [...c]),
       outRgb:     initial.map(c => [...c]),
@@ -482,7 +394,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
     }
   }
 
-  function startBlendTo(newHex, newWeights) {
+  function startBlendTo(newHex) {
     const s   = st.current
     const now = performance.now()
     if (s.blendStart >= 0 && (now - s.blendStart) < blendDurationMs()) {
@@ -491,7 +403,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
     } else {
       s.outRgb = s.steadyRgb.map(c => [...c])
     }
-    s.inRgb      = parseColors(newHex, newWeights, NUM_BLOBS)
+    s.inRgb      = parseColors(newHex, NUM_BLOBS)
     s.blendStart = performance.now()
     if (!rafRef.current && mountedRef.current) startLoop()
   }
@@ -514,10 +426,10 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
     if (nextColors.every(c => c === '#080808')) return
     if (entranceActiveRef.current) {
       pendingFromNextRef.current = true
-      pendingBlendRef.current = { colors: nextColors, weights: nextWeights }
+      pendingBlendRef.current = { colors: nextColors }
       return
     }
-    startBlendTo(nextColors, nextWeights)
+    startBlendTo(nextColors)
     pendingFromNextRef.current = true
   }, [nextColors])
 
@@ -527,11 +439,11 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
       pendingFromNextRef.current = false
       pendingBlendRef.current = null
       const s = st.current
-      s.inRgb     = parseColors(colors, weights, NUM_BLOBS)
-      s.steadyRgb = parseColors(colors, weights, NUM_BLOBS)
+      s.inRgb     = parseColors(colors, NUM_BLOBS)
+      s.steadyRgb = parseColors(colors, NUM_BLOBS)
     } else {
-      if (entranceActiveRef.current) { pendingBlendRef.current = { colors, weights }; return }
-      startBlendTo(colors, weights)
+      if (entranceActiveRef.current) { pendingBlendRef.current = { colors }; return }
+      startBlendTo(colors)
     }
   }, [colors])
 
@@ -540,7 +452,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
     if (!entranceActive && pendingBlendRef.current) {
       const pending = pendingBlendRef.current
       pendingBlendRef.current = null
-      startBlendTo(pending.colors, pending.weights)
+      startBlendTo(pending.colors)
     }
   }, [entranceActive])
 
@@ -664,7 +576,35 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
         let b = C * Math.sin(hue)
         a *= chromaScl; b *= chromaScl
 
-        const [r, g, bb] = oklabToRgb([L, a, b])
+        let [r, g, bb] = oklabToRgb([L, a, b])
+
+        // Displayed-mud guard (2026-07-30). The polar blend above displays
+        // every hue along the short OKLab arc between simultaneously-
+        // present colors — spatially at seams, temporally across the 7.5s
+        // crossfade — so the screen can show muddy warm shades that exist
+        // in NO palette entry and that api/palette.js's own recolor can
+        // never catch. This is the last stage before pixels leave the
+        // tiny canvas, downstream of everything (spatial blend, crossfade,
+        // chroma dial), so it bounds displayed color no matter what
+        // upstream ships next. Chroma-lift at fixed hue/lightness (see
+        // mudRescue in src/lib/mudModel.js for the full design: why hue
+        // stays untouched, why near-neutrals are exempt, the self-quench
+        // guarantee). Runs in the same HSL space the mud bands were
+        // calibrated in; identity outside the pocket, continuous inside;
+        // blur(24px) below absorbs the (already-C0) transition.
+        {
+          const mx = Math.max(r, g, bb) / 255, mn = Math.min(r, g, bb) / 255
+          const chr = mx - mn, light = (mx + mn) / 2
+          // cheap pre-gates replicating mudRescue's own zero regions
+          if (chr >= 0.10 && light > 0.13 && light < 0.65) {
+            const [h] = rgbToHsl(r, g, bb)
+            const denom = 1 - Math.abs(2 * light - 1)
+            const s = denom > 0 ? Math.min(1, chr / denom) : 0
+            const sPrime = mudRescue(h, chr, light)
+            if (sPrime !== s) [r, g, bb] = hslToRgb(h, sPrime, light)
+          }
+        }
+
         const idx = (y * SW + x) * 4
         data[idx] = r; data[idx + 1] = g; data[idx + 2] = bb; data[idx + 3] = 255
       }

@@ -22,7 +22,11 @@ const FALLBACK = { colors: FALLBACK_COLORS, weights: FALLBACK_COLORS.map(() => 0
 // kept rendering as "lava lamp" out of the renderer's control. Verified live:
 // the same production endpoint returned weighted output for one cover and
 // pre-weights output for three others in the same minute.
-const PALETTE_VERSION = 2;
+// v3 (2026-07-30 late): accent saturation became chroma-ratio-derived in
+// api/palette.js's single-real-hue branch — server output changed, so the
+// version rotates every CDN key at deploy (owner: "when you push, lets
+// clear the cache").
+const PALETTE_VERSION = 3;
 const versionQuery = `&pv=${PALETTE_VERSION}`;
 
 // Cache key includes the version + tuning query so a VARIETY-overridden fetch

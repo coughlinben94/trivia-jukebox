@@ -1,0 +1,283 @@
+// Standalone extraction of api/palette.js's exact color-math + median-cut
+// logic (copy-pasted verbatim, no sharp dependency) so it can be run against
+// a hand-built pixel array representing a green/forest album cover — sharp's
+// linux-arm64 binary isn't available in this sandbox, so we can't decode a
+// real JPEG here, but every function below (medianCut, hexToHue, hexToChroma,
+// hexToLightness, uglyPenalty, the ranking/gating loop) is byte-for-byte the
+// same code that api/palette.js runs. Only the pixel SOURCE is synthetic.
+
+// ── verbatim from api/palette.js ────────────────────────────────────────────
+
+function channelRange(bucket, c) {
+  let min = 255, max = 0;
+  for (const p of bucket) {
+    if (p[c] < min) min = p[c];
+    if (p[c] > max) max = p[c];
+  }
+  return max - min;
+}
+
+function pixelChroma([r, g, b]) {
+  return (Math.max(r, g, b) - Math.min(r, g, b)) / 255;
+}
+
+function toHex(r, g, b) {
+  return '#' + [r, g, b]
+    .map(v => Math.min(255, Math.max(0, v)).toString(16).padStart(2, '0'))
+    .join('');
+}
+
+function medianCut(pixels, numColors) {
+  let buckets = [pixels];
+  while (buckets.length < numColors) {
+    let maxRange = 0, splitIdx = 0, splitChannel = 0;
+    for (let i = 0; i < buckets.length; i++) {
+      if (buckets[i].length <= 1) continue;
+      for (let c = 0; c < 3; c++) {
+        const range = channelRange(buckets[i], c);
+        if (range > maxRange) { maxRange = range; splitIdx = i; splitChannel = c; }
+      }
+    }
+    if (maxRange === 0) break;
+    const bucket = buckets[splitIdx];
+    bucket.sort((a, b) => a[splitChannel] - b[splitChannel]);
+    const mid = Math.floor(bucket.length / 2);
+    buckets.splice(splitIdx, 1, bucket.slice(0, mid), bucket.slice(mid));
+  }
+  return buckets.map(bucket => {
+    let best = bucket[0], bestChroma = -1;
+    for (const p of bucket) {
+      const c = pixelChroma(p);
+      if (c > bestChroma) { bestChroma = c; best = p; }
+    }
+    return toHex(best[0], best[1], best[2]);
+  });
+}
+
+function hexToChroma(hex) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return pixelChroma([r, g, b]);
+}
+
+function hexToLuma(hex) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+}
+
+function hexToLightness(hex) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return (Math.max(r, g, b) + Math.min(r, g, b)) / 2 / 255;
+}
+
+function smoothstep(edge0, edge1, x) {
+  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+function uglyPenalty(hue, chroma, lightness) {
+  const HUE_LO = 40, HUE_HI = 100, HUE_RAMP = 10;
+  let hueWeight;
+  if (hue < HUE_LO) hueWeight = smoothstep(HUE_LO - HUE_RAMP, HUE_LO, hue);
+  else if (hue > HUE_HI) hueWeight = 1 - smoothstep(HUE_HI, HUE_HI + HUE_RAMP, hue);
+  else hueWeight = 1;
+  if (hueWeight <= 0) return 1;
+
+  const chromaWeight = 1 - smoothstep(0.40, 0.45, chroma);
+  if (chromaWeight <= 0) return 1;
+
+  const LIGHT_LO = 0.18, LIGHT_HI = 0.55, LIGHT_RAMP = 0.05;
+  let lightnessWeight;
+  if (lightness < LIGHT_LO) lightnessWeight = smoothstep(LIGHT_LO - LIGHT_RAMP, LIGHT_LO, lightness);
+  else if (lightness > LIGHT_HI) lightnessWeight = 1 - smoothstep(LIGHT_HI, LIGHT_HI + LIGHT_RAMP, lightness);
+  else lightnessWeight = 1;
+  if (lightnessWeight <= 0) return 1;
+
+  const weight = hueWeight * chromaWeight * lightnessWeight;
+  return 1 - weight * 0.65;
+}
+
+function hexToHue(hex) {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  if (d === 0) return 0;
+  let h;
+  if (max === r) h = ((g - b) / d) % 6;
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  h *= 60;
+  return h < 0 ? h + 360 : h;
+}
+
+function hueDelta(a, b) {
+  const d = Math.abs(a - b) % 360;
+  return d > 180 ? 360 - d : d;
+}
+
+function hslToHex(h, s, l) {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  let r, g, b;
+  if (h < 60)       [r, g, b] = [c, x, 0];
+  else if (h < 120)  [r, g, b] = [x, c, 0];
+  else if (h < 180)  [r, g, b] = [0, c, x];
+  else if (h < 240)  [r, g, b] = [0, x, c];
+  else if (h < 300)  [r, g, b] = [x, 0, c];
+  else               [r, g, b] = [c, 0, x];
+  return toHex(Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255));
+}
+
+// ── replicate the full handler pipeline (post-decode) ───────────────────────
+
+function runPalette(pixels, label) {
+  const LUMA_THRESHOLD = 30;
+  const luma = ([r, g, b]) => 0.299 * r + 0.587 * g + 0.114 * b;
+  const source = pixels;
+
+  const candidates = medianCut(source.map(p => [...p]), 12);
+  console.log('DEBUG raw candidates:', candidates);
+  const ranked = candidates
+    .map(hex => {
+      const chroma = hexToChroma(hex);
+      const hue = hexToHue(hex);
+      const lightness = hexToLightness(hex);
+      return { hex, chroma, hue, lightness, luma: hexToLuma(hex), score: chroma * uglyPenalty(hue, chroma, lightness) };
+    })
+    .filter(c => c.luma >= LUMA_THRESHOLD)
+    .sort((a, b) => b.score - a.score);
+
+  console.log(`\n=== ${label} ===`);
+  console.log('-- All median-cut candidates (post luma-filter), ranked by discounted score --');
+  for (const c of ranked) {
+    const penalty = uglyPenalty(c.hue, c.chroma, c.lightness);
+    console.log(
+      `${c.hex}  hue=${c.hue.toFixed(1)}  chroma=${c.chroma.toFixed(3)}  lightness=${c.lightness.toFixed(3)}  ` +
+      `uglyPenalty=${penalty.toFixed(3)}  score=${c.score.toFixed(3)}  ${penalty < 1 ? '<-- DISCOUNTED' : ''}`
+    );
+  }
+
+  const MIN_COLORS = 5, MAX_COLORS = 8, CHROMA_FLOOR = 0.18, HUE_GAP_DEG = 20;
+  const vivid = [];
+  for (const c of ranked) {
+    if (c.score <= CHROMA_FLOOR) continue;
+    if (vivid.some(v => hueDelta(v.hue, c.hue) < HUE_GAP_DEG)) continue;
+    vivid.push(c);
+    if (vivid.length >= MAX_COLORS) break;
+  }
+  let colors = vivid.map(c => c.hex);
+  console.log('-- vivid[] after CHROMA_FLOOR + hue-gap gate:', colors);
+
+  if (colors.length < MIN_COLORS) {
+    for (const c of ranked) {
+      if (colors.length >= MIN_COLORS) break;
+      if (colors.includes(c.hex)) continue;
+      if (c.score <= CHROMA_FLOOR) continue;
+      if (colors.some(hex => hueDelta(hexToHue(hex), c.hue) < HUE_GAP_DEG)) continue;
+      colors.push(c.hex);
+    }
+    if (colors.length < MIN_COLORS) {
+      const remaining = ranked.filter(c => !colors.includes(c.hex) && c.score > CHROMA_FLOOR);
+      const anchors = [];
+      for (const hex of colors) {
+        const h = hexToHue(hex);
+        if (!anchors.some(a => hueDelta(a, h) < HUE_GAP_DEG)) anchors.push(h);
+      }
+      let cycle = 0;
+      while (colors.length < MIN_COLORS && remaining.length) {
+        if (!anchors.length) { colors.push(remaining.shift().hex); continue; }
+        const targetHue = anchors[cycle % anchors.length];
+        let bestIdx = 0, bestDelta = Infinity;
+        for (let i = 0; i < remaining.length; i++) {
+          const d = hueDelta(hexToHue(remaining[i].hex), targetHue);
+          if (d < bestDelta) { bestDelta = d; bestIdx = i; }
+        }
+        colors.push(remaining[bestIdx].hex);
+        remaining.splice(bestIdx, 1);
+        cycle++;
+      }
+    }
+  }
+
+  const mostVivid = ranked.length ? Math.max(...ranked.map(c => c.chroma)) : 0;
+  const paletteHues = colors.map(hexToHue);
+  const hueSpread = paletteHues.length > 1
+    ? Math.max(...paletteHues.flatMap((h, i) => paletteHues.slice(i + 1).map(h2 => hueDelta(h, h2))))
+    : 0;
+  const MONOCHROME_HUE_SPREAD_DEG = 40;
+
+  console.log(`-- mostVivid=${mostVivid.toFixed(3)}  hueSpread=${hueSpread.toFixed(1)}`);
+
+  if (mostVivid < 0.15 || hueSpread < MONOCHROME_HUE_SPREAD_DEG) {
+    const avgLuma = source.reduce((sum, p) => sum + luma(p), 0) / source.length / 255;
+    if (mostVivid < 0.15) {
+      const accentHues = [320, 280, 185];
+      const accents = accentHues.map(h => hslToHex(h, 0.85, Math.min(0.75, Math.max(0.25, avgLuma))));
+      colors = [...colors.slice(0, 2), ...accents];
+      console.log('-- MONOCHROME fallback triggered (mostVivid<0.15): neon triad injected');
+    } else {
+      const accent = hslToHex(320, 0.85, Math.min(0.75, Math.max(0.25, avgLuma)));
+      colors = [...colors.slice(0, 4), accent];
+      console.log('-- NARROW-HUE-FAMILY fallback triggered (hueSpread<40): single neon pink accent injected');
+    }
+  }
+
+  console.log('-- FINAL colors array sent to client:', colors);
+  return colors;
+}
+
+// ── Synthetic pixel population: representative real-world RGB swatches ─────
+// Real photography of sunlit grass/foliage skews yellow-green and desaturated
+// (mixed with ambient brown soil/bark and warm sunlight), not pure saturated
+// green. RGB swatches below are representative real-world sampled values for
+// exactly that kind of photo.
+function buildPixels(swatches) {
+  const pixels = [];
+  for (const { rgb, weight } of swatches) {
+    const n = Math.round(weight * 2000);
+    for (let i = 0; i < n; i++) {
+      pixels.push([
+        Math.round(Math.max(0, Math.min(255, rgb[0] + (Math.random() * 16 - 8)))),
+        Math.round(Math.max(0, Math.min(255, rgb[1] + (Math.random() * 16 - 8)))),
+        Math.round(Math.max(0, Math.min(255, rgb[2] + (Math.random() * 16 - 8)))),
+      ]);
+    }
+  }
+  return pixels;
+}
+
+const grassPhotoSwatches = [
+  { rgb: [107, 142, 35],  weight: 0.28 }, // sunlit lawn grass ("olive drab"/yellow-green)
+  { rgb: [85, 107, 47],   weight: 0.18 }, // shaded grass (dark olive green)
+  { rgb: [34, 90, 34],    weight: 0.10 }, // deeper tree-canopy green
+  { rgb: [101, 67, 33],   weight: 0.08 }, // tree trunk / bark brown
+  { rgb: [222, 184, 135], weight: 0.14 }, // skin tone (person)
+  { rgb: [30, 30, 20],    weight: 0.06 }, // deep shadow under trees
+  { rgb: [176, 196, 222], weight: 0.10 }, // pale sky glimpsed through canopy
+  { rgb: [40, 40, 45],    weight: 0.06 }, // skateboard / dark clothing
+];
+
+const forestSunbeamSwatches = [
+  { rgb: [60, 100, 40],   weight: 0.24 }, // mid-tone forest foliage
+  { rgb: [40, 70, 30],    weight: 0.20 }, // shaded understory green
+  { rgb: [150, 180, 90],  weight: 0.14 }, // sunbeam-lit leaf highlight (yellow-green)
+  { rgb: [230, 220, 180], weight: 0.10 }, // sunbeam core (near-white warm light)
+  { rgb: [90, 65, 40],    weight: 0.08 }, // tree trunks
+  { rgb: [222, 184, 135], weight: 0.12 }, // person's face
+  { rgb: [20, 25, 15],    weight: 0.12 }, // deep shadow
+];
+
+runPalette(buildPixels(grassPhotoSwatches), "Cover A: people on grass/skateboard under trees (synthetic)");
+runPalette(buildPixels(forestSunbeamSwatches), "Cover B: forest with sunbeams + person's face (synthetic)");
+
+console.log('\n=== uglyPenalty(hue, chroma=0.25, lightness=0.35) swept across hue ===');
+for (let h = 0; h <= 180; h += 10) {
+  console.log(`hue=${h}\tpenalty=${uglyPenalty(h, 0.25, 0.35).toFixed(3)}`);
+}
