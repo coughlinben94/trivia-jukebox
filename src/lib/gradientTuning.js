@@ -121,7 +121,26 @@ export function setEngine(engine) {
 // board existed, so a dial sitting at 50 draws exactly what shipped yesterday.
 // (They were off by a hair — 0.85/0.625/0.40 vs 0.82/0.62/0.38 — which broke
 // the board's core promise that "touch nothing, change nothing".)
-export function chromaScale()      { return lerp(0.50, 1.14, T('BRIGHTNESS') / 100) }       // 50 → 0.82 (was 0.82, exact)
+// BRIGHTNESS/BLEND defaults lowered 2026-07-30 (T=50 now resolves to a
+// calmer value than the original hardcoded constant, unlike every other
+// dial here which reproduces yesterday's exact behavior at 50). Today's
+// palette.js fixes (recolor real green/gold instead of flattening them
+// toward neon fallbacks) feed the mesh renderer real, more vivid, more
+// varied color than it saw when these dials were tuned — AlbumGradientMesh
+// itself already warned about exactly this ("no built-in dampening...
+// every pixel is a full-strength blend of real palette hues, which read as
+// more saturated throughout") and LiveScreen.jsx flagged it as a watch-item.
+// Reported live: distinct saturated color pools drifting independently read
+// as "lava lamp," not ambient wash. Two levers, chosen deliberately over a
+// third (blobRadius/SIZE, left untouched — more overlap would ALSO smooth
+// pooling, but changing three knobs at once from an unverified guess is
+// worse than two well-targeted ones):
+//   - chromaScale down (0.82 -> 0.70 at 50): less saturated throughout,
+//     directly countering the oversaturation the mesh's own comment predicted.
+//   - meshIdwPower down (3 -> 2 at 50): per its own comment, lower = more
+//     "creamy/averaged," closer to the pre-blob noise-field feel that never
+//     read as distinct pooled bodies — the literal opposite of "lava lamp."
+export function chromaScale()      { return lerp(0.40, 1.00, T('BRIGHTNESS') / 100) }       // 50 → 0.70 (was 0.82)
 export function circleAlphaMuted() { return lerp(0.45, 0.79, T('BRIGHTNESS') / 100) }       // 50 → 0.62 (was 0.62, exact)
 export function circleAlphaSat()   { return lerp(0.21, 0.55, T('BRIGHTNESS') / 100) }       // 50 → 0.38 (was 0.38, exact)
 
@@ -129,7 +148,7 @@ export function orbitSpeed()       { return lerp(0.3, 1.9, T('MOTION') / 100) } 
 
 export function blobRadius()       { return lerp(0.30, 0.70, T('SIZE') / 100) }             // 50 → 0.50 (was 0.50, exact)
 
-export function meshIdwPower()     { return lerp(1, 5, T('BLEND') / 100) }                  // 50 → 3 (was 3, exact)
+export function meshIdwPower()     { return lerp(1, 3, T('BLEND') / 100) }                  // 50 → 2 (was 3)
 export function circleFalloffPow() { return lerp(0.2, 2.8, T('BLEND') / 100) }              // 50 → 1.5 (was 1.5, exact)
 
 export function blendDurationMs()  { return lerp(12000, 3000, T('CROSSFADE') / 100) }       // 50 → 7500 (was 7500, exact)
