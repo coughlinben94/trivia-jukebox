@@ -293,26 +293,31 @@ export default async function handler(req, res) {
         // single-real-hue branch below), so this triad has to be a
         // deliberately-chosen fixed palette rather than something derived
         // per cover. Evenly spaced 120° apart (true triadic — the standard
-        // relationship for exactly three accent hues, same logic as this
-        // file's true-complementary fix for the single-accent case) and
+        // relationship for a fixed pair, same logic as this file's
+        // true-complementary fix for the single-accent case below) and
         // chosen to sit clear of the documented ugly olive/khaki pocket
-        // (hue 40-100°, see uglyWeight/deuglify above) at full saturation —
-        // 140/260/20 lands at teal-green/blue-violet/red-orange, none of
-        // them anywhere near that band. Saturation eased from the old 0.85
-        // (matches the tone-down on the single-accent branch, 0.85 -> 0.55)
-        // to 0.65 — still needs to carry the WHOLE gradient alone here since
-        // there's no real color backing it up, so a bit more than the
-        // single-accent case, but the old 0.85 read as the same "neon slap"
+        // (hue 40-100°, see uglyWeight/deuglify above): 200° cool blue,
+        // 20° warm red-orange, exactly opposite. Saturation eased from the
+        // old 0.85 (same tone-down as the single-accent branch, 0.85 ->
+        // 0.55) to 0.65 — still needs to carry the WHOLE gradient alone here
+        // since there's no real color backing it up, so a bit richer than
+        // the single-accent case, but 0.85 read as the same "neon slap"
         // this whole pass is fixing.
-        const accentHues = [140, 260, 20];
-        const accents = accentHues.map(h => hslToHex(h, 0.65, Math.min(0.75, Math.max(0.25, avgLuma))));
-        // Accents FIRST, leftover near-gray candidates after: LiveScreen's
-        // client-side pick takes the top 2-3 entries in array order, and the
-        // three accents here are the only entries with any real hue
-        // separation — two near-identical grays (colors.slice(0,2), all
-        // that's left in a genuinely colorless cover) would otherwise sit
-        // first and waste a pick slot on a near-duplicate of each other.
-        colors = [...accents, ...colors.slice(0, 2)];
+        //
+        // Originally shipped as a 3-hue "triadic" (140/260/20) with the
+        // leftover near-gray candidates kept after it, on the theory that
+        // LiveScreen's client-side picker (pickGradientColors) would use up
+        // to 3 of these 5 entries. A second-opinion review actually traced
+        // that picker's logic against this exact array: it takes the top 2
+        // entries, then adds a 3rd ONLY if those top 2 are hue-close
+        // (<50°) — and since these hues are fixed and always ≥120° apart by
+        // construction, the picker NEVER reaches past the first 2. The 3rd
+        // accent and both grays were dead weight on every single true-B&W
+        // cover, unconditionally. Simplified to exactly the 2 hues that were
+        // actually ever displayed, so what's in the code matches what's on
+        // screen.
+        const accentHues = [200, 20];
+        colors = accentHues.map(h => hslToHex(h, 0.65, Math.min(0.75, Math.max(0.25, avgLuma))));
       } else {
         // There IS a real color here, just one hue family (a rich solid-gold
         // cover, or a warm skin-tone photo like Edgar Winter's "Free Ride") —
@@ -333,23 +338,45 @@ export default async function handler(req, res) {
         // Deriving the accent from the real color's own hue, true
         // complementary (+180°) — the standard, legible color-wheel
         // relationship for pairing exactly one accent against one base hue.
-        // An earlier version of this fix hedged to +150° instead, worried
-        // exact opposites would cancel toward gray when blended — that
-        // concern doesn't actually apply here: both blend paths this mesh
-        // uses (the per-frame multi-blob spatial blend AND the song-to-song
-        // crossfade) already work in polar (hue, chroma) space specifically
-        // to avoid vector cancellation — chroma is a scalar mean/lerp, hue
-        // takes the shortest arc, neither can collapse toward zero the way
-        // averaging raw a/b vectors can (see AlbumGradientMesh.jsx's own
-        // comments on both fixes). True complementary is safe and gives more
-        // contrast than the hedge. Saturation toned down from 0.85 to 0.55
-        // either way (still reads as a distinct second color, not a neon
-        // slap) so the accent always has SOME relationship to the actual
-        // cover instead of being an unrelated fixed color bolted on.
-        const realHue = colors.length ? hexToHue(colors[0]) : 320;
+        // An earlier draft of this comment claimed BOTH of this mesh's blend
+        // paths (song-to-song crossfade AND the per-frame multi-blob spatial
+        // blend) work in polar space, so exact opposition couldn't cancel
+        // toward gray. Only half true, per a second-opinion review that
+        // actually traced AlbumGradientMesh.jsx's draw() loop: the crossfade
+        // (blendPairRgb) is genuinely polar (scalar L/C lerp, shortest-arc
+        // hue) and can't degenerate. The per-pixel spatial blend keeps
+        // chroma as a scalar mean (also can't collapse), but derives hue via
+        // `Math.atan2(bSum, aSum)` on the CARTESIAN SUM of each blob's a/b —
+        // near 180° apart, that sum vector's magnitude shrinks toward zero
+        // and its direction (the hue) becomes genuinely unstable, snapping
+        // rather than sweeping smoothly as blob weight shifts. What actually
+        // saves this in practice: the tiny-canvas result gets a 24px RGB
+        // blur before it ever reaches the screen, which averages that
+        // unstable seam into a plain neutral gray rather than a visible
+        // hue-flip — for a blurred ambient background that reads as a calm
+        // boundary, not a glitch, so 180° still stands, but because of the
+        // blur smoothing it over, not because the math was safe to begin
+        // with. Watch item: the exact seam position drifts with the per-
+        // frame wobble noise (see WOBBLE_PX); if it ever reads as visible
+        // shimmer rather than a static soft boundary, back off toward ~165°.
+        // Saturation toned down from 0.85 to 0.55 so the accent reads as a
+        // distinct second color, not a neon slap.
+        const realHue = colors.length ? hexToHue(colors[0]) : 320; // no real candidates survived at all — rare, arbitrary last resort
         const accentHue = (realHue + 180) % 360;
         const accent = hslToHex(accentHue, 0.55, Math.min(0.75, Math.max(0.25, avgLuma)));
-        colors = [...colors.slice(0, 4), accent];
+        // Accent placed at index 2, not appended at the end — LiveScreen's
+        // client-side picker (pickGradientColors) only ever looks at indices
+        // 0-2 (top 2, plus a 3rd from index 2 specifically when the top 2
+        // are hue-close). This branch's top 2 real picks ARE hue-close by
+        // definition (that's what routed us into this fallback in the first
+        // place), so appending the accent at the end (old: index 4 of 5)
+        // put it past where the picker ever looks — confirmed via a
+        // second-opinion library scan: the accent displayed on 0 of 26
+        // real single-hue-family covers, including the exact covers ("Free
+        // Ride," "Before You Go") whose live complaints motivated adding it.
+        // At index 2 the picker's top-2/3rd-if-close logic reaches it on
+        // every one of them.
+        colors = [colors[0], colors[1], accent, ...colors.slice(2, 4)].filter(Boolean);
       }
     }
 
