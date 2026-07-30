@@ -6,6 +6,7 @@ import { shuffleArray, resolveNext, resolveUpcoming, buildSessionOrder } from '.
 import { loadPlayed, savePlayed } from '../lib/playedStore'
 import { useSpotifyPlayer } from '../hooks/useSpotifyPlayer'
 import { prefetchPalette } from '../hooks/usePalette'
+import { hasOverrides, TUNING_EVENT } from '../lib/gradientTuning'
 import Player from './Player'
 import LiveScreen from './LiveScreen'
 import TestScreen from './TestScreen'
@@ -93,6 +94,19 @@ export default function Jukebox({ onLogout }) {
   // stays false for the whole tuning session and the real Live flow (Space
   // bar, the Live header toggle, the `b` handoff) is left exactly as it was.
   const tuningRef = useRef(false)
+  // "Gradient dials moved from default" indicator on the Tune button. Twice in
+  // one day (2026-07-30) a stale Tune-board override sat silently in
+  // localStorage overriding the live show's look, discoverable only via
+  // devtools — an amber dot on the button Ben already uses makes it visible.
+  // Reads the module-level store (hasOverrides), not localStorage directly,
+  // because the in-memory store is what the renderers actually obey — they can
+  // disagree if localStorage was cleared externally while a tab stayed open.
+  const [gradientTuned, setGradientTuned] = useState(hasOverrides)
+  useEffect(() => {
+    const onTuningChange = () => setGradientTuned(hasOverrides())
+    window.addEventListener(TUNING_EVENT, onTuningChange)
+    return () => window.removeEventListener(TUNING_EVENT, onTuningChange)
+  }, [])
   const [modalTrack, setModalTrack] = useState(null)
 const [newSetName, setNewSetName] = useState('')
   const [addingSet, setAddingSet] = useState(false)
@@ -1003,12 +1017,17 @@ const [newSetName, setNewSetName] = useState('')
               shuffled session and opens the test screen with the DJ board. */}
           <button
             onClick={openTuning}
-            className={`text-xs font-medium transition-colors duration-150 cursor-pointer px-3 py-1 rounded-full active:scale-[0.97] ${
+            className={`relative text-xs font-medium transition-colors duration-150 cursor-pointer px-3 py-1 rounded-full active:scale-[0.97] ${
               showTest ? 'bg-white text-black' : 'text-white hover:text-white border border-white/10 hover:border-white/25'
             }`}
-            title="Gradient tuning board — shuffles and opens the test screen"
+            title={gradientTuned
+              ? 'Gradient dials are moved from default — the live gradient is using tuned values. Open the board and RESET ALL to go back to stock.'
+              : 'Gradient tuning board — shuffles and opens the test screen'}
           >
             Tune
+            {gradientTuned && (
+              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-400" />
+            )}
           </button>
           <button
             onClick={() => { logout(); onLogout() }}
