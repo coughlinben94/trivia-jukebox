@@ -100,7 +100,7 @@ function Tonearm({ controls }) {
 // forcing a re-render of everything under Jukebox. None of this component's props
 // change on that cadence, so memo() keeps it from redoing its render work — title-fit
 // measurement, palette lookups, the whole record/tonearm JSX tree — 3.3x/second for nothing.
-function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpcomingTrack }) {
+function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpcomingTrack, nameVisible = true }) {
   // Read once per mount, not per render — avoids re-checking localStorage/URL
   // on every position-tick re-render this component already gets a lot of.
   const [useMeshGradient] = useState(getMeshGradientFlag)
@@ -604,10 +604,12 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
               <Tonearm controls={tonearmCtrl} />
             </div>
 
-            {/* Track info — hidden during transitions and before entrance completes */}
+            {/* Track info — hidden during transitions, before entrance completes, and
+                during the 3s-in/3s-out buffer around each song's trimmed play window
+                (nameVisible, computed in Jukebox from player.position vs startMs/stopMs) */}
             <motion.div
               initial={{ opacity: 0, y: 0 }}
-              animate={{ opacity: transitioning ? 0 : (textVisible ? 1 : 0), y: transitioning ? -6 : 0 }}
+              animate={{ opacity: transitioning ? 0 : (textVisible && nameVisible ? 1 : 0), y: transitioning ? -6 : 0 }}
               transition={textInstant ? { duration: 0 } : { duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
             >
               <h1

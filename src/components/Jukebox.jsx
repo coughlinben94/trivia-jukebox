@@ -603,6 +603,25 @@ const [newSetName, setNewSetName] = useState('')
 
   const player = useSpotifyPlayer({ onAdvance: advanceToNext, onFadeStart })
 
+  // Name/artist buffer: hide the title for the first and last 3s of the
+  // song's *trimmed* play window (startMs/stopMs from the library, not raw
+  // duration_ms) so it doesn't flash on right at the fade-in or vanish mid-word
+  // right at the fade-out. Keyed off player.position (real playback time), so
+  // it tracks pauses correctly instead of a wall-clock timer. Only a boolean
+  // crosses into LiveScreen's props — it flips twice a song, not 3.3x/sec —
+  // so it doesn't defeat the memo() that keeps LiveScreen off the position tick.
+  const playingSong = useMemo(
+    () => library.find(t => t.id === playingId) ?? null,
+    [library, playingId]
+  )
+  const nameVisible = useMemo(() => {
+    if (!playingSong) return true
+    const start = playingSong.startMs ?? 0
+    const stop = playingSong.stopMs ?? playingSong.duration_ms ?? 0
+    if (stop - start <= 6000) return true  // window too short for a 3s/3s buffer — just show it
+    return (player.position - start) >= 3000 && (stop - player.position) >= 3000
+  }, [playingSong, player.position])
+
   const registerUpcomingTrackHandler = useCallback(fn => {
     onUpcomingTrackRef.current = fn
   }, [])
@@ -1195,6 +1214,7 @@ const [newSetName, setNewSetName] = useState('')
           onClose={closeLive}
           shuffleKey={shuffleKey}
           onUpcomingTrack={registerUpcomingTrackHandler}
+          nameVisible={nameVisible}
         />
       )}
 
