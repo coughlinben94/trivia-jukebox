@@ -619,13 +619,33 @@ function medianCut(pixels, numColors) {
   // accent could out-rank a large muted background that a viewer would
   // call "the cover's real color." See populationFactor()/buildWeights()
   // below for what consumes this.
+  // De-spike (2026-07-30, late): the representative is no longer the single
+  // most-vivid PIXEL but the average of the bucket's top-chroma cohort
+  // (chroma >= 0.85 x the bucket max; always contains at least the max
+  // pixel itself). The single-pixel pick was the right fix for muted covers
+  // (see above) but on busy ALREADY-vivid art it rides lone compression-
+  // spike pixels — measured live on Texas Hill's "Easy on the Eyes":
+  // the cyan bucket's vivid pick was #00f8e2 at chroma 0.97 while its
+  // 453-pixel top cohort averages #06cdd9 (the cover's actual sky-cyan),
+  // and the magenta bucket's neon rep came from literally 2 pixels. Those
+  // spike palettes are what read as "neon" on screen (live complaint:
+  // "usually with the neon colors"). A 0.85 threshold keeps the cohort
+  // tight enough that dark-red buckets don't broaden toward brown (0.70
+  // measured #882c20 -> #83512e on "Vacation Eyes"; 0.85 stays in family),
+  // while still averaging away single-pixel outliers. Muted covers are
+  // unaffected in spirit: their cohort is small and close to the max pixel.
   return buckets.map(bucket => {
-    let best = bucket[0], bestChroma = -1;
+    let bestChroma = -1;
     for (const p of bucket) {
       const c = pixelChroma(p);
-      if (c > bestChroma) { bestChroma = c; best = p; }
+      if (c > bestChroma) bestChroma = c;
     }
-    return { hex: toHex(best[0], best[1], best[2]), population: bucket.length };
+    const thr = bestChroma * 0.85;
+    let n = 0, r = 0, g = 0, b = 0;
+    for (const p of bucket) {
+      if (pixelChroma(p) >= thr) { n++; r += p[0]; g += p[1]; b += p[2]; }
+    }
+    return { hex: toHex(Math.round(r / n), Math.round(g / n), Math.round(b / n)), population: bucket.length };
   });
 }
 

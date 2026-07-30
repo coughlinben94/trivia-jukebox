@@ -26,7 +26,9 @@ const FALLBACK = { colors: FALLBACK_COLORS, weights: FALLBACK_COLORS.map(() => 0
 // api/palette.js's single-real-hue branch — server output changed, so the
 // version rotates every CDN key at deploy (owner: "when you push, lets
 // clear the cache").
-const PALETTE_VERSION = 3;
+// v4 (same night): medianCut bucket representative changed from single
+// most-vivid pixel to top-chroma-cohort average (de-neon/de-spike).
+const PALETTE_VERSION = 4;
 const versionQuery = `&pv=${PALETTE_VERSION}`;
 
 // Cache key includes the version + tuning query so a VARIETY-overridden fetch

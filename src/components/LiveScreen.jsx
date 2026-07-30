@@ -76,7 +76,19 @@ const TEXT_SCRIM = '0 0 4px rgba(0,0,0,0.55), 0 0 10px rgba(0,0,0,0.45), 0 0 20p
 // the renderer's own constant here would create a circular import between
 // LiveScreen and AlbumGradientMesh, so it's duplicated as
 // MAX_GRADIENT_COLORS; keep both in sync if NUM_BLOBS ever changes).
-const MAX_GRADIENT_COLORS = 6
+// 6 → 3 (2026-07-30, late): with the equal alternating blob split restored
+// in AlbumGradientMesh, a 5-6 color palette dilutes each color to ~1 of 6
+// blobs — recreating in miniature the exact 1-blob failure the equal-split
+// restore killed (a lone bright core wandering a field, live-reported as
+// "fishes swimming," worst on neon-vivid covers; and colors effectively
+// missing, live-reported as "look at the blue" on Texas Hill's "Easy on
+// the Eyes" — its #00d3ff cyan was IN the palette but held 1 blob among 4
+// louder families). At 3 colors the split is always 2/2/2 — every color
+// owns a full antipodal arena, no lone blobs can exist — which is exactly
+// the configuration the 30-cover audit measured cleanest (27/30). Top 3
+// by weight keeps the cover's dominant families; a genuinely-5-hue cover
+// keeps its three biggest.
+const MAX_GRADIENT_COLORS = 3
 export function pickGradientColors(colors, weights) {
   if (!colors.length) return { colors, weights }
   if (colors.length <= MAX_GRADIENT_COLORS) return { colors, weights }
