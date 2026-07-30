@@ -94,9 +94,52 @@ function hexToRgb(hex) {
   ]
 }
 
+// Found 2026-07-30: blob motion (baseX/baseY/frequencies/phases from
+// makeBlobParams) is memoized with an EMPTY dependency array — verified
+// numerically, e.g. blob index 0 always orbits around baseX=0.771/
+// baseY=0.175 (never reaches the bottom or left edge — max extent is
+// x:[0.44,1.10] y:[-0.16,0.51]), while blob index 4 always orbits around
+// baseX=0.108/baseY=0.692 (range x:[-0.22,0.44] y:[0.36,1.02] — the one
+// whose fixed path actually sweeps the bottom-left corner). That per-mount
+// fixed-orbit memoization is intentional and stays untouched — it's what
+// gives the tuning board's "same six bodies" continuity.
+//
+// The actual structural bug is one level up: draw() always pulled each
+// blob's color as oklabColors[i % oklabColors.length], and this function
+// always filled that array as src[i % src.length] — so blob index 0 (a
+// FIXED orbit path, same every song, same every page load) always got
+// colors[0]. api/palette.js hands colors[] back most-vivid-first, so the
+// single most-interesting hue was pinned to whichever screen region blob
+// 0's fixed orbit happens to cover, forever, on every single song — a
+// structural artifact ("hard-edged magenta pool always in the same corner"
+// / "blue pool always behind the record"), not per-song bad luck.
+//
+// Fix: rotate which palette index feeds which blob slot, per palette (not
+// per pixel/frame) — a deterministic hash of the incoming array's first hex
+// string, mod the array length. Deterministic (not Math.random() or a
+// mount-time counter) so re-rendering the SAME album cover always resolves
+// to the SAME mapping — no flicker if this function gets called twice for
+// one song — but DIFFERENT covers almost always hash to a different
+// rotation, which is enough to stop one fixed blob slot from being the
+// eternal home of colors[0]. Critically, this only changes which index of
+// hexArr gets READ here — it can't destabilize the crossfade contract in
+// startBlendTo/draw, because by the time blendPairRgb() runs, outRgb[i]/
+// inRgb[i] are already-resolved RGB triplets sitting in blob-index slots;
+// blendPairRgb blends two concrete colors per slot and has no notion of
+// (and no dependency on) which palette index either one came from, or
+// whether the rotation differed between the outgoing and incoming call.
+function rotationFor(src) {
+  if (!src.length) return 0
+  const hex = src[0] || '#000000'
+  let sum = 0
+  for (let k = 1; k < hex.length; k++) sum += hex.charCodeAt(k)
+  return sum % src.length
+}
+
 function parseColors(hexArr, n) {
   const src = hexArr.length ? hexArr : ['#080808']
-  return Array.from({ length: n }, (_, i) => [...hexToRgb(src[i % src.length])])
+  const rot = rotationFor(src)
+  return Array.from({ length: n }, (_, i) => [...hexToRgb(src[(i + rot) % src.length])])
 }
 
 function easeInOut(t) {

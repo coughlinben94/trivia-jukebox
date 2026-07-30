@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, memo } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, memo } from 'react'
 import { motion, useAnimation } from 'framer-motion'
 import AlbumGradient from './AlbumGradient'
 import AlbumGradientMesh from './AlbumGradientMesh'
@@ -372,8 +372,19 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
     }
   }, [ending])
 
-  // Hide text immediately when a new track arrives — instant (no fade) before runTransition fires
-  useEffect(() => {
+  // Hide text immediately when a new track arrives — instant (no fade) before runTransition fires.
+  // useLayoutEffect, not useEffect: a plain useEffect runs AFTER the browser
+  // paints, so on the render where currentTrack.uri first changes, the OLD
+  // textVisible/transitioning values (from the just-finished previous reveal)
+  // are what actually gets painted — the hide would only land on the NEXT
+  // frame. Combined with Jukebox's nameVisible (computed off player.position,
+  // which can be one render tick stale relative to this component learning
+  // about the new track — see Jukebox's own currentTrack-uri effect), that
+  // stale frame COULD read as "opacity 1" if nameVisible also happened to be
+  // true against mismatched data. useLayoutEffect fires synchronously before
+  // paint, so the hide is guaranteed to land in the SAME frame as the uri
+  // change — no stale frame is ever actually painted.
+  useLayoutEffect(() => {
     if (!currentTrack || !shown || currentTrack.uri === shown.uri) return
     setTextInstant(true)
     setTextVisible(false)
@@ -388,6 +399,15 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       try {
         if (busyRef.current) {
           pendingRef.current = target
+          // Belt-and-suspenders with the useLayoutEffect above: that effect
+          // already forces textVisible=false/textInstant=true unconditionally
+          // on every uri change (including this queued-while-busy case), so
+          // this is redundant today — but writing it here too means THIS
+          // function no longer depends on the other effect's existence/order
+          // to stay hidden while a skip sits in pendingRef. One less place a
+          // future edit to either effect could silently reopen the gap.
+          setTextVisible(false)
+          setTextInstant(true)
           return
         }
         pendingRef.current = null
@@ -426,10 +446,22 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         flyCtrl.set({ y: -500, scale: 1 })
         if (newArtUrl) setArtUrl(newArtUrl)
         setArtOpacity(1)
-        flyCtrl.start({ y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 28 } })
-        await sleep(500)   // record flies down
+        // Await the fly-down spring's OWN completion (controls.start()'s
+        // promise resolves when the animation actually finishes) instead of
+        // a guessed sleep(500) — this spring's damping ratio (28 vs a
+        // critically-damped ~2*sqrt(120)≈21.9) is overdamped, so its real
+        // settle time isn't a fixed number and can run past 500ms on a
+        // loaded frame. The old fixed-sleep version fired ARM_ON on a timer
+        // that assumed the record had landed by then; when it hadn't, the
+        // arm visibly dropped to engaged while the record was still
+        // descending (live-observed 2026-07-30). Tying the arm cue to the
+        // record's actual landing removes that whole class of race — it
+        // can't drop early relative to a record that isn't there yet, or
+        // relative to one still mid-flight, because it now waits on the
+        // same promise that resolves when the flight is over.
+        await flyCtrl.start({ y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 28 } })
 
-        await sleep(500)
+        await sleep(500)   // brief settle after landing, same grace period as before
         tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 22 } })
         await sleep(200)
         setTextInstant(false)
@@ -637,7 +669,18 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                 className="text-2xl sm:text-3xl text-white font-medium italic"
                 style={{ fontFamily: FONT_BODY, textShadow: TEXT_SCRIM }}
               >
-                {shown.artists?.map(a => a.name).join(', ')}
+                {/* Cap the collaborator list at 2 names — a song with a
+                    handful of featured artists (5, in the reported case) was
+                    wrapping to 3 italic lines on this audience-facing screen,
+                    which read as clutter rather than information. Two names
+                    joined by a comma still reads naturally as a duet/feature
+                    credit; beyond that, name the headliner and summarize the
+                    rest instead of listing every one. displayName (track.js)
+                    already sets the house style for "trim the title, don't
+                    show Spotify's full metadata verbatim" — same spirit here. */}
+                {shown.artists?.length > 2
+                  ? `${shown.artists[0].name} & others`
+                  : shown.artists?.map(a => a.name).join(', ')}
               </p>
             </motion.div>
           </>

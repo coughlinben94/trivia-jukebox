@@ -194,9 +194,33 @@ export default async function handler(req, res) {
           const h = hexToHue(hex);
           if (!anchors.some(a => hueDelta(a, h) < HUE_GAP_DEG)) anchors.push(h);
         }
+        // A SINGLE anchor means the cover only has one real hue family left
+        // to draw padding from (no competing family that could dominate) —
+        // exactly the "just take the next-best remaining candidate" case the
+        // zero-anchor branch already handles, so route it there too instead
+        // of running the hue-closest tiebreak. Verified live on Classified's
+        // "Higher" (a white cover, vivid red art only — one hue family,
+        // hueSpread 7.1° across candidates, correctly a single anchor at hue
+        // 3.1°): the hue-closest tiebreak picked #971b15, #ad3c30, #6f0909,
+        // #60090b — four PROGRESSIVELY DARKER reds (lightness 0.34→0.21) —
+        // and never picked #c4734e (lightness 0.54, chroma 0.463), the one
+        // candidate bright enough to actually read as "vivid red." That's
+        // not a fluke: as a saturated color lightens toward a white
+        // background, anti-aliased/JPEG-compressed pixels drift a few
+        // degrees warmer in hue (here 3.1°→18.8°), so "closest hue to the
+        // anchor" systematically re-picks near-duplicates of the DARKEST
+        // member of the family and starves out the lighter, more vivid ones
+        // — the opposite of what a single-hue-family cover needs. `remaining`
+        // is already sorted by score (chroma discounted by uglyPenalty, see
+        // `ranked` above), so falling through to score order here picks
+        // #971b15, #ad3c30, #c4734e, #6f0909 instead — the actual four
+        // brightest members, including the one the old tiebreak dropped.
+        // Multi-anchor covers (2+ real hue families, e.g. the "Stay"
+        // sepia/blue case documented above) are untouched — this only
+        // changes behavior when there's nothing left to race against.
         let cycle = 0;
         while (colors.length < MIN_COLORS && remaining.length) {
-          if (!anchors.length) { colors.push(remaining.shift().hex); continue; }
+          if (anchors.length <= 1) { colors.push(remaining.shift().hex); continue; }
           const targetHue = anchors[cycle % anchors.length];
           let bestIdx = 0, bestDelta = Infinity;
           for (let i = 0; i < remaining.length; i++) {
