@@ -56,8 +56,12 @@ describe('mudRescue self-quench guarantee', () => {
     expect(worst).toBeLessThanOrEqual(MUD_RESCUE_KNEE + 1e-9)
   })
   it('is the identity outside the pocket', () => {
-    // a saturated blue and a clean terracotta must pass through unchanged
-    for (const hex of ['#1169b6', '#c96f4a']) {
+    // a saturated blue and a red-clay terracotta must pass through
+    // unchanged. NB: the clay must sit truly below the pocket's 16-28°
+    // entry ramp — the first fixture tried #c96f4a, which computes to hue
+    // 17.5° and correctly picks up a ~0.0001 nudge from the continuous
+    // ramp (by design, not a bug). #b85c3f is hue 14.4°: fully outside.
+    for (const hex of ['#1169b6', '#b85c3f']) {
       const [h, c, l] = hexToHsl(hex)
       const s = c / (1 - Math.abs(2 * l - 1))
       expect(mudRescue(h, c, l)).toBeCloseTo(Math.min(1, s), 6)
