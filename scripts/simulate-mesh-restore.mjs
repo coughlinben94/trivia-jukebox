@@ -192,7 +192,7 @@ if (args.length) {
   covers = []
   for (const id of args) {
     const art = `https://i.scdn.co/image/${id}`
-    const res = await fetch(`https://trivia-jukebox.vercel.app/api/palette?url=${encodeURIComponent(art)}&pv=3`)
+    const res = await fetch(`https://trivia-jukebox.vercel.app/api/palette?url=${encodeURIComponent(art)}&pv=4`)
     const j = await res.json()
     covers.push([id, j.colors])
   }

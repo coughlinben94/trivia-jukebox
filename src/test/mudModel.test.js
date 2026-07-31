@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { uglyWeight, mudRescue, MUD_RESCUE_KNEE } from '../lib/mudModel.js'
+import { uglyWeight, mudRescue, MUD_RESCUE_BOUND } from '../lib/mudModel.js'
 
 // Local HSL helpers — deliberately NOT imported from api/palette.js: that
 // module imports sharp, which has no place in a unit-test process.
@@ -34,26 +34,51 @@ describe('uglyWeight fixtures (calibrated against the 651-color live scan)', () 
 })
 
 describe('mudRescue self-quench guarantee', () => {
-  // The renderer's displayed-mud guard promises: any pixel with HSL chroma
-  // >= 0.16 (rescue gate fully open) exits the rescue with uglyWeight <=
-  // MUD_RESCUE_KNEE. Exhaustive grid over the reachable HSL space — this
-  // is acceptance criterion (a)'s analytic backbone (the render sim
-  // measures the same thing empirically on real palettes).
-  it('post-rescue uglyWeight <= KNEE across the full grid at chroma >= 0.16', () => {
+  // v2's first grid test asserted post-rescue weight <= 0.35 over an
+  // s-step-0.05 grid and PASSED FALSELY: the rescue's real transient — a
+  // ~0.014-wide sliver of input s just under the 0.55 clean edge where
+  // partial desaturation lands mid-pocket (post-weight up to 1.0) — sits
+  // strictly between grid samples at every hue/lightness. These are the
+  // invariants that are actually true (critic-derived, fine-swept):
+  it('full quench: pre-weight >= KNEE at chroma >= 0.16 exits below BOUND', () => {
     let worst = 0
-    for (let h = 0; h < 360; h += 5) {
-      for (let s = 0; s <= 1.0001; s += 0.05) {
-        for (let l = 0.05; l <= 0.95; l += 0.05) {
+    for (let h = 0; h < 360; h += 3) {
+      for (let s = 0; s <= 1.0001; s += 0.01) {
+        for (let l = 0.05; l <= 0.95; l += 0.02) {
           const c = chromaOf(s, l)
           if (c < 0.16) continue
+          if (uglyWeight(h, c, l) < MUD_RESCUE_KNEE) continue
           const sPrime = mudRescue(h, c, l)
-          const cPrime = chromaOf(sPrime, l)
-          const w = uglyWeight(h, cPrime, l)
+          const w = uglyWeight(h, chromaOf(sPrime, l), l)
           if (w > worst) worst = w
         }
       }
     }
-    expect(worst).toBeLessThanOrEqual(MUD_RESCUE_KNEE + 1e-9)
+    expect(worst).toBeLessThanOrEqual(MUD_RESCUE_BOUND + 1e-9)
+  })
+  it('transient shell is thin: post-weight > 0.35 spans <= 0.02 of input s', () => {
+    for (let h = 20; h <= 100; h += 5) {
+      for (let l = 0.15; l <= 0.6; l += 0.05) {
+        let width = 0
+        for (let s = 0.30; s <= 0.60; s += 0.002) {
+          const c = chromaOf(s, l)
+          if (c < 0.16) continue
+          const sPrime = mudRescue(h, c, l)
+          if (uglyWeight(h, chromaOf(sPrime, l), l) > 0.35) width += 0.002
+        }
+        expect(width).toBeLessThanOrEqual(0.02 + 1e-9)
+      }
+    }
+  })
+  it('never INCREASES saturation (the v1 rainbow failure is structurally impossible)', () => {
+    for (let h = 0; h < 360; h += 5) {
+      for (let s = 0; s <= 1.0001; s += 0.05) {
+        for (let l = 0.05; l <= 0.95; l += 0.05) {
+          const c = chromaOf(s, l)
+          expect(mudRescue(h, c, l)).toBeLessThanOrEqual(Math.min(1, s) + 1e-9)
+        }
+      }
+    }
   })
   it('is the identity outside the pocket', () => {
     // a saturated blue and a red-clay terracotta must pass through

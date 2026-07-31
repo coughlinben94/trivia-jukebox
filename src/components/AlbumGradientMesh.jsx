@@ -578,30 +578,61 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
 
         let [r, g, bb] = oklabToRgb([L, a, b])
 
-        // Displayed-mud guard (2026-07-30). The polar blend above displays
-        // every hue along the short OKLab arc between simultaneously-
-        // present colors — spatially at seams, temporally across the 7.5s
-        // crossfade — so the screen can show muddy warm shades that exist
-        // in NO palette entry and that api/palette.js's own recolor can
-        // never catch. This is the last stage before pixels leave the
-        // tiny canvas, downstream of everything (spatial blend, crossfade,
-        // chroma dial), so it bounds displayed color no matter what
-        // upstream ships next. Chroma-lift at fixed hue/lightness (see
-        // mudRescue in src/lib/mudModel.js for the full design: why hue
-        // stays untouched, why near-neutrals are exempt, the self-quench
-        // guarantee). Runs in the same HSL space the mud bands were
-        // calibrated in; identity outside the pocket, continuous inside;
-        // blur(24px) below absorbs the (already-C0) transition.
+        // Displayed-mud guard v2 (2026-07-30, three-critic review applied).
+        // The polar blend above displays every hue along the short OKLab
+        // arc between simultaneously-present colors — spatially at seams,
+        // temporally across the 7.5s crossfade — so the screen can show
+        // muddy warm shades that exist in NO palette entry and that
+        // api/palette.js's own recolor can never catch. v1 lifted those
+        // pixels to vivid amber and thereby painted swept corridors as
+        // moving RAINBOW bands (observed live); v2 DESATURATES them toward
+        // near-neutral instead — a warm corridor reads as soft shading
+        // between color bodies (see mudRescue in src/lib/mudModel.js).
+        //
+        // Two critique-driven subtleties:
+        // 1. The rescue is DECIDED in palette space (the un-chromaScaled
+        //    color) and applied as a RATIO to the displayed pixel. The mud
+        //    bands were calibrated on raw /api/palette hexes; judging the
+        //    scaled pixel shifts every band by the BRIGHTNESS dial
+        //    (measured: deuglify's own terracotta output crossed the
+        //    dullness gate at default 0.82 and got grayed — the renderer
+        //    undoing the palette layer's fix).
+        // 2. Luma is preserved through the desat (uniform RGB rescale).
+        //    HSL-L-preserving desat DARKENS yellow-side hues (~0.11 luma
+        //    at hue 60), which reads as a dark band, not a quiet one —
+        //    luminance contrast is the most visible artifact this
+        //    pipeline can emit post-blur; chroma-only modulation is the
+        //    least.
+        // Clipped pixels are structurally exempt (a clamped channel forces
+        // HSL rel-sat to exactly 1 → uglyWeight 0 → identity), so the
+        // post-clamp read below cannot false-positive on vivid clipped
+        // colors.
         {
           const mx = Math.max(r, g, bb) / 255, mn = Math.min(r, g, bb) / 255
           const chr = mx - mn, light = (mx + mn) / 2
-          // cheap pre-gates replicating mudRescue's own zero regions
-          if (chr >= 0.10 && light > 0.13 && light < 0.65) {
+          // cheap pre-gates: displayed chroma/lightness/hue approximate the
+          // rescue's zero regions (displayed chroma <= unscaled, so 0.08
+          // here ~ the 0.10 gate in palette space; hue band padded for
+          // scale/clamp drift)
+          if (chr >= 0.08 && light > 0.13 && light < 0.65) {
             const [h] = rgbToHsl(r, g, bb)
-            const denom = 1 - Math.abs(2 * light - 1)
-            const s = denom > 0 ? Math.min(1, chr / denom) : 0
-            const sPrime = mudRescue(h, chr, light)
-            if (sPrime !== s) [r, g, bb] = hslToRgb(h, sPrime, light)
+            if (h > 12 && h < 110) {
+              // palette-space (un-scaled) color makes the DECISION
+              const [ru, gu, bu] = oklabToRgb([L, C * Math.cos(hue), C * Math.sin(hue)])
+              const [hu, cu, lu] = rgbToHsl(ru, gu, bu)
+              const du = 1 - Math.abs(2 * lu - 1)
+              const su = du > 0 ? Math.min(1, cu / du) : 0
+              const su2 = mudRescue(hu, cu, lu)
+              if (su > 1e-6 && su2 < su) {
+                const dd = 1 - Math.abs(2 * light - 1)
+                const s = dd > 0 ? Math.min(1, chr / dd) : 0
+                const [r2, g2, b2] = hslToRgb(h, s * (su2 / su), light)
+                const y0 = 0.299 * r + 0.587 * g + 0.114 * bb
+                const y1 = 0.299 * r2 + 0.587 * g2 + 0.114 * b2
+                const q = y1 > 1 ? Math.min(1.4, Math.max(0.7, y0 / y1)) : 1
+                r = Math.min(255, r2 * q); g = Math.min(255, g2 * q); bb = Math.min(255, b2 * q)
+              }
+            }
           }
         }
 
