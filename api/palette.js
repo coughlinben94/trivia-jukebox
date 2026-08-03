@@ -706,7 +706,17 @@ export function populationFactor(popRel) {
 // their own population. If EVERY entry is synthetic (the true-B&W fallback,
 // exactly 2 fixed hues, nothing real behind either), there's nothing to be
 // proportional to -- split evenly instead of collapsing to a divide-by-zero.
-const ACCENT_WEIGHT = 0.15;
+//
+// 0.15 -> 0.30 (owner spec, 2026-08-03 live check on "Man I Need"): now that
+// the single-real-hue branch's accent sits at colors[1] (see the index-1
+// reorder above) and actually reaches the two-light renderer, an 85/15
+// split put the accent's Apollonius-circle boundary (the locus in
+// twoLightBlend.js's population-weighted IDW where weightA==weightB) so
+// close to the accent's own center that it read as a small isolated circle
+// on a solid field -- "went back to the circle concept ... no shapes,
+// mesh." 70/30 pushes that boundary out to a much larger share of the
+// frame, reading as two colors sharing the field instead of a dot on one.
+const ACCENT_WEIGHT = 0.30;
 export function buildWeights(entries) {
   const real = entries.filter(e => e.population != null);
   const synthetic = entries.filter(e => e.population == null);

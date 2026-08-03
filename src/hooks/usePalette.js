@@ -30,7 +30,12 @@ const FALLBACK = { colors: FALLBACK_COLORS, weights: FALLBACK_COLORS.map(() => 0
 // most-vivid pixel to top-chroma-cohort average (de-neon/de-spike).
 // v5 (2026-08-03): true-monochrome covers now receive a neon purple/pink
 // fallback pair instead of the previous blue/orange API output.
-export const PALETTE_VERSION = 5;
+// v6 (same day): single-real-hue branch's synthetic accent moved from
+// index 2 (dead -- pickGradientColors never reads past index 1) to index
+// 1, and ACCENT_WEIGHT 0.15 -> 0.30 -- both change this branch's server
+// output, and s-maxage=86400 means an unbumped version can serve the old
+// accent placement/weight for up to 24h post-deploy.
+export const PALETTE_VERSION = 6;
 const versionQuery = `&pv=${PALETTE_VERSION}`;
 
 // Cache key includes the version + tuning query so a VARIETY-overridden fetch
