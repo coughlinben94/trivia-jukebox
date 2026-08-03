@@ -31,6 +31,10 @@ export const DIALS = [
   { id: 'MOTION',     label: 'MOTION',     commit: 'release', remount: true },
   { id: 'SIZE',       label: 'SIZE',       commit: 'release', remount: true },
   { id: 'BLEND',      label: 'BLEND',      commit: 'live' },
+  // DEPTH is baked into parseColors' shade fan, which runs on palette
+  // events (blend start / initial), not per frame — remount on release so
+  // the tuning screen shows the new fan immediately, same as MOTION/SIZE.
+  { id: 'DEPTH',      label: 'DEPTH',      commit: 'release', remount: true },
   { id: 'VARIETY',    label: 'VARIETY',    commit: 'release', server: true },
   { id: 'CROSSFADE',  label: 'CROSSFADE',  commit: 'live' },
 ]
@@ -186,6 +190,11 @@ export function circleFalloffPow() { return lerp(0.2, 2.8, T('BLEND') / 100) }  
 
 export function blendDurationMs()  { return lerp(12000, 3000, T('CROSSFADE') / 100) }       // 50 → 7500 (was 7500, exact)
 
+// Shade-fan depth: how far each of the two color families spreads into its
+// darker/lighter shades (±OKLab lightness in AlbumGradientMesh.parseColors).
+// Owner-specified range 5-25%; 50 → 0.15, the shipped default.
+export function shadeDepth()       { return lerp(0.05, 0.25, T('DEPTH') / 100) }            // 50 → 0.15
+
 // VARIETY resolves through the SAME curve as the server (paletteDefaults.js)
 // — used client-side only for the board's own readout; the actual palette
 // extraction always happens server-side.
@@ -219,6 +228,9 @@ export function exportSnippet() {
   if (isOverridden('BLEND')) {
     lines.push('', '// AlbumGradientMesh.jsx — replace IDW_POWER:', `const IDW_POWER = ${fmt(meshIdwPower())}`)
     lines.push('// AlbumGradient.jsx buildBlobGradient — replace Math.pow(1 - t, 1.5):', `Math.pow(1 - t, ${fmt(circleFalloffPow())})`)
+  }
+  if (isOverridden('DEPTH')) {
+    lines.push('', '// AlbumGradientMesh.jsx parseColors — replace the shadeDepth() default (gradientTuning.js lerp midpoint):', `const SHADE_DL = ${fmt(shadeDepth())}`)
   }
   if (isOverridden('VARIETY')) {
     const cfg = varietyConfig()

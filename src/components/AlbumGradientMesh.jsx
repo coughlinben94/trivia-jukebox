@@ -1,5 +1,5 @@
 import { useEffect, useRef, useMemo } from 'react'
-import { orbitSpeed, blobRadius, meshIdwPower, chromaScale, blendDurationMs } from '../lib/gradientTuning.js'
+import { orbitSpeed, blobRadius, meshIdwPower, chromaScale, blendDurationMs, shadeDepth } from '../lib/gradientTuning.js'
 
 // Canvas2D "soft mesh" gradient background — third generation. Same prop
 // contract as AlbumGradient.jsx (colors/nextColors/active/shuffleKey/
@@ -183,7 +183,8 @@ function hexToRgb(hex) {
 // palette index from owning one corner forever in the 6-distinct-color
 // era; with two families alternating over antipodal pairs, both families
 // cover the whole canvas symmetrically and the concern is moot.)
-const SHADE_DL = 0.15 // ±15% OKLab lightness — owner widened the spec to 5-25%; 15 sits mid-range (clamps at 0.12/0.93 keep extremes displayable)
+// Depth is the DEPTH dial (gradientTuning.shadeDepth, owner range 5-25%,
+// default 0.15); clamps at 0.12/0.93 keep extremes displayable.
 function shadeOf(rgb, dl) {
   const [L, a, b] = rgbToOklab(rgb)
   return oklabToRgb([Math.min(0.93, Math.max(0.12, L + dl)), a, b])
@@ -191,7 +192,8 @@ function shadeOf(rgb, dl) {
 function parseColors(hexArr, n) {
   const src = hexArr.length ? hexArr : ['#080808']
   const fam = [hexToRgb(src[0]), hexToRgb(src[1] ?? src[0])]
-  const dls = [-SHADE_DL, 0, SHADE_DL]
+  const dl = shadeDepth()
+  const dls = [-dl, 0, dl]
   return Array.from({ length: n }, (_, i) => shadeOf(fam[i % 2], dls[Math.floor(i / 2) % 3]))
 }
 

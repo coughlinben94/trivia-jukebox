@@ -128,6 +128,7 @@ const HINTS = {
   MOTION:     'How fast the color blobs move.',
   SIZE:       'How big each color blob is.',
   BLEND:      'Sharp color shapes vs. soft blending.',
+  DEPTH:      'How far each color fans into darker and lighter shades.',
   VARIETY:    'How many different colors show up.',
   CROSSFADE:  'How fast the background fades to the next song.',
 }
