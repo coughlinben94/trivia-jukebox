@@ -1,14 +1,6 @@
-// Shared "muddy warm pocket" model — ONE definition of ugly, used by BOTH
-// layers that can produce a displayed color:
-//   · api/palette.js — gates/recolors EXTRACTED palette candidates (deuglify)
-//   · AlbumGradientMesh.jsx — rescues DISPLAYED per-pixel blends (mudRescue)
-// The renderer needs its own guard because the mesh's polar blend displays
-// every hue along the short OKLab arc between simultaneously-present colors
-// (spatially at seams, temporally across the 7.5s crossfade) — colors that
-// exist in no palette entry and so can never be caught server-side. This
-// module is pure data + pure functions (no browser/Node APIs) so both
-// bundles can import it — same precedent as paletteDefaults.js; Vercel's
-// nft tracing follows the ../src import when bundling the serverless fn.
+// Shared muddy-warm-pocket model used by api/palette.js to gate and recolor
+// extracted candidates. This module stays pure (no browser/Node APIs) so the
+// Vercel serverless bundle can import it through ../src.
 //
 // Bands were calibrated in HSL hue / relative-saturation / lightness space
 // against a 651-color live-library scan (2026-07-30, see api/palette.js

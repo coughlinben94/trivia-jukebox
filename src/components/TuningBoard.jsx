@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, useCallback } from 'react'
 import {
-  DIALS, T, setDial, resetDial, clearDials, setEngine,
+  DIALS, T, setDial, resetDial, clearDials,
   hasOverrides, exportSnippet, TUNING_EVENT,
 } from '../lib/gradientTuning.js'
 
@@ -125,8 +125,8 @@ function Fader({ id, label, hint }) {
 // mechanics (commit timing lives in the code comments, not here).
 const HINTS = {
   BRIGHTNESS: 'How bright and bold the colors look.',
-  MOTION:     'How fast the color blobs move.',
-  SIZE:       'How big each color blob is.',
+  MOTION:     'How fast the two color lights move.',
+  SIZE:       'How large each color light is.',
   BLEND:      'Sharp color shapes vs. soft blending.',
   DEPTH:      'How far each color fans into darker and lighter shades.',
   VARIETY:    'How many different colors show up.',
@@ -156,9 +156,8 @@ function InfoIcon({ text }) {
 
 // The mixer. Fixed to the bottom of whatever screen mounts it (TestScreen),
 // above LiveScreen's z-50 so it sits over the turntable while a real song
-// plays. `engine` is display-only state owned by the parent — the switch
-// writes localStorage via setEngine() and the parent remounts the renderer.
-export default function TuningBoard({ engine, engineLocked = false }) {
+// plays.
+export default function TuningBoard() {
   const [copied, setCopied] = useState(false)
   const [, forceRender] = useState(0)
 
@@ -196,28 +195,6 @@ export default function TuningBoard({ engine, engineLocked = false }) {
       }}
     >
       {DIALS.map(d => <Fader key={d.id} id={d.id} label={d.label} hint={HINTS[d.id]} />)}
-
-      <div className="w-px self-stretch bg-white/10 mx-1" />
-
-      {/* Engine A/B — a toggle switch, not a knob, like a mixer's routing switch */}
-      <div className="flex flex-col items-center gap-1.5">
-        <button
-          onClick={() => setEngine(engine === 'mesh' ? 'circles' : 'mesh')}
-          disabled={engineLocked}
-          className="w-12 h-6 rounded-full relative transition-colors duration-150 cursor-pointer disabled:opacity-40 disabled:cursor-default"
-          style={{ background: engine === 'mesh' ? 'rgba(167,139,250,0.5)' : 'rgba(255,255,255,0.15)' }}
-          title={engineLocked
-            ? '?gradient= in the URL is forcing the engine — drop the param to use this switch'
-            : 'Switch gradient engine (mesh / circles)'}
-        >
-          <div
-            className="absolute top-0.5 w-5 h-5 rounded-full bg-white transition-transform duration-150"
-            style={{ transform: engine === 'mesh' ? 'translateX(26px)' : 'translateX(2px)' }}
-          />
-        </button>
-        <span className="text-[9px] font-semibold tracking-wide text-white/70">{engine === 'mesh' ? 'MESH' : 'CIRCLES'}</span>
-        {engineLocked && <span className="text-[8px] text-amber-300/70">?gradient= wins</span>}
-      </div>
 
       <div className="w-px self-stretch bg-white/10 mx-1" />
 

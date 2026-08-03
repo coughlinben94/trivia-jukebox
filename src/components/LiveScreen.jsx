@@ -1,52 +1,10 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, memo } from 'react'
 import { motion, useAnimation } from 'framer-motion'
-import AlbumGradient from './AlbumGradient'
-import AlbumGradientMesh from './AlbumGradientMesh'
-import AlbumCoverBloom from './AlbumCoverBloom'
+import GradientBackground from './GradientBackground'
 import { usePalette } from '../hooks/usePalette'
 import { displayName } from '../lib/track'
 
-// AlbumGradientMesh (soft mesh, OKLab mixing, tiny-canvas blur, "two colors
-// colliding") is the default background as of 2026-07-26. The original
-// AlbumGradient (radial-gradient circle blobs) draws 6 solid-colored circles
-// and screen-blends them — no matter how the falloff curve is tuned, wherever
-// two differently-colored circles meet (or a circle's own bright center meets
-// its softer edge) there's a visible boundary, reported repeatedly as "circles
-// in the middle of blobs." Mesh doesn't have that failure mode by
-// construction: it paints at a tiny ~48px resolution and blurs the result way
-// up onto the real canvas, so a hard edge is physically impossible.
-// Mesh's tuning constants (ANCHOR_SWING, ACCENT_BOOST, etc., see
-// AlbumGradientMesh.jsx) were dialed up on 2026-07-19 specifically to fight
-// api/palette.js's old washed-out bucket-averaging bug — that bug is long
-// fixed and palette.js has since also gained hue-diversity dedup (2026-07-26),
-// so those boosts are working with much more vivid input than when they were
-// tuned. Watch for oversaturation; dial the "+25% intensity pass" values back
-// down first if so.
-// Circle-blobs is kept as an opt-out: ?gradient=circles or
-// localStorage.setItem('trivia_gradient_engine', 'circles') in devtools —
-// either way it's instant, no redeploy needed.
-//
-// AlbumCoverBloom (2026-08-04) is a third, opt-in-only engine: real album
-// art, blurred and slowly panned, with a live color-wash layer blended on
-// top and a shared-direction slide between songs — built after three
-// separate blob-based attempts (circles, mesh, mesh variants) all hit the
-// owner's "i hate the blob concept" wall. Opt in with ?gradient=bloom or
-// localStorage.trivia_gradient_engine='bloom'. Mesh stays the DEFAULT
-// engine — this sits alongside it for live A/B judging, nothing about the
-// existing mesh/circles path changes.
-// Not a real hook (no React state/effects) — plain function, just named to
-// signal it's read at render time rather than cached once at module load.
-function getGradientEngine() {
-  if (typeof window === 'undefined') return 'mesh'
-  const q = new URLSearchParams(window.location.search).get('gradient')
-  if (q === 'circles' || q === 'circle') return 'circles'
-  if (q === 'bloom') return 'bloom'
-  if (q === 'mesh') return 'mesh'
-  const stored = localStorage.getItem('trivia_gradient_engine')
-  if (stored === 'circles' || stored === 'circle') return 'circles'
-  if (stored === 'bloom') return 'bloom'
-  return 'mesh'
-}
+// One palette-driven two-light Canvas renderer owns the live background.
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
@@ -166,12 +124,6 @@ function Tonearm({ controls }) {
 // change on that cadence, so memo() keeps it from redoing its render work — title-fit
 // measurement, palette lookups, the whole record/tonearm JSX tree — 3.3x/second for nothing.
 function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpcomingTrack }) {
-  // Read once per mount, not per render — avoids re-checking localStorage/URL
-  // on every position-tick re-render this component already gets a lot of.
-  const [gradientEngine] = useState(getGradientEngine)
-  const GradientBg = gradientEngine === 'bloom' ? AlbumCoverBloom
-    : gradientEngine === 'circles' ? AlbumGradient
-    : AlbumGradientMesh
   const [shown, setShown]                 = useState(currentTrack)
   const [prev,  setPrev]                  = useState(null)
   const [transitioning, setTransitioning] = useState(false)
@@ -248,7 +200,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // 2-normally/3-when-needed hue-distance cap once a root-cause review
   // traced it as the actual bug on busy multi-hue covers).
   //
-  // useMemo, not a plain .slice()/pick every render: AlbumGradientMesh's
+  // useMemo, not a plain .slice()/pick every render: GradientBackground's
   // blend-trigger effects key off [colors]/[nextColors] BY REFERENCE
   // (usePalette's own return value is stable across re-renders unless a
   // real fetch resolves, which is what those effects rely on to fire once
@@ -654,10 +606,10 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           motion matters most. Previously active={!isPaused || transitioning}
           froze the canvas RAF loop on pause, so the one moment the room stares
           at this screen the longest showed a dead frame. */}
-      <GradientBg colors={palette.colors} weights={palette.weights} nextColors={upcomingPalette.colors} nextWeights={upcomingPalette.weights} active={true} shuffleKey={shuffleKey} entranceActive={entranceActive} artUrl={artUrl} nextArtUrl={upcomingArtUrl} />
+      <GradientBackground colors={palette.colors} weights={palette.weights} nextColors={upcomingPalette.colors} nextWeights={upcomingPalette.weights} active={true} shuffleKey={shuffleKey} entranceActive={entranceActive} artUrl={artUrl} nextArtUrl={upcomingArtUrl} />
 
       {/* Entrance black-out (2026-08-04, owner spec) — reverses the earlier
-          "no black snap, ever" stance from AlbumGradient/AlbumGradientMesh.
+          renderer's "no black snap, ever" stance.
           Those comments were about mid-session song changes (skip to skip) —
           this is scoped ONLY to entranceActive, which is true exactly once,
           during the very first song of a shuffle session (LiveScreen mounts
@@ -669,12 +621,16 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           colors of a session read as a deliberate reveal instead of colors
           already sitting there when the screen appears. Purely visual: no
           change to the gradient math, blend state, or mid-session transitions. */}
+      {/* 900ms ease-out (first cut) read as an abrupt snap live — owner:
+          "pure black till the first two colors move in... not fluid enough."
+          Slower, symmetric ease so the colors read as drifting in rather
+          than popping in once the curtain lifts. */}
       <div
         className="absolute inset-0 z-[1] pointer-events-none"
         style={{
           background: '#000',
           opacity: entranceActive ? 1 : 0,
-          transition: entranceActive ? 'none' : 'opacity 900ms ease-out',
+          transition: entranceActive ? 'none' : 'opacity 2400ms cubic-bezier(0.33, 0, 0.2, 1)',
         }}
       />
 

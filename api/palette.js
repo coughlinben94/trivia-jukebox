@@ -2,9 +2,8 @@ import sharp from 'sharp';
 import { resolvePaletteConfig } from '../src/lib/paletteDefaults.js';
 import { smoothstep, relativeSaturation, warmPocketHueWeight, uglyWeight } from '../src/lib/mudModel.js';
 
-// Mud-pocket model moved to src/lib/mudModel.js (2026-07-30) so the mesh
-// renderer's displayed-pixel rescue shares ONE definition of ugly with this
-// file's candidate gating/recolor. Re-exported here so existing imports
+// Mud-pocket model lives in src/lib/mudModel.js so palette candidate gating
+// and recoloring share one definition of ugly. Re-exported here so existing imports
 // (src/test/palette.test.js) keep working. Full calibration history stays
 // in the comments below, where the model was built.
 export { smoothstep, relativeSaturation, warmPocketHueWeight, uglyWeight };

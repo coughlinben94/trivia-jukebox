@@ -688,9 +688,8 @@ const [newSetName, setNewSetName] = useState('')
 
   // Manual gradient-color override (2026-08-03, thinktank round 3): a
   // per-song hex the owner picked in SongDetailModal to replace the
-  // auto-extracted second gradient color, already auto-snapped to the
-  // 30-140deg compatible band (see src/lib/gradientColor.js) before it
-  // ever reaches here — this callback just stores whatever it's handed.
+  // auto-extracted second gradient color. Manual choices are stored exactly
+  // as selected; the renderer handles the resulting two-light blend.
   // hex === null clears the override, falling back to auto-pick.
   const updateGradientOverride = useCallback((id, hex) => {
     setLibrary(prev => prev.map(t => t.id === id ? { ...t, gradientOverride: hex } : t))
@@ -786,7 +785,7 @@ const [newSetName, setNewSetName] = useState('')
   // Opens on a real shuffled session — same startShuffle() the Space bar and
   // the Player's play button call — because tuning the background against a
   // static preview tells you nothing about the entrance blend, the song-to-song
-  // crossfade, or how the blobs drift behind a spinning record.
+  // crossfade, or how the lights drift behind a spinning record.
   const openTuning = useCallback(() => {
     if (showTest) return
     tuningRef.current = true

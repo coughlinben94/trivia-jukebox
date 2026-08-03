@@ -127,7 +127,7 @@ function blendPreparedLights({ hexA, hexB, labA, labB, distA, distB, asRgb = fal
 // center and 10% darker at the edge of its normalized radius. Color parsing
 // and sRGB-to-OKLab conversion happen once, while seam behavior continues to
 // use blendPreparedLights/mixWithSeam above.
-export function prepareTwoLightField(hexA, hexB) {
+export function prepareTwoLightField(hexA, hexB, options = {}) {
   if (!/^#[0-9a-f]{6}$/i.test(hexA) || !/^#[0-9a-f]{6}$/i.test(hexB)) {
     throw new TypeError('Two-light colors must be six-digit hex strings')
   }
@@ -141,6 +141,9 @@ export function prepareTwoLightField(hexA, hexB) {
   const baseBb = parseInt(hexB.slice(5, 7), 16)
   const baseAL = baseA[0], baseAa = baseA[1], baseAbLab = baseA[2]
   const baseBL = baseB[0], baseBa = baseB[1], baseBbLab = baseB[2]
+  const brightnessAdjustment = options.brightnessAdjustment ?? 0
+  const haloDepth = options.haloDepth ?? HALO_DELTA_L
+  const seamBlend = options.seamBlend ?? 0.6
 
   function sampleInto(distA, distB, target, offset = 0) {
     if (!Number.isFinite(distA) || !Number.isFinite(distB)) {
@@ -148,15 +151,15 @@ export function prepareTwoLightField(hexA, hexB) {
     }
     distA = Math.max(0, distA)
     distB = Math.max(0, distB)
-    const lightnessA = Math.max(0, Math.min(1, baseAL + HALO_DELTA_L * (1 - 2 * Math.min(1, distA))))
-    const lightnessB = Math.max(0, Math.min(1, baseBL + HALO_DELTA_L * (1 - 2 * Math.min(1, distB))))
+    const lightnessA = Math.max(0, Math.min(1, baseAL + brightnessAdjustment + haloDepth * (1 - 2 * Math.min(1, distA))))
+    const lightnessB = Math.max(0, Math.min(1, baseBL + brightnessAdjustment + haloDepth * (1 - 2 * Math.min(1, distB))))
     const rawWeightA = 1 / (distA + 0.001)
     const rawWeightB = 1 / (distB + 0.001)
     const weightSum = rawWeightA + rawWeightB
     const weightA = rawWeightA / weightSum
     const weightB = rawWeightB / weightSum
     const eased = seamEased(weightA, weightB)
-    const chromaScale = 1 - eased * 0.6
+    const chromaScale = 1 - eased * seamBlend
     let L = lightnessA * weightA + lightnessB * weightB
     L += (Math.min(1, L + GLOW_DELTA_L) - L) * eased
     const a = (baseAa * weightA + baseBa * weightB) * chromaScale

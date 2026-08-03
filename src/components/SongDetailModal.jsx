@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { fmt, TimeField, SetMarkerButton } from './ScrubberControls'
 import { usePalette } from '../hooks/usePalette'
-import { snapToCompatibleHue } from '../lib/gradientColor'
 
 const MIN_CLIP_MS = 1000
 
@@ -39,9 +38,8 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onUpdate
   // palette (usePalette, same hook LiveScreen's gradient uses — same
   // client-side cache, so this costs nothing extra) so the swatches are
   // real colors from the cover, not an arbitrary wheel. baseColor is
-  // whatever the server would pick as color 1 (index 0) — the auto-snap
-  // barrier validates every manual pick against THIS, not against
-  // whatever's currently on screen, since color 0 is never itself overridden.
+  // whatever the server picks as color 1 (index 0); color 0 is never manually
+  // overridden.
   const { colors: paletteColors } = usePalette(track.album?.images?.[0]?.url)
   const baseColor        = paletteColors?.[0]
   const swatchCandidates = (paletteColors ?? []).slice(1, 1 + MAX_SWATCHES)
@@ -49,9 +47,8 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onUpdate
 
   const handlePickGradientColor = (hex) => {
     if (!baseColor) return
-    const snapped = snapToCompatibleHue(baseColor, hex)
-    setGradientOverride(snapped)
-    onUpdateGradientOverride?.(track.id, snapped)
+    setGradientOverride(hex)
+    onUpdateGradientOverride?.(track.id, hex)
   }
   const handleResetGradientColor = () => {
     setGradientOverride(null)
@@ -269,11 +266,8 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onUpdate
             <TimeField label="Out" value={stopMs}  minMs={Math.min(displayDuration, startMs + MIN_CLIP_MS)} maxMs={displayDuration} onChange={v => { setStopMs(v);  stopMsRef.current  = v; onUpdateTimes(track.id, startMsRef.current, v) }} />
           </div>
 
-          {/* Manual gradient color override — auto-picks color 1 (index 0)
-              from the cover; this picker only ever sets/replaces color 2.
-              Every pick is auto-snapped into the compatible band against
-              color 1 (see handlePickGradientColor) so it can't reproduce
-              the muddy-corridor bug no matter what gets clicked. */}
+          {/* Manual gradient color override — color 1 remains automatic from
+              the cover; this picker saves the exact chosen color as color 2. */}
           <div className="mb-3 rounded-xl bg-white/[0.04] border border-white/[0.07] p-3">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[10px] font-semibold text-white uppercase tracking-wide">Gradient color</span>

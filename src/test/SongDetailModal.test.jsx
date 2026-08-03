@@ -3,6 +3,10 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import SongDetailModal from '../components/SongDetailModal'
 
+vi.mock('../hooks/usePalette', () => ({
+  usePalette: () => ({ colors: ['#112233', '#ff0000', '#00ff00'] }),
+}))
+
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
 const TRACK = {
@@ -33,6 +37,7 @@ function makePlayer(overrides = {}) {
 function renderModal(trackOverrides = {}, playerOverrides = {}, handlers = {}) {
   const onUpdateTimes = handlers.onUpdateTimes ?? vi.fn()
   const onClose       = handlers.onClose       ?? vi.fn()
+  const onUpdateGradientOverride = handlers.onUpdateGradientOverride ?? vi.fn()
   const track  = { ...TRACK, ...trackOverrides }
   const player = makePlayer(playerOverrides)
 
@@ -42,11 +47,25 @@ function renderModal(trackOverrides = {}, playerOverrides = {}, handlers = {}) {
       player={player}
       onUpdateTimes={onUpdateTimes}
       onClose={onClose}
+      onUpdateGradientOverride={onUpdateGradientOverride}
     />
   )
 
-  return { onUpdateTimes, onClose, track, player, ...result }
+  return { onUpdateTimes, onClose, onUpdateGradientOverride, track, player, ...result }
 }
+
+describe('Gradient color override', () => {
+  it('saves the exact valid color selected by the user', () => {
+    const onUpdateGradientOverride = vi.fn()
+    renderModal({}, {}, { onUpdateGradientOverride })
+
+    fireEvent.change(screen.getByLabelText('Pick a custom gradient color'), {
+      target: { value: '#abcdef' },
+    })
+
+    expect(onUpdateGradientOverride).toHaveBeenCalledWith('track-1', '#abcdef')
+  })
+})
 
 // The Set In / Set Out buttons contain their label + a time sub-label.
 // Use role+name regex to find them regardless of ✓ prefix.

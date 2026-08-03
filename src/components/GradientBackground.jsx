@@ -1,6 +1,9 @@
 /* eslint-disable react-refresh/only-export-components -- pure renderer helpers are exported for focused state/math tests */
 import { useEffect, useRef } from 'react'
-import { blendDurationMs } from '../lib/gradientTuning.js'
+import {
+  blendDurationMs, brightnessAdjustment, motionSpeed,
+  lightRadius, seamBlend, haloDepth,
+} from '../lib/gradientTuning.js'
 import { prepareTwoLightField } from '../lib/twoLightBlend.js'
 
 const TINY_SIZE = 48
@@ -31,11 +34,11 @@ export function makeLightParams({ shuffleKey = 0, artUrl = '', colors = [] }) {
     baseY: 0.25 + rng() * 0.5,
     ampX: 0.2 + rng() * 0.12,
     ampY: 0.2 + rng() * 0.12,
-    freqX: 0.35 + rng() * 0.2,
-    freqY: 0.3 + rng() * 0.2,
+    freqX: (0.35 + rng() * 0.2) * motionSpeed(),
+    freqY: (0.3 + rng() * 0.2) * motionSpeed(),
     phaseX: rng() * Math.PI * 2,
     phaseY: rng() * Math.PI * 2,
-    radius: 0.55 + rng() * 0.15,
+    radius: lightRadius() + (rng() - 0.5) * 0.1,
   }))
 }
 
@@ -127,7 +130,11 @@ function drawScene(ctx, smallCtx, scene, timestamp, width, height) {
   const ay = a.baseY + Math.sin(t * a.freqY + a.phaseY) * a.ampY
   const bx = b.baseX + Math.sin(t * b.freqX + b.phaseX) * b.ampX
   const by = b.baseY + Math.sin(t * b.freqY + b.phaseY) * b.ampY
-  const field = scene.field || (scene.field = prepareTwoLightField(...scene.colors))
+  const field = scene.field || (scene.field = prepareTwoLightField(...scene.colors, {
+    brightnessAdjustment: brightnessAdjustment(),
+    haloDepth: haloDepth(),
+    seamBlend: seamBlend(),
+  }))
   const image = scene.imageData || (scene.imageData = smallCtx.createImageData(TINY_SIZE, TINY_SIZE))
 
   for (let y = 0; y < TINY_SIZE; y += 1) {
