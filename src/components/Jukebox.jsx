@@ -552,6 +552,14 @@ const [newSetName, setNewSetName] = useState('')
     // argument-free since it's also wired directly to the skip button's
     // onClick, which would otherwise pass the click event as an arg.
     const tryPlay = (isRetry) => {
+      // Notify LiveScreen's upcoming-track preview before this pick starts
+      // playing. Auto-advance gets this ~2.5s early from onFadeStart's fade
+      // timer; manual Skip and retry call tryPlay directly and skipped that
+      // step, leaving the gradient crossfade to hard-cut instead of blend.
+      // Mirrors onFadeStart's own call, computed before shuffleIdxRef moves.
+      onUpcomingTrackRef.current?.(
+        resolveUpcoming(shuffleOrderRef.current, shuffleIdxRef.current, libraryRef.current.filter(hasTrim))
+      )
       // Trimmed-only, same as startShuffle/the ?lib= handoff — a song
       // without a trim shouldn't come up on auto-advance or skip either.
       // shuffle.js's resolveNext already treats any id missing from `lib` as

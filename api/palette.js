@@ -374,15 +374,18 @@ export default async function handler(req, res) {
         // leftover near-gray candidates kept after it, on the theory that
         // LiveScreen's client-side picker (pickGradientColors) would use up
         // to 3 of these 5 entries. A second-opinion review actually traced
-        // that picker's logic against this exact array: it takes the top 2
-        // entries, then adds a 3rd ONLY if those top 2 are hue-close
-        // (originally <50° hue delta, since replaced by an OKLab ΔE test —
-        // see LiveScreen.jsx) — and since these hues are fixed and always
-        // 180° apart by construction, the picker NEVER reaches past the
-        // first 2. The 3rd accent and both grays were dead weight on every
-        // single true-B&W cover, unconditionally. Simplified to exactly the
-        // 2 hues that were actually ever displayed, so what's in the code
-        // matches what's on screen.
+        // that picker's (then-current) logic against this exact array: it
+        // took the top 2 entries, then added a 3rd ONLY if those top 2 were
+        // hue-close — and since these hues are fixed and always 180° apart
+        // by construction, the picker never reached past the first 2. The
+        // 3rd accent and both grays were dead weight on every single
+        // true-B&W cover, unconditionally. Simplified to exactly the 2 hues
+        // that were actually ever displayed, so what's in the code matches
+        // what's on screen. (pickGradientColors has since been rebuilt for
+        // the 2-light-only renderer and now unconditionally slices to 2 —
+        // no hue-close/3rd-color logic exists client-side anymore — which
+        // is what makes this branch's fixed 2-entry output still correct
+        // and what the single-real-hue branch above had to be fixed to match.)
         //
         // Lightness floor raised 0.25 -> 0.38 (2026-07-30, second-opinion
         // review): at low avgLuma the old 0.25 floor combined with this
@@ -529,25 +532,28 @@ export default async function handler(req, res) {
         }
         const accentHue = pickAccentHue(baseHex, accentSat, accentLight);
         const accent = hslToHex(accentHue, accentSat, accentLight);
-        // Accent placed at index 2, not appended at the end — LiveScreen's
-        // client-side picker (pickGradientColors) only ever looks at indices
-        // 0-2 (top 2, plus a 3rd from index 2 specifically when the top 2
-        // are hue-close). This branch's top 2 real picks ARE hue-close by
-        // definition (that's what routed us into this fallback in the first
-        // place), so appending the accent at the end (old: index 4 of 5)
-        // put it past where the picker ever looks — confirmed via a
-        // second-opinion library scan: the accent displayed on 0 of 26
-        // real single-hue-family covers, including the exact covers ("Free
-        // Ride," "Before You Go") whose live complaints motivated adding it.
-        // At index 2 the picker's top-2/3rd-if-close logic reaches it on
-        // every one of them.
-        colors = [colors[0], colors[1], accent, ...colors.slice(2, 4)].filter(Boolean);
-        // colors[0]/colors[1] (and any padding past index 2) are real, so
-        // they keep their bucket population; `accent` is synthetic and gets
-        // buildWeights' fixed ACCENT_WEIGHT share instead of competing for
-        // an equal split — this is the actual structural fix for the
-        // accent reading as a fully competing pooling color instead of a
-        // minor one. Renderer contracts still consume this population weight.
+        // Accent placed at index 1, not index 2 — LiveScreen's client-side
+        // picker (pickGradientColors, since the 2-light renderer rebuild)
+        // unconditionally does colors.slice(0, 2); there is no hue-close/3rd-
+        // color fallback anymore, so index 2 is never read. This branch's
+        // top 2 real picks ARE hue-close by definition (that's what routed
+        // us into this fallback in the first place), so without the accent
+        // in one of the first two slots the picker renders two near-
+        // duplicate-hue lights and the accent is dead code on every cover
+        // that reaches this branch (confirmed via a second-opinion library
+        // scan: 0 of 26 real single-hue-family covers, including the exact
+        // covers ("Free Ride," "Before You Go") whose live complaints
+        // motivated adding it). colors[0] stays the true base so the accent
+        // reads as a deliberate SECOND light, not the primary.
+        colors = [colors[0], accent, colors[1], ...colors.slice(2, 4)].filter(Boolean);
+        // colors[0]/colors[1] (now at index 2, and any padding past it) are
+        // real, so they keep their bucket population; `accent` is synthetic
+        // and gets buildWeights' fixed ACCENT_WEIGHT share instead of
+        // competing for an equal split — this is the actual structural fix
+        // for the accent reading as a fully competing pooling color instead
+        // of a minor one. Renderer contracts still consume this population
+        // weight. buildWeights matches by `hex === accent` below, not by
+        // position, so this reorder needs no change to the weights map.
         weights = buildWeights(colors.map(hex =>
           hex === accent ? { population: null } : { population: byHex.get(hex)?.population ?? null }
         ));

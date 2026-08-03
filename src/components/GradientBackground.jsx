@@ -7,6 +7,12 @@ import {
 import { prepareTwoLightField } from '../lib/twoLightBlend.js'
 
 const TINY_SIZE = 48
+// Blur-upscale already hides resolution loss (the 48x48 tile is what
+// carries the actual gradient) — capping the destination canvases' backing
+// store keeps 3 full-res RGBA buffers (2 visible + 1 snapshot) cheap
+// regardless of viewport/DPR. Uncapped, a plain 1080p screen at DPR2 alone
+// runs ~95MB across the 3; 4K/DPR1 hits ~100MB, 4K/DPR2 ~400MB.
+const MAX_BACKING_DIMENSION = 800
 const SENTINEL = '#080808'
 const FALLBACK = ['#702070', '#d83a88']
 const VALID_HEX = /^#[0-9a-f]{6}$/i
@@ -200,8 +206,10 @@ export function resizeCanvasesPreservingSnapshot(
   if (savedContext) savedContext.drawImage(snapshotCanvas, 0, 0)
 
   canvases.forEach(canvas => {
-    canvas.width = Math.max(1, Math.round(canvas.clientWidth * dpr))
-    canvas.height = Math.max(1, Math.round(canvas.clientHeight * dpr))
+    const longest = Math.max(canvas.clientWidth, canvas.clientHeight) * dpr
+    const scale = longest > MAX_BACKING_DIMENSION ? MAX_BACKING_DIMENSION / longest : 1
+    canvas.width = Math.max(1, Math.round(canvas.clientWidth * dpr * scale))
+    canvas.height = Math.max(1, Math.round(canvas.clientHeight * dpr * scale))
   })
   snapshotCanvas.width = canvases[0].width
   snapshotCanvas.height = canvases[0].height

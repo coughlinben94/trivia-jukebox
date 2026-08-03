@@ -67,10 +67,17 @@ export function prefetchPalette(albumArtUrl) {
 export function usePalette(albumArtUrl) {
   const [palette, setPalette] = useState(FALLBACK);
   const abortRef = useRef(null);
+  // abort() only preempts a fetch/.json() promise that hasn't settled yet —
+  // once it resolves, the queued .then() below runs regardless. A fast
+  // skip streak (song A -> B -> C) can have B's response land after C's
+  // effect has already moved on, so the state write also needs its own
+  // "is this still the current request" check, not just the AbortController.
+  const latestKeyRef = useRef(null);
 
   useEffect(() => {
     if (!albumArtUrl) return;
     const key = cacheKey(albumArtUrl)
+    latestKeyRef.current = key;
 
     if (cache.has(key)) {
       setPalette(cache.get(key));
@@ -90,7 +97,7 @@ export function usePalette(albumArtUrl) {
         if (data.colors?.length >= 2) {
           const p = normalize(data);
           cache.set(key, p);
-          setPalette(p);
+          if (latestKeyRef.current === key) setPalette(p);
         }
       })
       .catch(err => {
