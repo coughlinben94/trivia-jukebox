@@ -171,6 +171,21 @@ function drawScene(ctx, smallCtx, scene, timestamp, width, height) {
   ctx.filter = 'none'
 }
 
+export function crossfadeOpacities(progress) {
+  const clamped = Math.max(0, Math.min(1, progress))
+  return { outgoing: 1, incoming: clamped }
+}
+
+export function compositeSnapshot(context, outgoing, incoming, progress, width, height) {
+  const { outgoing: outgoingAlpha, incoming: incomingAlpha } = crossfadeOpacities(progress)
+  context.clearRect(0, 0, width, height)
+  context.globalAlpha = outgoingAlpha
+  context.drawImage(outgoing, 0, 0)
+  context.globalAlpha = incomingAlpha
+  context.drawImage(incoming, 0, 0)
+  context.globalAlpha = 1
+}
+
 export function resizeCanvasesPreservingSnapshot(
   canvases,
   snapshotCanvas,
@@ -245,12 +260,14 @@ export default function GradientBackground({
         // interruption starts from what the audience actually saw. This also
         // supports repeated interruptions when canvas 0 already holds an
         // earlier snapshot.
-        snapshotContext.clearRect(0, 0, snapshotCanvas.width, snapshotCanvas.height)
-        snapshotContext.globalAlpha = 1 - request.progress
-        snapshotContext.drawImage(canvases[0], 0, 0)
-        snapshotContext.globalAlpha = request.progress
-        snapshotContext.drawImage(canvases[1], 0, 0)
-        snapshotContext.globalAlpha = 1
+        compositeSnapshot(
+          snapshotContext,
+          canvases[0],
+          canvases[1],
+          request.progress,
+          snapshotCanvas.width,
+          snapshotCanvas.height,
+        )
         state = { ...state, snapshotRequest: null }
         transitionRef.current = state
       }
@@ -275,8 +292,9 @@ export default function GradientBackground({
         drawScene(contexts[0], small[0], back, timestamp, canvases[0].width, canvases[0].height)
       }
       drawScene(contexts[1], small[1], front, timestamp, canvases[1].width, canvases[1].height)
-      canvases[0].style.opacity = back ? String(1 - progress) : '0'
-      canvases[1].style.opacity = back ? String(progress) : '1'
+      const opacity = crossfadeOpacities(progress)
+      canvases[0].style.opacity = back ? String(opacity.outgoing) : '0'
+      canvases[1].style.opacity = back ? String(opacity.incoming) : '1'
       rafRef.current = requestAnimationFrame(draw)
     }
     rafRef.current = requestAnimationFrame(draw)

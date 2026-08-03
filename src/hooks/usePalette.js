@@ -28,7 +28,9 @@ const FALLBACK = { colors: FALLBACK_COLORS, weights: FALLBACK_COLORS.map(() => 0
 // clear the cache").
 // v4 (same night): medianCut bucket representative changed from single
 // most-vivid pixel to top-chroma-cohort average (de-neon/de-spike).
-const PALETTE_VERSION = 4;
+// v5 (2026-08-03): true-monochrome covers now receive a neon purple/pink
+// fallback pair instead of the previous blue/orange API output.
+export const PALETTE_VERSION = 5;
 const versionQuery = `&pv=${PALETTE_VERSION}`;
 
 // Cache key includes the version + tuning query so a VARIETY-overridden fetch

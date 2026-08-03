@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import * as gradientBackground from '../components/GradientBackground.jsx'
 import {
   createTransitionState,
   makeLightParams,
@@ -158,6 +159,36 @@ describe('whole-frame transition state', () => {
     expect(state.outgoing.shuffleKey).toBe(2)
     expect(state.incoming.shuffleKey).toBe(3)
     expect(state.blendStart).toBe(400)
+  })
+})
+
+describe('whole-frame transition compositing', () => {
+  it.each([0, 0.5, 1])('keeps opaque frame coverage throughout a dissolve at progress %s', progress => {
+    expect(gradientBackground.crossfadeOpacities).toBeTypeOf('function')
+
+    const { outgoing, incoming } = gradientBackground.crossfadeOpacities(progress)
+    const sourceOverCoverage = incoming + outgoing * (1 - incoming)
+
+    expect({ outgoing, incoming }).toEqual({ outgoing: 1, incoming: progress })
+    expect(sourceOverCoverage).toBe(1)
+  })
+
+  it('composites an interrupted snapshot exactly like the last displayed stack', () => {
+    expect(gradientBackground.compositeSnapshot).toBeTypeOf('function')
+    const alphaCalls = []
+    const drawCalls = []
+    const context = {
+      clearRect: () => {},
+      drawImage: image => drawCalls.push(image),
+      set globalAlpha(value) { alphaCalls.push(value) },
+    }
+    const outgoing = { id: 'outgoing' }
+    const incoming = { id: 'incoming' }
+
+    gradientBackground.compositeSnapshot(context, outgoing, incoming, 0.5, 100, 50)
+
+    expect(drawCalls).toEqual([outgoing, incoming])
+    expect(alphaCalls).toEqual([1, 0.5, 1])
   })
 })
 

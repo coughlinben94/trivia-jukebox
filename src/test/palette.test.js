@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest'
+import * as usePaletteModule from '../hooks/usePalette.js'
 import { populationFactor, buildWeights, relativeSaturation, uglyWeight, deuglify, mergeHueSiblings, warmPocketHueWeight, hexToOklabHueDeg, pickAccentHue, pickMonochromeAccentHues } from '../../api/palette.js'
+
+describe('palette client cache version', () => {
+  it('rotates cache keys for the v5 true-monochrome fallback response', () => {
+    expect(usePaletteModule.PALETTE_VERSION).toBe(5)
+  })
+})
 
 // hue / chroma / lightness triplets for real live-library colors, computed
 // exactly the way api/palette.js's own hexToHue/hexToChroma/hexToLightness
