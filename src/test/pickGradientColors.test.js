@@ -43,4 +43,37 @@ describe('pickGradientColors', () => {
     expect(result.weights[0]).toBeCloseTo(2 / 3)
     expect(result.weights[1]).toBeCloseTo(1 / 3)
   })
+
+  it('preserves an all-loading-sentinel palette for the upcoming-colors guard', () => {
+    expect(pickGradientColors(['#080808', '#080808', '#080808'], [2, 1, 1])).toEqual({
+      colors: ['#080808', '#080808'],
+      weights: [2 / 3, 1 / 3],
+    })
+    expect(pickGradientColors(['#080808', '#080808'], [1, 3])).toEqual({
+      colors: ['#080808', '#080808'],
+      weights: [0.25, 0.75],
+    })
+    expect(pickGradientColors(['#080808'], [1])).toEqual({
+      colors: ['#080808', '#080808'],
+      weights: [0.5, 0.5],
+    })
+  })
+
+  it('returns loading sentinel colors in the guard\'s canonical form', () => {
+    expect(pickGradientColors(['#080808', '#080808'], [1, 1]).colors).toEqual(['#080808', '#080808'])
+  })
+
+  it('normalizes valid colors to lowercase and substitutes malformed selected colors', () => {
+    expect(pickGradientColors(['#EA513F', 'not-a-color'], [1, 1]).colors).toEqual(['#ea513f', '#ff2fb0'])
+    expect(pickGradientColors(['#12345g', '#ABCDEF'], [1, 1]).colors).toEqual(['#ff2fb0', '#abcdef'])
+  })
+
+  it.each([
+    { weights: [-1, 3], expected: [0, 1] },
+    { weights: ['2', 2], expected: [0, 1] },
+    { weights: [NaN, Infinity], expected: [0.5, 0.5] },
+    { weights: [undefined, null], expected: [0.5, 0.5] },
+  ])('normalizes only finite nonnegative numeric weights: $weights', ({ weights, expected }) => {
+    expect(pickGradientColors(['#ea513f', '#e8a33d'], weights).weights).toEqual(expected)
+  })
 })

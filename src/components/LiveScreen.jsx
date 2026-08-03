@@ -67,26 +67,47 @@ const FONT_BODY    = "'DM Sans', system-ui, sans-serif"
 // a background box, and hold up against any hue the gradient lands on.
 const TEXT_SCRIM = '0 0 4px rgba(0,0,0,0.55), 0 0 10px rgba(0,0,0,0.45), 0 0 20px rgba(0,0,0,0.35)'
 
+const LOADING_SENTINEL = '#080808'
+const VALID_HEX = /^#[0-9a-f]{6}$/i
+
 // colors[] arrives in the server's prettiness order. Use the first two
-// exactly, preserving their relative population weights. Near-black colors
-// are replaced before rendering so palette fallbacks cannot black out a scene.
+// exactly, preserving their relative population weights. Near-black and
+// malformed colors are replaced before rendering.
 const safeGradientColor = hex => {
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  return 0.299 * r + 0.587 * g + 0.114 * b < 60 ? '#ff2fb0' : hex
+  if (typeof hex !== 'string' || !VALID_HEX.test(hex)) return '#ff2fb0'
+  const normalized = hex.toLowerCase()
+  const r = parseInt(normalized.slice(1, 3), 16)
+  const g = parseInt(normalized.slice(3, 5), 16)
+  const b = parseInt(normalized.slice(5, 7), 16)
+  return 0.299 * r + 0.587 * g + 0.114 * b < 60 ? '#ff2fb0' : normalized
+}
+
+const normalizeGradientWeights = weights => {
+  const safe = [0, 1].map(i => Number.isFinite(weights?.[i]) && weights[i] >= 0 ? weights[i] : 0)
+  const total = safe[0] + safe[1]
+  return total > 0 ? safe.map(weight => weight / total) : [0.5, 0.5]
 }
 
 export function pickGradientColors(colors, weights) {
   if (!colors.length) return { colors: [], weights: [] }
+  const allLoadingSentinel = colors.every(
+    color => typeof color === 'string' && color.toLowerCase() === LOADING_SENTINEL,
+  )
+
   if (colors.length === 1) {
-    const color = safeGradientColor(colors[0])
+    const color = allLoadingSentinel ? LOADING_SENTINEL : safeGradientColor(colors[0])
     return { colors: [color, color], weights: [0.5, 0.5] }
   }
-  const w0 = weights?.[0] ?? 0.5, w1 = weights?.[1] ?? 0.5
-  const s = w0 + w1
-  const normalizedWeights = s > 0 ? [w0 / s, w1 / s] : [0.5, 0.5]
-  return { colors: colors.slice(0, 2).map(safeGradientColor), weights: normalizedWeights }
+
+  // #080808 is loading control state, not a render color. Preserve an
+  // all-sentinel palette so the current renderer can ignore upcoming loading
+  // data. Task 4's renderer will ignore it when upcoming and use an internal
+  // purple/pink fallback when it is the current palette.
+  if (allLoadingSentinel) {
+    return { colors: [LOADING_SENTINEL, LOADING_SENTINEL], weights: normalizeGradientWeights(weights) }
+  }
+
+  return { colors: colors.slice(0, 2).map(safeGradientColor), weights: normalizeGradientWeights(weights) }
 }
 
 // Manual gradient-color override (2026-08-03, thinktank round 3): if the
@@ -95,7 +116,7 @@ export function pickGradientColors(colors, weights) {
 // primary so a raw near-black server color cannot bypass the render safeguard.
 export function applyGradientOverride(autoPicked, rawColors, overrideHex) {
   if (!overrideHex || !rawColors.length) return autoPicked
-  return { colors: [autoPicked.colors[0], overrideHex], weights: [0.5, 0.5] }
+  return { colors: [autoPicked.colors[0], safeGradientColor(overrideHex)], weights: [0.5, 0.5] }
 }
 
 function preloadImage(url) {

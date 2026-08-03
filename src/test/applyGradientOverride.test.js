@@ -26,4 +26,17 @@ describe('applyGradientOverride', () => {
     const result = applyGradientOverride(auto, ['#080808', '#e8a33d'], '#3355ff')
     expect(result).toEqual({ colors: ['#ff2fb0', '#3355ff'], weights: [0.5, 0.5] })
   })
+
+  it.each(['#080808', '#000000', 'not-a-color', '#12345g'])('sanitizes unsafe override %s', override => {
+    const auto = { colors: ['#ea513f', '#e8a33d'], weights: [0.5, 0.5] }
+    expect(applyGradientOverride(auto, ['#ea513f', '#e8a33d'], override)).toEqual({
+      colors: ['#ea513f', '#ff2fb0'],
+      weights: [0.5, 0.5],
+    })
+  })
+
+  it('normalizes a valid override to lowercase', () => {
+    const auto = { colors: ['#ea513f', '#e8a33d'], weights: [0.5, 0.5] }
+    expect(applyGradientOverride(auto, ['#ea513f'], '#ABCDEF').colors).toEqual(['#ea513f', '#abcdef'])
+  })
 })
