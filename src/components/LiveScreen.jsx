@@ -2,6 +2,7 @@ import { useState, useEffect, useLayoutEffect, useRef, useMemo, memo } from 'rea
 import { motion, useAnimation } from 'framer-motion'
 import AlbumGradient from './AlbumGradient'
 import AlbumGradientMesh from './AlbumGradientMesh'
+import AlbumCoverBloom from './AlbumCoverBloom'
 import { usePalette } from '../hooks/usePalette'
 import { displayName } from '../lib/track'
 
@@ -24,16 +25,27 @@ import { displayName } from '../lib/track'
 // Circle-blobs is kept as an opt-out: ?gradient=circles or
 // localStorage.setItem('trivia_gradient_engine', 'circles') in devtools —
 // either way it's instant, no redeploy needed.
+//
+// AlbumCoverBloom (2026-08-04) is a third, opt-in-only engine: real album
+// art, blurred and slowly panned, with a live color-wash layer blended on
+// top and a shared-direction slide between songs — built after three
+// separate blob-based attempts (circles, mesh, mesh variants) all hit the
+// owner's "i hate the blob concept" wall. Opt in with ?gradient=bloom or
+// localStorage.trivia_gradient_engine='bloom'. Mesh stays the DEFAULT
+// engine — this sits alongside it for live A/B judging, nothing about the
+// existing mesh/circles path changes.
 // Not a real hook (no React state/effects) — plain function, just named to
 // signal it's read at render time rather than cached once at module load.
-function getMeshGradientFlag() {
-  if (typeof window === 'undefined') return true
+function getGradientEngine() {
+  if (typeof window === 'undefined') return 'mesh'
   const q = new URLSearchParams(window.location.search).get('gradient')
-  if (q === 'circles' || q === 'circle') return false
-  if (q === 'mesh') return true
+  if (q === 'circles' || q === 'circle') return 'circles'
+  if (q === 'bloom') return 'bloom'
+  if (q === 'mesh') return 'mesh'
   const stored = localStorage.getItem('trivia_gradient_engine')
-  if (stored === 'circles' || stored === 'circle') return false
-  return true
+  if (stored === 'circles' || stored === 'circle') return 'circles'
+  if (stored === 'bloom') return 'bloom'
+  return 'mesh'
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -226,8 +238,10 @@ function Tonearm({ controls }) {
 function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpcomingTrack }) {
   // Read once per mount, not per render — avoids re-checking localStorage/URL
   // on every position-tick re-render this component already gets a lot of.
-  const [useMeshGradient] = useState(getMeshGradientFlag)
-  const GradientBg = useMeshGradient ? AlbumGradientMesh : AlbumGradient
+  const [gradientEngine] = useState(getGradientEngine)
+  const GradientBg = gradientEngine === 'bloom' ? AlbumCoverBloom
+    : gradientEngine === 'circles' ? AlbumGradient
+    : AlbumGradientMesh
   const [shown, setShown]                 = useState(currentTrack)
   const [prev,  setPrev]                  = useState(null)
   const [transitioning, setTransitioning] = useState(false)
@@ -710,7 +724,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           motion matters most. Previously active={!isPaused || transitioning}
           froze the canvas RAF loop on pause, so the one moment the room stares
           at this screen the longest showed a dead frame. */}
-      <GradientBg colors={palette.colors} weights={palette.weights} nextColors={upcomingPalette.colors} nextWeights={upcomingPalette.weights} active={true} shuffleKey={shuffleKey} entranceActive={entranceActive} />
+      <GradientBg colors={palette.colors} weights={palette.weights} nextColors={upcomingPalette.colors} nextWeights={upcomingPalette.weights} active={true} shuffleKey={shuffleKey} entranceActive={entranceActive} artUrl={artUrl} nextArtUrl={upcomingArtUrl} />
 
       {/* Light vignette — kept subtle on purpose. This screen's whole job is
           showing off the album-gradient colors, so this only pulls focus
