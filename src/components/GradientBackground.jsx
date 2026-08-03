@@ -58,20 +58,40 @@ export function normalizeScene({ colors = [], artUrl = '', shuffleKey = 0 } = {}
     artUrl,
     colors: normalized,
     identity,
-    ready: colors.length > 0 && !allSentinel,
+    ready: usable.length > 0 && !allSentinel,
     shuffleKey,
     lights: makeLightParams({ shuffleKey, artUrl, colors: normalized }),
   }
 }
 
 export function createTransitionState(currentInput) {
-  return { current: normalizeScene(currentInput), outgoing: null, incoming: null, pending: null, blendStart: null }
+  return {
+    current: normalizeScene(currentInput),
+    outgoing: null,
+    incoming: null,
+    pending: null,
+    blendStart: null,
+    snapshotRequest: null,
+  }
 }
 
 function startTransition(state, scene, now) {
   const visible = state.incoming || state.current
   if (visible.identity === scene.identity) return state
-  return { current: state.current, outgoing: visible, incoming: scene, pending: null, blendStart: now }
+  const interrupted = state.blendStart !== null && state.outgoing && state.incoming
+  const snapshotRequest = interrupted ? {
+    outgoing: state.outgoing,
+    incoming: state.incoming,
+    progress: Math.max(0, Math.min(1, (now - state.blendStart) / blendDurationMs())),
+  } : null
+  return {
+    current: state.current,
+    outgoing: interrupted ? { snapshot: true } : visible,
+    incoming: scene,
+    pending: null,
+    blendStart: now,
+    snapshotRequest,
+  }
 }
 
 export function updateTransitionState(state, { current, next, entranceActive, now }) {
@@ -90,10 +110,14 @@ export function updateTransitionState(state, { current, next, entranceActive, no
     }
   }
 
+  if (entranceActive) {
+    return nextScene.ready ? { ...state, pending: nextScene } : state
+  }
+  // Flush a previously-ready pending scene before considering a now-empty
+  // next palette; entrance release must not lose the last useful preload.
+  if (state.pending) return startTransition({ ...state, pending: null }, state.pending, now)
   if (!nextScene.ready) return state
-  if (entranceActive) return { ...state, pending: nextScene }
-  const target = state.pending || nextScene
-  return startTransition({ ...state, pending: null }, target, now)
+  return startTransition(state, nextScene, now)
 }
 
 function drawScene(ctx, smallCtx, scene, timestamp, width, height) {
@@ -160,25 +184,60 @@ export default function GradientBackground({
       canvas.height = TINY_SIZE
       return canvas.getContext('2d')
     })
+    const snapshotCanvas = document.createElement('canvas')
+    const snapshotContext = snapshotCanvas.getContext('2d')
+    if (!snapshotContext) return undefined
 
-    const resize = () => canvases.forEach(canvas => {
+    const resize = () => {
+      canvases.forEach(canvas => {
       const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2))
       canvas.width = Math.max(1, Math.round(canvas.clientWidth * dpr))
       canvas.height = Math.max(1, Math.round(canvas.clientHeight * dpr))
-    })
+      })
+      snapshotCanvas.width = canvases[0].width
+      snapshotCanvas.height = canvases[0].height
+    }
     resize()
     window.addEventListener('resize', resize)
 
     const draw = timestamp => {
       let state = transitionRef.current
+      if (state.snapshotRequest) {
+        const request = state.snapshotRequest
+        // Visible canvases still contain the last displayed A/B frame. Merge
+        // those exact pixels (rather than re-rendering either scene) so an
+        // interruption starts from what the audience actually saw. This also
+        // supports repeated interruptions when canvas 0 already holds an
+        // earlier snapshot.
+        snapshotContext.clearRect(0, 0, snapshotCanvas.width, snapshotCanvas.height)
+        snapshotContext.globalAlpha = 1 - request.progress
+        snapshotContext.drawImage(canvases[0], 0, 0)
+        snapshotContext.globalAlpha = request.progress
+        snapshotContext.drawImage(canvases[1], 0, 0)
+        snapshotContext.globalAlpha = 1
+        state = { ...state, snapshotRequest: null }
+        transitionRef.current = state
+      }
       if (state.blendStart !== null && timestamp - state.blendStart >= blendDurationMs()) {
-        state = { current: state.incoming, outgoing: null, incoming: null, pending: state.pending, blendStart: null }
+        state = {
+          current: state.incoming,
+          outgoing: null,
+          incoming: null,
+          pending: state.pending,
+          blendStart: null,
+          snapshotRequest: null,
+        }
         transitionRef.current = state
       }
       const progress = state.blendStart === null ? 1 : Math.min(1, (timestamp - state.blendStart) / blendDurationMs())
       const front = state.incoming || state.current
       const back = state.outgoing
-      if (back) drawScene(contexts[0], small[0], back, timestamp, canvases[0].width, canvases[0].height)
+      if (back?.snapshot) {
+        contexts[0].clearRect(0, 0, canvases[0].width, canvases[0].height)
+        contexts[0].drawImage(snapshotCanvas, 0, 0, canvases[0].width, canvases[0].height)
+      } else if (back) {
+        drawScene(contexts[0], small[0], back, timestamp, canvases[0].width, canvases[0].height)
+      }
       drawScene(contexts[1], small[1], front, timestamp, canvases[1].width, canvases[1].height)
       canvases[0].style.opacity = back ? String(1 - progress) : '0'
       canvases[1].style.opacity = back ? String(progress) : '1'

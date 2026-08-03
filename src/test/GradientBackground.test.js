@@ -18,11 +18,11 @@ describe('GradientBackground scene preparation', () => {
     expect(scene.ready).toBe(false)
   })
 
-  it('normalizes malformed and near-black colors without rendering black', () => {
+  it('draws fallback but marks malformed and near-black-only palettes not ready', () => {
     const scene = normalizeScene({ colors: ['bad', '#010203'], shuffleKey: 1 })
 
     expect(scene.colors).toEqual(['#702070', '#d83a88'])
-    expect(scene.ready).toBe(true)
+    expect(scene.ready).toBe(false)
   })
 })
 
@@ -73,6 +73,38 @@ describe('whole-frame transition state', () => {
     state = updateTransitionState(state, { current, next, entranceActive: false, now: 200 })
     expect(state.blendStart).toBe(200)
     expect(state.pending).toBeNull()
+  })
+
+  it('keeps the latest ready pending scene and flushes it even if next becomes sentinel', () => {
+    const later = { colors: ['#ffaa00', '#00aaff'], artUrl: 'three.jpg', shuffleKey: 2 }
+    let state = createTransitionState(current)
+    state = updateTransitionState(state, { current, next, entranceActive: true, now: 100 })
+    state = updateTransitionState(state, { current, next: later, entranceActive: true, now: 150 })
+    expect(state.pending.artUrl).toBe('three.jpg')
+
+    state = updateTransitionState(state, {
+      current,
+      next: { colors: ['#080808'], shuffleKey: 2 },
+      entranceActive: false,
+      now: 200,
+    })
+    expect(state.incoming.artUrl).toBe('three.jpg')
+    expect(state.pending).toBeNull()
+    expect(state.blendStart).toBe(200)
+  })
+
+  it('requests a snapshot carrying current alpha when an in-flight blend is interrupted', () => {
+    const later = { colors: ['#ffaa00', '#00aaff'], artUrl: 'three.jpg', shuffleKey: 2 }
+    let state = createTransitionState(current)
+    state = updateTransitionState(state, { current, next, entranceActive: false, now: 100 })
+    state = updateTransitionState(state, { current, next: later, entranceActive: false, now: 3850 })
+
+    expect(state.snapshotRequest.outgoing.artUrl).toBe('one.jpg')
+    expect(state.snapshotRequest.incoming.artUrl).toBe('two.jpg')
+    expect(state.snapshotRequest.progress).toBeCloseTo(0.5)
+    expect(state.outgoing.snapshot).toBe(true)
+    expect(state.incoming.artUrl).toBe('three.jpg')
+    expect(state.blendStart).toBe(3850)
   })
 
   it('starts a transition for a direct current change without preloading', () => {
