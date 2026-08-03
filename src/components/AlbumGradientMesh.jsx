@@ -36,6 +36,39 @@ import { orbitSpeed, blobRadius, meshIdwPower, chromaScale, blendDurationMs, sha
 // look/feel the "flowing and battling" motion was liked from.
 const NUM_BLOBS = 6
 
+// meshguard flag -- gates the chroma floor in draw() below. Not a real hook,
+// same pattern as LiveScreen's getMeshGradientFlag(): read at render time,
+// not cached at module load.
+function getChromaFloorEnabled() {
+  if (typeof window === 'undefined') return true
+  const q = new URLSearchParams(window.location.search).get('meshguard')
+  if (q === 'off') return false
+  if (q === 'on') return true
+  const stored = localStorage.getItem('trivia_mesh_chroma_floor')
+  if (stored === 'off') return false
+  return true
+}
+
+// Continuous chroma floor (2026-08-03, thinktank round 2, color fix) --
+// replaces the removed per-pixel mud guard (see "PER-PIXEL MUD GUARD
+// REMOVED" below). That guard was a BINARY pocket test (in-mud / not-mud)
+// laid over a continuous IDW field -- a hard binary boundary drawn into a
+// continuous field is a ring by construction, which is what got reported as
+// "fishy weird connections where colors meet." This is a smooth RESCALE of
+// an already-smooth quantity instead: chromaNow (the blended pixel's own
+// chroma) varies continuously pixel-to-pixel, same as the IDW weights that
+// produced it, so scaling it up by a smooth ratio when it's below the floor
+// stays smooth too -- no new boundary gets drawn anywhere. It only touches
+// pixels whose blended chroma has already collapsed toward gray, which is
+// the actual complaint: distant hues in the two-family palette partially
+// cancel under Cartesian a/b averaging (see the big REVERTED-to-Cartesian
+// comment in draw() below) -- that cancellation is real and intentional
+// (it's what keeps the corridor from displaying invented rainbow hues), the
+// floor just stops it from going all the way to gray. Pixels already above
+// the floor (blob centers, same-family shade-fan regions) are untouched;
+// hue (a/b direction) is preserved exactly, only magnitude is boosted.
+const MESH_CHROMA_FLOOR = 0.045
+
 // ── Blob motion — same orbiting-sine formulas as AlbumGradient.jsx's
 // makeCircleParams, evaluated in the tiny canvas's own pixel space.
 //
@@ -71,13 +104,34 @@ const NUM_BLOBS = 6
 // seeded orbiting bodies at the same speeds/sizes, and three independent
 // pair-frequencies plus the boundary wobble keep the symmetry from reading
 // as mechanical. No new constants, no new dials.
-function makeBlobParams() {
+function hashSeed(key) {
+  const x = Math.sin(key * 12.9898) * 43758.5453
+  return x - Math.floor(x)
+}
+
+// seedKey (2026-08-03, thinktank round 2, motion fix): blob geometry itself
+// (base position, amplitude, frequency, radius, antipodal mirroring) stays
+// fully deterministic -- that's not the problem. The problem is that with
+// blob-to-color assignment now FIXED (see the removed-rotationFor note
+// below), the same six orbit paths meet at the exact same loci every single
+// song, forever -- whatever seam artifact exists today repeats identically
+// instead of being randomized-away intermittently like before, which is
+// what made it read as a mechanical/trackable "fishy" defect rather than
+// ambient motion (thinktank motion critic, round 1). Fix: rotate every
+// blob's phase by one shared per-session nudge derived from seedKey (the
+// component passes shuffleKey) -- same character of motion, different
+// position in it, each shuffle session. Scaled by 0.35 so it's a shift, not
+// a reshuffle. Antipodal mirroring still works unchanged: the odd blob
+// copies the even blob's (already-nudged) phase +pi, so the balance-pinning
+// guarantee from the antipodal fix holds regardless of seedKey.
+function makeBlobParams(seedKey = 0) {
   function rng(i, slot) {
     const x = Math.sin((i * 7 + slot) * 9301 + 49297) * 233280
     return x - Math.floor(x)
   }
   const speed = orbitSpeed()
   const size  = blobRadius()
+  const phaseNudge = hashSeed(seedKey) * Math.PI * 2 * 0.35
   const makeOne = (i) => ({
     baseX:  0.10 + rng(i, 0) * 0.80,
     baseY:  0.10 + rng(i, 1) * 0.80,
@@ -85,8 +139,8 @@ function makeBlobParams() {
     yAmp:   0.33,
     xFreq:  speed / (10 + rng(i, 2) * 7),
     yFreq:  speed / (10 + rng(i, 3) * 7),
-    xPhase: rng(i, 4) * Math.PI * 2,
-    yPhase: rng(i, 5) * Math.PI * 2,
+    xPhase: rng(i, 4) * Math.PI * 2 + phaseNudge,
+    yPhase: rng(i, 5) * Math.PI * 2 + phaseNudge,
     radius: size + rng(i, 6) * 0.13,
   })
   return Array.from({ length: NUM_BLOBS }, (_, i) => {
@@ -326,9 +380,22 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
   const pendingFromNextRef  = useRef(false)
   const entranceActiveRef  = useRef(entranceActive)
   const pendingBlendRef    = useRef(null)
-  const blobParams         = useMemo(makeBlobParams, [])
+  // Rekeyed on shuffleKey (2026-08-03) -- see the seedKey comment on
+  // makeBlobParams. Every shuffleKey change already resets other animation
+  // state (blendStart, pendingFromNextRef, both cache refs on the
+  // circle-blobs sibling) so re-running the canvas/RAF mount effect below
+  // (which depends on blobParams) at the same cadence is consistent, not a
+  // new class of remount.
+  const blobParams         = useMemo(() => makeBlobParams(shuffleKey), [shuffleKey])
   const tinySizeRef        = useRef({ w: 48, h: 48 })
   const grainPatternRef    = useRef(null)
+  // Live A/B toggle for the chroma floor below -- ?meshguard=off or
+  // localStorage.trivia_mesh_chroma_floor='off'. Read once per mount, same
+  // pattern as LiveScreen's getMeshGradientFlag(): given how many times this
+  // exact bug category has thrashed (see git history above this file), a
+  // standing toggle turns "was this right" into a live comparison instead of
+  // another round of commit-message argument.
+  const chromaFloorEnabledRef = useRef(getChromaFloorEnabled())
 
   const st = useRef(null)
   if (!st.current) {
@@ -529,6 +596,32 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
         let a = (aSum / wSum) * chromaScl
         let b = (bSum / wSum) * chromaScl
 
+        // Chroma floor -- see MESH_CHROMA_FLOOR comment above. FIXED
+        // 2026-08-03 (subagent review caught it): the original version
+        // gated the boost on `chromaNow > 0.0001`, which meant anything
+        // between that epsilon and the floor got snapped to EXACTLY
+        // MESH_CHROMA_FLOOR while anything below the epsilon passed through
+        // unboosted near zero -- a ~450x step right at the epsilon
+        // threshold. That threshold is a level set in screen space (the
+        // near-perfect-cancellation center of a corridor crosses it), so
+        // the "no new boundary" claim was false -- it just moved the ring
+        // from wherever the old binary guard drew it to wherever chromaNow
+        // happens to cross 0.0001. Smoothstep removes the threshold
+        // entirely: target magnitude ramps continuously from ~0 (true gray,
+        // no hue to preserve there anyway) up to the floor as chromaNow
+        // approaches it, and is the identity (no change) at/above the
+        // floor. No level-set crossing, so no contour for a ring to form on.
+        if (chromaFloorEnabledRef.current) {
+          const chromaNow = Math.sqrt(a * a + b * b)
+          if (chromaNow > 1e-6 && chromaNow < MESH_CHROMA_FLOOR) {
+            const t      = chromaNow / MESH_CHROMA_FLOOR
+            const eased  = t * t * (3 - 2 * t) // smoothstep, 0 at chromaNow=0, 1 at the floor
+            const target = lerp(chromaNow, MESH_CHROMA_FLOOR, eased)
+            const boost  = target / chromaNow
+            a *= boost; b *= boost
+          }
+        }
+
         const [r, g, bb] = oklabToRgb([L, a, b])
 
         // PER-PIXEL MUD GUARD REMOVED (2026-08-03). Its final failure mode,
@@ -587,6 +680,17 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
+
+    // This effect now re-runs every shuffleKey change (blobParams is rekeyed
+    // on it, see the seedKey comment above) instead of only at true mount —
+    // needed so tick()/draw()'s closure picks up the new phase-nudged
+    // blobParams each session. The PREVIOUS run's cleanup below sets
+    // mountedRef.current = false; without resetting it here, every session
+    // after the second permanently fails tick()'s mountedRef.current check
+    // and the whole canvas freezes after one frame. True-unmount cleanup
+    // (component actually leaving the tree) still runs last and correctly
+    // leaves it false since nothing re-runs the effect afterward.
+    mountedRef.current = true
 
     const small = document.createElement('canvas')
     smallCanvasRef.current = small
