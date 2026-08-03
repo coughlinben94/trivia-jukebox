@@ -183,7 +183,7 @@ function hexToRgb(hex) {
 // palette index from owning one corner forever in the 6-distinct-color
 // era; with two families alternating over antipodal pairs, both families
 // cover the whole canvas symmetrically and the concern is moot.)
-const SHADE_DL = 0.07 // ±7% OKLab lightness — inside the owner's 5-10%
+const SHADE_DL = 0.15 // ±15% OKLab lightness — owner widened the spec to 5-25%; 15 sits mid-range (clamps at 0.12/0.93 keep extremes displayable)
 function shadeOf(rgb, dl) {
   const [L, a, b] = rgbToOklab(rgb)
   return oklabToRgb([Math.min(0.93, Math.max(0.12, L + dl)), a, b])
