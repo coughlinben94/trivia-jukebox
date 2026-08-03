@@ -231,6 +231,53 @@ export function resolveCrossfadeHex(outHex, inHex) {
   return [inHex[0]]
 }
 
+// glowSeam (2026-08-04, replaces the chroma-floor rescue below entirely) —
+// owner's own fix, described live as "a small white line... being the
+// barrier" / "the stitching" between two colors where they meet. Root
+// cause of the "two colors meet, form a shape, then flip" report: where two
+// hue-distant blobs meet, the Cartesian a/b sum naturally cancels toward
+// gray (real, wanted desaturation — see the REVERTED-to-Cartesian comment
+// in draw()). The OLD chroma floor tried to rescue that cancellation by
+// boosting the vector's MAGNITUDE while keeping its raw DIRECTION — but
+// right at cancellation, that direction is dominated by floating-point
+// noise (tiny blob-position changes swing it through any angle), so
+// amplifying it to full visibility broadcast the noise as a real,
+// saturated, flipping color. Measured worst-case frame-to-frame hue jump at
+// the gate's own legal 140deg ceiling: 51deg in a single frame (see
+// verify_flip3.mjs / verify_flip4.mjs from that session).
+//
+// glowSeam does the OPPOSITE at the same cancellation point: brighten
+// LIGHTNESS toward a soft glow, and SUPPRESS chroma further toward true
+// neutral, instead of amplifying it. A near-white/light seam has no hue to
+// flip — there's no direction being trusted or amplified anymore, so this
+// is safe by construction, not just tuned to be safer. It turns the exact
+// pixels that used to flip into an intentional-looking bright stitching
+// where the two colors meet, instead of an artifact to hide.
+// RELATIVE glow offset, not an absolute target (impeccable/emil-design-eng
+// review, 2026-08-04): an earlier version targeted a fixed GLOW_TARGET_L
+// (0.86) regardless of the scene's own base lightness. On a naturally dark
+// cover (L ~0.15-0.3), jumping straight to 0.86 is a huge, disproportionate
+// swing -- nearly black to near-white in one spot -- which reads as a
+// jarring flash/pop rather than a gentle stitching line, exactly the
+// "fishy" quality being guarded against here. A fixed DELTA off the local
+// base L keeps the glow's felt intensity consistent whether the underlying
+// colors are dark or light, clamped so it can never overshoot past white.
+const GLOW_DELTA_L = 0.28  // how much brighter than the local base the seam's core gets
+function glowSeam(L, a, b, floor) {
+  const chromaNow = Math.sqrt(a * a + b * b)
+  if (chromaNow >= floor) return [L, a, b]
+  const t     = chromaNow / floor
+  const eased = t * t * (3 - 2 * t)          // 0 at true cancellation, 1 at the floor
+  // Chroma is suppressed (not boosted) as we approach cancellation — at
+  // eased=0 it's fully zero (no hue at all); at eased=1 it's unchanged.
+  const chromaOut = chromaNow * eased
+  const scale = chromaNow > 1e-9 ? chromaOut / chromaNow : 0
+  const Lglow = Math.min(1, L + GLOW_DELTA_L)
+  const Lout  = L + (Lglow - L) * (1 - eased)
+  return [Lout, a * scale, b * scale]
+}
+export { glowSeam }
+
 // (rotationFor — the per-cover orbit-assignment hash — removed 2026-08-03
 // with the two-family shade fan below: assignment is now FIXED so every
 // song runs identical motion, per the owner's spec. Git history has it.)
@@ -644,30 +691,14 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
         let a = (aSum / wSum) * chromaScl
         let b = (bSum / wSum) * chromaScl
 
-        // Chroma floor -- see MESH_CHROMA_FLOOR comment above. FIXED
-        // 2026-08-03 (subagent review caught it): the original version
-        // gated the boost on `chromaNow > 0.0001`, which meant anything
-        // between that epsilon and the floor got snapped to EXACTLY
-        // MESH_CHROMA_FLOOR while anything below the epsilon passed through
-        // unboosted near zero -- a ~450x step right at the epsilon
-        // threshold. That threshold is a level set in screen space (the
-        // near-perfect-cancellation center of a corridor crosses it), so
-        // the "no new boundary" claim was false -- it just moved the ring
-        // from wherever the old binary guard drew it to wherever chromaNow
-        // happens to cross 0.0001. Smoothstep removes the threshold
-        // entirely: target magnitude ramps continuously from ~0 (true gray,
-        // no hue to preserve there anyway) up to the floor as chromaNow
-        // approaches it, and is the identity (no change) at/above the
-        // floor. No level-set crossing, so no contour for a ring to form on.
+        // glowSeam -- see its own comment above (replaces the old chroma-
+        // floor magnitude-boost entirely, 2026-08-04). Where two hue-distant
+        // blobs cancel toward gray, brighten toward a soft glow and
+        // suppress chroma further instead of amplifying an unstable
+        // direction -- turns the seam into an intentional bright stitching
+        // between the two colors instead of a flip-prone artifact.
         if (chromaFloorEnabledRef.current) {
-          const chromaNow = Math.sqrt(a * a + b * b)
-          if (chromaNow > 1e-6 && chromaNow < MESH_CHROMA_FLOOR) {
-            const t      = chromaNow / MESH_CHROMA_FLOOR
-            const eased  = t * t * (3 - 2 * t) // smoothstep, 0 at chromaNow=0, 1 at the floor
-            const target = lerp(chromaNow, MESH_CHROMA_FLOOR, eased)
-            const boost  = target / chromaNow
-            a *= boost; b *= boost
-          }
+          ;[L, a, b] = glowSeam(L, a, b, MESH_CHROMA_FLOOR)
         }
 
         const [r, g, bb] = oklabToRgb([L, a, b])
