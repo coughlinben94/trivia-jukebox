@@ -1,6 +1,5 @@
 import { useEffect, useRef, useMemo } from 'react'
 import { orbitSpeed, blobRadius, meshIdwPower, chromaScale, blendDurationMs } from '../lib/gradientTuning.js'
-import { mudRescue } from '../lib/mudModel.js'
 
 // Canvas2D "soft mesh" gradient background — third generation. Same prop
 // contract as AlbumGradient.jsx (colors/nextColors/active/shuffleKey/
@@ -215,38 +214,8 @@ function parseColors(hexArr, n) {
   return Array.from({ length: n }, (_, i) => [...hexToRgb(src[(i + rot) % src.length])])
 }
 
-// ── HSL helpers for the displayed-mud guard in draw() ───────────────────────
-// Port of api/palette.js's cylinder math minus hex formatting. The mud
-// bands (src/lib/mudModel.js) were calibrated in HSL hue/rel-sat/lightness,
-// so the guard converts each candidate pixel INTO that space rather than
-// refitting the bands in OKLab — one definition of mud, no drift. At
-// 48x27 = 1,296 px this is noise next to the per-pixel IDW loop.
-function rgbToHsl(r, g, b) {
-  r /= 255; g /= 255; b /= 255
-  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), c = mx - mn, l = (mx + mn) / 2
-  let h = 0
-  if (c > 0) {
-    if (mx === r) h = ((g - b) / c) % 6
-    else if (mx === g) h = (b - r) / c + 2
-    else h = (r - g) / c + 4
-    h *= 60
-    if (h < 0) h += 360
-  }
-  return [h, c, l]
-}
-function hslToRgb(h, s, l) {
-  const c = (1 - Math.abs(2 * l - 1)) * s
-  const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
-  const m = l - c / 2
-  let r, g, b
-  if (h < 60)       [r, g, b] = [c, x, 0]
-  else if (h < 120)  [r, g, b] = [x, c, 0]
-  else if (h < 180)  [r, g, b] = [0, c, x]
-  else if (h < 240)  [r, g, b] = [0, x, c]
-  else if (h < 300)  [r, g, b] = [x, 0, c]
-  else               [r, g, b] = [c, 0, x]
-  return [(r + m) * 255, (g + m) * 255, (b + m) * 255]
-}
+// (HSL helper functions for the per-pixel mud guard lived here 07-30..08-03;
+// removed with the guard — see the note in draw() and git history.)
 
 function easeInOut(t) {
   t = Math.max(0, Math.min(1, t))
@@ -569,9 +538,10 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
         // colors meet through quiet gray-ish shading, and no hue the
         // palette never contained can appear. The 07-28 change existed
         // because that neutral goes muddy-olive specifically in the warm
-        // pocket — which is exactly what the output-stage mud guard below
-        // now handles (v2 desaturates warm mud to clean neutral), so the
-        // polar workaround lost its reason to exist. Verified side-by-side
+        // pocket — a real but mild cost (Cartesian corridors arrive
+        // desaturated, so the olive is muted taupe, not vivid mustard;
+        // api/palette.js's deuglify keeps true mud out of the palette
+        // itself). Verified side-by-side
         // with the real Kyrie palette (4 timestamps, both modes, guard on):
         // identical color bodies and motion, corridors neutral instead of
         // rainbow. blendPairRgb (the song-to-song TEMPORAL crossfade) keeps
@@ -581,65 +551,27 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
         let a = (aSum / wSum) * chromaScl
         let b = (bSum / wSum) * chromaScl
 
-        let [r, g, bb] = oklabToRgb([L, a, b])
+        const [r, g, bb] = oklabToRgb([L, a, b])
 
-        // Displayed-mud guard v2 (2026-07-30, three-critic review applied).
-        // The polar blend above displays every hue along the short OKLab
-        // arc between simultaneously-present colors — spatially at seams,
-        // temporally across the 7.5s crossfade — so the screen can show
-        // muddy warm shades that exist in NO palette entry and that
-        // api/palette.js's own recolor can never catch. v1 lifted those
-        // pixels to vivid amber and thereby painted swept corridors as
-        // moving RAINBOW bands (observed live); v2 DESATURATES them toward
-        // near-neutral instead — a warm corridor reads as soft shading
-        // between color bodies (see mudRescue in src/lib/mudModel.js).
-        //
-        // Two critique-driven subtleties:
-        // 1. The rescue is DECIDED in palette space (the un-chromaScaled
-        //    color) and applied as a RATIO to the displayed pixel. The mud
-        //    bands were calibrated on raw /api/palette hexes; judging the
-        //    scaled pixel shifts every band by the BRIGHTNESS dial
-        //    (measured: deuglify's own terracotta output crossed the
-        //    dullness gate at default 0.82 and got grayed — the renderer
-        //    undoing the palette layer's fix).
-        // 2. Luma is preserved through the desat (uniform RGB rescale).
-        //    HSL-L-preserving desat DARKENS yellow-side hues (~0.11 luma
-        //    at hue 60), which reads as a dark band, not a quiet one —
-        //    luminance contrast is the most visible artifact this
-        //    pipeline can emit post-blur; chroma-only modulation is the
-        //    least.
-        // Clipped pixels are structurally exempt (a clamped channel forces
-        // HSL rel-sat to exactly 1 → uglyWeight 0 → identity), so the
-        // post-clamp read below cannot false-positive on vivid clipped
-        // colors.
-        {
-          const mx = Math.max(r, g, bb) / 255, mn = Math.min(r, g, bb) / 255
-          const chr = mx - mn, light = (mx + mn) / 2
-          // cheap pre-gates: displayed chroma/lightness/hue approximate the
-          // rescue's zero regions (displayed chroma <= unscaled, so 0.08
-          // here ~ the 0.10 gate in palette space; hue band padded for
-          // scale/clamp drift)
-          if (chr >= 0.08 && light > 0.13 && light < 0.65) {
-            const [h] = rgbToHsl(r, g, bb)
-            if (h > 12 && h < 110) {
-              // palette-space (un-scaled) color makes the DECISION
-              const [ru, gu, bu] = oklabToRgb([L, aSum / wSum, bSum / wSum])
-              const [hu, cu, lu] = rgbToHsl(ru, gu, bu)
-              const du = 1 - Math.abs(2 * lu - 1)
-              const su = du > 0 ? Math.min(1, cu / du) : 0
-              const su2 = mudRescue(hu, cu, lu)
-              if (su > 1e-6 && su2 < su) {
-                const dd = 1 - Math.abs(2 * light - 1)
-                const s = dd > 0 ? Math.min(1, chr / dd) : 0
-                const [r2, g2, b2] = hslToRgb(h, s * (su2 / su), light)
-                const y0 = 0.299 * r + 0.587 * g + 0.114 * bb
-                const y1 = 0.299 * r2 + 0.587 * g2 + 0.114 * b2
-                const q = y1 > 1 ? Math.min(1.4, Math.max(0.7, y0 / y1)) : 1
-                r = Math.min(255, r2 * q); g = Math.min(255, g2 * q); bb = Math.min(255, b2 * q)
-              }
-            }
-          }
-        }
+        // PER-PIXEL MUD GUARD REMOVED (2026-08-03). Its final failure mode,
+        // seen directly in a guard-on/guard-off render of the live problem
+        // covers: every warm-hue blob (lime, gold, orange) got a NEUTRAL
+        // RING traced around its entire perimeter — the blend annulus where
+        // a warm blob fades into its neighbors is, by definition,
+        // mid-saturation warm, which is indistinguishable from mud to the
+        // pocket test, so the guard desaturated a closed outline around
+        // every such blob. Owner-reported all week as "fishy weird
+        // connections where colors meet"; guard-off renders show the same
+        // fields with smooth melts and no rings. History of this guard:
+        // v1 saturated corridors (painted rainbows), v2 desaturated them
+        // (painted rings). Under Cartesian blending, corridors already
+        // arrive DESATURATED, so renderer-side mud intervention is both
+        // unnecessary and, empirically, always the artifact. Mud control
+        // lives where it has always worked: api/palette.js recolors
+        // genuinely muddy EXTRACTED colors (deuglify/mudModel bands) before
+        // the renderer ever sees them. src/lib/mudModel.js stays — it is
+        // the server's shared band definition.
+        // (Guard block deleted here; see git history for the v2 code.)
 
         const idx = (y * SW + x) * 4
         data[idx] = r; data[idx + 1] = g; data[idx + 2] = bb; data[idx + 3] = 255

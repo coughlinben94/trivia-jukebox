@@ -131,20 +131,14 @@ function sweep(name, src) {
       // see AlbumGradientMesh.jsx). `hue` retained for the presence vote.
       const hue = Math.atan2(bS, aS)
       let [r, g, bb] = oklabToRgb([L, (aS / wS) * DIALS.chroma, (bS / wS) * DIALS.chroma])
+      // Per-pixel mud guard removed 2026-08-03 (it ringed warm blobs — see
+      // AlbumGradientMesh.jsx). Mud fraction is now REPORT-ONLY: it
+      // measures what the un-guarded Cartesian field displays in the warm
+      // pocket. mudRescue import retained for reference comparisons.
       {
         const mx = Math.max(r, g, bb) / 255, mn = Math.min(r, g, bb) / 255
         const chr = mx - mn, light = (mx + mn) / 2
-        if (chr >= 0.16 && uglyWeight(rgbToHsl(r, g, bb)[0], chr, light) > 0.5) mudB++
-        if (chr >= 0.10 && light > 0.13 && light < 0.65) {
-          const [h] = rgbToHsl(r, g, bb)
-          const d2 = 1 - Math.abs(2 * light - 1)
-          const s = d2 > 0 ? Math.min(1, chr / d2) : 0
-          const sP = mudRescue(h, chr, light)
-          if (sP !== s) [r, g, bb] = hslToRgb(h, sP, light)
-        }
-        const mx2 = Math.max(r, g, bb) / 255, mn2 = Math.min(r, g, bb) / 255
-        const chr2 = mx2 - mn2, li2 = (mx2 + mn2) / 2
-        if (chr2 >= 0.16 && uglyWeight(rgbToHsl(r, g, bb)[0], chr2, li2) > 0.5) mudA++
+        if (chr >= 0.16 && uglyWeight(rgbToHsl(r, g, bb)[0], chr, light) > 0.5) { mudB++; mudA++ }
       }
       px[y * SW + x] = rgbToOklab([r, g, bb])
       let best = 0, bd = 1e9
@@ -165,7 +159,7 @@ function sweep(name, src) {
   const minMean = Math.min(...src.map((_, i) => shSum[i] / F))
   return {
     name,
-    MUD: mudAfterMax === 0 ? 'PASS' : 'FAIL',
+    mudFractionMax_info: +mudAfterMax.toFixed(3), // report-only since 08-03 guard removal
     mudBeforeMax: +mudBeforeMax.toFixed(3),
     SHARE: (src.length < 2 || minMean >= 0.05) ? 'PASS' : 'FAIL',
     minMeanShare: +minMean.toFixed(3),
@@ -202,7 +196,7 @@ if (args.length) {
 let fail = 0
 for (const [name, colors] of covers) {
   const r = sweep(name, colors)
-  if (r.MUD !== 'PASS' || r.SHARE !== 'PASS') fail++
+  if (r.SHARE !== 'PASS') fail++
   console.log(JSON.stringify(r))
 }
 console.log(fail === 0 ? 'ALL PASS' : `${fail} FAILURES`)

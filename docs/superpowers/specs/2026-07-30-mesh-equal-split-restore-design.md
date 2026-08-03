@@ -29,6 +29,10 @@ Guard v1 above (chroma-LIFT to 0.62) was wrong for the dominant case: a swept bl
 
 Watched frame-by-frame from a live recording (Kyrie / Mr. Mister): the 07-28 polar spatial blend (hue from vector sum, chroma from scalar mean) displays every intermediate hue at FULL chroma between hue-distant blobs — a 3-color green/blue/red palette rendered vivid magenta/cyan/orange/yellow that exist on no cover. This one mechanism is upstream of the week's whole corridor-artifact family (rainbow, fish, seams). Reverted the spatial blend to Cartesian a/b mixing: distant hues cancel toward neutral at seams (paint behavior), no un-palette hue can appear; the warm-olive neutral case that originally motivated polar is now owned by mud guard v2. Verified side-by-side with the real Kyrie palette, 4 timestamps, guard on: same bodies/motion, corridors neutral. Temporal crossfade (blendPairRgb) keeps LCh. No server change, no pv bump.
 
+## Addendum 3 — per-pixel mud guard removed (2026-08-03)
+
+The guard's third and final failure mode, found by rendering the live problem covers guard-on vs guard-off: every warm-hue blob (lime/gold/orange) received a NEUTRAL RING around its full perimeter — the blend annulus where a warm blob fades into neighbors is definitionally mid-saturation warm, indistinguishable from mud to the pocket bands, so the guard desaturated a closed outline around each such blob. This was the owner's persistent "fishy weird connections where colors meet." Guard-off renders: same fields, smooth melts, no rings. Score: v1 painted rainbows, v2 painted rings — under Cartesian blending corridors already arrive desaturated, so renderer-side mud intervention is always the artifact. Removed entirely; mud control remains palette-side (api/palette.js deuglify, mudModel bands — mudModel.js and its tests stay). Sim's mud criterion demoted to report-only.
+
 ## Residuals / follow-ups
 
 - **Strawberry Wine** returned a 1-color palette from production (`colors.length === 1`) — some path skips both the accent branch and MIN_COLORS padding. Renderer handles it (single-color field), but trace the server path.
