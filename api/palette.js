@@ -283,10 +283,9 @@ export default async function handler(req, res) {
     // entry (#e89c00/#f2a61b 1.5° apart, #1169b6/#005096 0° apart) purely to
     // pad the count. That was harmless under the old equal-weight blob
     // split (adjacent near-identical hues just blended into each other) but
-    // is a real bug now that blob COUNT and PAIRING are weight-driven (see
-    // AlbumGradientMesh.jsx, allocateBlobCounts/assignColorsToPairs, same
-    // day): splitting one real hue family's population across two separate
-    // array entries hands each one its OWN independent blob-pairing slot,
+    // became a real bug when visual allocation was weight-driven: splitting
+    // one real hue family's population across two separate array entries
+    // handed each one its OWN independent visual-allocation slot,
     // antipodally mirrored against a DIFFERENT partner — traced by hand
     // against Rocketship's real weights, dark blue (#005096, 2 blobs) and
     // #1169b6 (1 blob) never land in the same arena, so blue's presence
@@ -421,7 +420,7 @@ export default async function handler(req, res) {
         //
         // The OFFSET, however, moved twice. First derivation used true
         // complementary (+180°). An earlier pass already documented the
-        // danger: AlbumGradientMesh's per-pixel spatial blend derives hue
+        // danger: the former per-pixel spatial blend derived hue
         // via `Math.atan2(bSum, aSum)` on the CARTESIAN SUM of each blob's
         // a/b — near 180° apart the sum vector cancels toward zero and hue
         // SNAPS instead of sweeping — and kept 180° anyway on the theory
@@ -548,8 +547,7 @@ export default async function handler(req, res) {
         // buildWeights' fixed ACCENT_WEIGHT share instead of competing for
         // an equal split — this is the actual structural fix for the
         // accent reading as a fully competing pooling color instead of a
-        // minor one (see AlbumGradientMesh.jsx's blob-allocation change,
-        // same day, which is what actually consumes this weight).
+        // minor one. Renderer contracts still consume this population weight.
         weights = buildWeights(colors.map(hex =>
           hex === accent ? { population: null } : { population: byHex.get(hex)?.population ?? null }
         ));
@@ -729,11 +727,10 @@ export function buildWeights(entries) {
 // second near-duplicate entry (#e89c00/#f2a61b 1.5° apart, #1169b6/#005096
 // 0° apart) purely to pad the count. That was harmless under the old
 // equal-weight blob split (adjacent near-identical hues just blended into
-// each other) but is a real bug now that blob COUNT and PAIRING are
-// weight-driven (see AlbumGradientMesh.jsx, allocateBlobCounts/
-// assignColorsToPairs, same day): splitting one real hue family's
-// population across two separate array entries hands each one its OWN
-// independent blob-pairing slot, antipodally mirrored against a DIFFERENT
+// each other) but became a real bug when visual allocation was weight-driven:
+// splitting one real hue family's population across two separate array
+// entries handed each one its OWN independent visual-allocation slot,
+// antipodally mirrored against a DIFFERENT
 // partner — traced by hand against Rocketship's real weights, dark blue
 // (#005096, 2 blobs) and #1169b6 (1 blob) never land in the same arena, so
 // blue's presence gets reinforced against orange twice instead of settling
@@ -898,18 +895,17 @@ function uglyPenalty(hue, chroma, lightness) {
 }
 
 // OKLab hue (degrees, 0-360) of a hex color — standard Björn Ottosson
-// sRGB→OKLab, reduced to just the hue angle. Duplicated from
-// AlbumGradientMesh.jsx's rgbToOklab rather than shared, same as every
-// other copy in this repo (the mesh, LiveScreen's ΔE picker, the sim
-// rigs) — api/ is serverless and this file's rule is no cross-layer
+// sRGB→OKLab, reduced to just the hue angle. Kept local to the serverless
+// palette module, like the client picker and simulation rigs — api/ is
+// serverless and this file's rule is no cross-layer
 // refactors without a bug to justify them. Needed by pickAccentHue below
-// because the mesh's cancellation problem lives in OKLab's a/b plane, so
+// because the former blend's cancellation problem lived in OKLab's a/b plane, so
 // only OKLab hue distance predicts it — HSL hue distance does not (the
 // 2026-07-30 verification sweep measured HSL-±120° spanning anywhere from
 // ~107° to ~149° in OKLab depending on the base hue).
 // OKLab chroma (a/b magnitude) of a hex color — sibling of hexToOklabHueDeg
 // below, same matrix. Needed by the accent-saturation solve above because
-// the mesh's hue-vote visibility threshold is a ratio of OKLab chromas, so
+// the historical hue-vote visibility threshold was a ratio of OKLab chromas, so
 // the accent's sat must be chosen against real OKLab chroma, not HSL sat.
 export function hexToOklabChroma(hex) {
   const lin = v => { v = parseInt(v, 16) / 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
