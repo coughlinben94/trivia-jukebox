@@ -52,7 +52,32 @@ export function mixWithSeam(L, a, b, weightA, weightB) {
   return [L + (glowLightness - L) * eased, a * chromaScale, b * chromaScale]
 }
 
-export function blendTwoLights({ hexA, hexB, distA, distB }) {
+// Prepare once per palette transition, then call the returned function for
+// every pixel/frame. Hex parsing and OKLab conversion stay outside the hot
+// renderer loop.
+export function prepareTwoLightBlend(hexA, hexB) {
+  if (!/^#[0-9a-f]{6}$/i.test(hexA) || !/^#[0-9a-f]{6}$/i.test(hexB)) {
+    throw new TypeError('Two-light colors must be six-digit hex strings')
+  }
+  const labA = rgbToOklab(hexToRgb(hexA))
+  const labB = rgbToOklab(hexToRgb(hexB))
+
+  return (distA, distB) => {
+    if (!Number.isFinite(distA) || !Number.isFinite(distB)) {
+      throw new TypeError('Two-light distances must be finite numbers')
+    }
+    return blendPreparedLights({
+      hexA,
+      hexB,
+      labA,
+      labB,
+      distA: Math.max(0, distA),
+      distB: Math.max(0, distB),
+    })
+  }
+}
+
+function blendPreparedLights({ hexA, hexB, labA, labB, distA, distB }) {
   if (distA === 0 && distB > 0) return hexA
   if (distB === 0 && distA > 0) return hexB
 
@@ -61,8 +86,8 @@ export function blendTwoLights({ hexA, hexB, distA, distB }) {
   const weightSum = rawWeightA + rawWeightB
   const weightA = rawWeightA / weightSum
   const weightB = rawWeightB / weightSum
-  const [lightnessA, aA, bA] = rgbToOklab(hexToRgb(hexA))
-  const [lightnessB, aB, bB] = rgbToOklab(hexToRgb(hexB))
+  const [lightnessA, aA, bA] = labA
+  const [lightnessB, aB, bB] = labB
   const mixed = mixWithSeam(
     lightnessA * weightA + lightnessB * weightB,
     aA * weightA + aB * weightB,
@@ -76,4 +101,10 @@ export function blendTwoLights({ hexA, hexB, distA, distB }) {
     return lightnessA >= lightnessB ? hexA : hexB
   }
   return result
+}
+
+export function blendTwoLights({ hexA, hexB, distA, distB }) {
+  // Convenience API for isolated samples and tests. Renderers should retain
+  // prepareTwoLightBlend(hexA, hexB) instead of calling this per pixel.
+  return prepareTwoLightBlend(hexA, hexB)(distA, distB)
 }

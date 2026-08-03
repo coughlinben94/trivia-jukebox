@@ -4,12 +4,16 @@ import {
   hexToRgb,
   mixWithSeam,
   oklabToRgb,
+  prepareTwoLightBlend,
   rgbToOklab,
 } from '../lib/twoLightBlend.js'
 
-function hueFromHex(hex) {
+function hueAndChromaFromHex(hex) {
   const [, a, b] = rgbToOklab(hexToRgb(hex))
-  return (Math.atan2(b, a) * 180 / Math.PI + 360) % 360
+  return {
+    hue: (Math.atan2(b, a) * 180 / Math.PI + 360) % 360,
+    chroma: Math.hypot(a, b),
+  }
 }
 
 describe('OKLab conversion helpers', () => {
@@ -61,23 +65,69 @@ describe('blendTwoLights', () => {
     expect(blendTwoLights({ hexA: '#330000', hexB: '#000033', distA: 0.5, distB: 0.5 })).not.toBe('#000000')
   })
 
-  it('sweeps hue without a step larger than 20 degrees', () => {
+  it.each([
+    ['cyan to pink', '#09b3e1', '#ec3b6f'],
+    ['red to cyan', '#ff2400', '#00cfe8'],
+    ['orange to blue', '#ff8a00', '#2457ff'],
+    ['green to magenta', '#19b56b', '#dc3fc0'],
+  ])('keeps visible hue moving in one direction for %s', (_name, hexA, hexB) => {
+    const chromaThreshold = 0.03
+    const reversalTolerance = 3
+    const startHue = hueAndChromaFromHex(hexA).hue
+    const endHue = hueAndChromaFromHex(hexB).hue
+    const expectedDirection = Math.sign(((endHue - startHue + 540) % 360) - 180)
     let previousHue = null
 
-    for (let step = 0; step <= 20; step += 1) {
-      const t = step / 20
-      const hue = hueFromHex(blendTwoLights({
-        hexA: '#09b3e1',
-        hexB: '#ec3b6f',
+    for (let step = 0; step <= 40; step += 1) {
+      const t = step / 40
+      const { hue, chroma } = hueAndChromaFromHex(blendTwoLights({
+        hexA,
+        hexB,
         distA: t,
         distB: 1 - t,
       }))
 
-      if (previousHue !== null) {
-        const jump = Math.abs(hue - previousHue)
-        expect(Math.min(jump, 360 - jump)).toBeLessThan(20)
+      // Hue is not perceptually meaningful near neutral. Only police the
+      // trajectory while enough chroma remains for a direction change to be
+      // visible as a flip.
+      if (chroma >= chromaThreshold && previousHue !== null) {
+        const signedStep = ((hue - previousHue + 540) % 360) - 180
+        // Integer sRGB output can jitter by a degree or two after gamut
+        // clipping. A larger reversal while chroma is visible is the flip
+        // users can perceive and this test is intended to catch.
+        expect(signedStep * expectedDirection).toBeGreaterThanOrEqual(-reversalTolerance)
+        expect(Math.abs(signedStep)).toBeLessThan(20)
       }
-      previousHue = hue
+      previousHue = chroma >= chromaThreshold ? hue : null
     }
+  })
+})
+
+describe('prepareTwoLightBlend', () => {
+  it('prepares colors once and reuses them for many pixel-distance samples', () => {
+    const blendPrepared = prepareTwoLightBlend('#ff0000', '#0000ff')
+
+    expect(blendPrepared(0, 1)).toBe('#ff0000')
+    expect(blendPrepared(0.5, 0.5)).toBe(
+      blendTwoLights({ hexA: '#ff0000', hexB: '#0000ff', distA: 0.5, distB: 0.5 }),
+    )
+    expect(blendPrepared(1, 0)).toBe('#0000ff')
+  })
+
+  it.each(['red', '#fff', '#gg0000', '#1234567', null])('rejects invalid six-digit hex input %j', invalidHex => {
+    expect(() => prepareTwoLightBlend(invalidHex, '#0000ff')).toThrow(TypeError)
+  })
+
+  it('clamps negative distances to the nearest light endpoint', () => {
+    const blendPrepared = prepareTwoLightBlend('#ff0000', '#0000ff')
+
+    expect(blendPrepared(-1, 1)).toBe('#ff0000')
+    expect(blendPrepared(1, -1)).toBe('#0000ff')
+  })
+
+  it.each([NaN, Infinity, -Infinity])('rejects non-finite distance %s', distance => {
+    const blendPrepared = prepareTwoLightBlend('#ff0000', '#0000ff')
+
+    expect(() => blendPrepared(distance, 1)).toThrow(TypeError)
   })
 })
