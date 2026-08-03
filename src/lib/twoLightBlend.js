@@ -1,4 +1,5 @@
 const GLOW_DELTA_L = 0.28
+const HALO_DELTA_L = 0.1
 
 export function hexToRgb(hex) {
   return [
@@ -23,6 +24,24 @@ function srgbToLinear(c) { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow(
 function linearToSrgb(c) { c = c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(Math.max(c, 0), 1 / 2.4) - 0.055; return Math.max(0, Math.min(255, c * 255)) }
 function cbrt(x) { return Math.sign(x) * Math.pow(Math.abs(x), 1 / 3) }
 
+function seamEased(weightA, weightB) {
+  const balance = 1 - Math.abs(weightA - weightB)
+  return balance * balance * (3 - 2 * balance)
+}
+
+function writeOklabToRgb(L, a, b, target, offset) {
+  const lRoot = L + 0.3963377774 * a + 0.2158037573 * b
+  const mRoot = L - 0.1055613458 * a - 0.0638541728 * b
+  const sRoot = L - 0.0894841775 * a - 1.2914855480 * b
+  const l = lRoot * lRoot * lRoot
+  const m = mRoot * mRoot * mRoot
+  const s = sRoot * sRoot * sRoot
+  target[offset] = linearToSrgb(4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s)
+  target[offset + 1] = linearToSrgb(-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s)
+  target[offset + 2] = linearToSrgb(-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s)
+  return target
+}
+
 export function rgbToOklab([r, g, b]) {
   r = srgbToLinear(r); g = srgbToLinear(g); b = srgbToLinear(b)
   const l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b
@@ -37,19 +56,13 @@ export function rgbToOklab([r, g, b]) {
 }
 
 export function oklabToRgb([L, a, b]) {
-  const l_ = L + 0.3963377774 * a + 0.2158037573 * b
-  const m_ = L - 0.1055613458 * a - 0.0638541728 * b
-  const s_ = L - 0.0894841775 * a - 1.2914855480 * b
-  const l = l_ * l_ * l_, m = m_ * m_ * m_, s = s_ * s_ * s_
-  const r = +4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s
-  const g = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s
-  const bb = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
-  return [linearToSrgb(r), linearToSrgb(g), linearToSrgb(bb)]
+  const target = [0, 0, 0]
+  writeOklabToRgb(L, a, b, target, 0)
+  return target
 }
 
 export function mixWithSeam(L, a, b, weightA, weightB) {
-  const balance = 1 - Math.abs(weightA - weightB)
-  const eased = balance * balance * (3 - 2 * balance)
+  const eased = seamEased(weightA, weightB)
   const chromaScale = 1 - eased * 0.6
   const glowLightness = Math.min(1, L + GLOW_DELTA_L)
 
@@ -120,18 +133,54 @@ export function prepareTwoLightField(hexA, hexB) {
   }
   const baseA = rgbToOklab(hexToRgb(hexA))
   const baseB = rgbToOklab(hexToRgb(hexB))
+  const baseAr = parseInt(hexA.slice(1, 3), 16)
+  const baseAg = parseInt(hexA.slice(3, 5), 16)
+  const baseAb = parseInt(hexA.slice(5, 7), 16)
+  const baseBr = parseInt(hexB.slice(1, 3), 16)
+  const baseBg = parseInt(hexB.slice(3, 5), 16)
+  const baseBb = parseInt(hexB.slice(5, 7), 16)
+  const baseAL = baseA[0], baseAa = baseA[1], baseAbLab = baseA[2]
+  const baseBL = baseB[0], baseBa = baseB[1], baseBbLab = baseB[2]
 
-  return (distA, distB) => {
+  function sampleInto(distA, distB, target, offset = 0) {
     if (!Number.isFinite(distA) || !Number.isFinite(distB)) {
       throw new TypeError('Two-light distances must be finite numbers')
     }
     distA = Math.max(0, distA)
     distB = Math.max(0, distB)
-    const halo = distance => 0.1 * (1 - 2 * Math.min(1, distance))
-    const labA = [Math.max(0, Math.min(1, baseA[0] + halo(distA))), baseA[1], baseA[2]]
-    const labB = [Math.max(0, Math.min(1, baseB[0] + halo(distB))), baseB[1], baseB[2]]
-    return blendPreparedLights({ hexA, hexB, labA, labB, distA, distB, asRgb: true })
+    const lightnessA = Math.max(0, Math.min(1, baseAL + HALO_DELTA_L * (1 - 2 * Math.min(1, distA))))
+    const lightnessB = Math.max(0, Math.min(1, baseBL + HALO_DELTA_L * (1 - 2 * Math.min(1, distB))))
+    const rawWeightA = 1 / (distA + 0.001)
+    const rawWeightB = 1 / (distB + 0.001)
+    const weightSum = rawWeightA + rawWeightB
+    const weightA = rawWeightA / weightSum
+    const weightB = rawWeightB / weightSum
+    const eased = seamEased(weightA, weightB)
+    const chromaScale = 1 - eased * 0.6
+    let L = lightnessA * weightA + lightnessB * weightB
+    L += (Math.min(1, L + GLOW_DELTA_L) - L) * eased
+    const a = (baseAa * weightA + baseBa * weightB) * chromaScale
+    const b = (baseAbLab * weightA + baseBbLab * weightB) * chromaScale
+
+    writeOklabToRgb(L, a, b, target, offset)
+    if (target[offset] === 0 && target[offset + 1] === 0 && target[offset + 2] === 0 &&
+        hexA.toLowerCase() !== '#000000' && hexB.toLowerCase() !== '#000000') {
+      const useA = lightnessA >= lightnessB
+      target[offset] = useA ? baseAr : baseBr
+      target[offset + 1] = useA ? baseAg : baseBg
+      target[offset + 2] = useA ? baseAb : baseBb
+    }
+    target[offset + 3] = 255
+    return target
   }
+
+  const sample = (distA, distB) => {
+    const target = new Uint8ClampedArray(4)
+    sampleInto(distA, distB, target, 0)
+    return [target[0], target[1], target[2]]
+  }
+  sample.sampleInto = sampleInto
+  return sample
 }
 
 export function blendTwoLights({ hexA, hexB, distA, distB }) {

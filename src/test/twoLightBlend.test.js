@@ -134,6 +134,16 @@ describe('prepareTwoLightBlend', () => {
 })
 
 describe('prepareTwoLightField', () => {
+  it('writes RGB bytes into the caller buffer without replacing it', () => {
+    const field = prepareTwoLightField('#804020', '#204080')
+    const target = new Uint8ClampedArray(8)
+    const returned = field.sampleInto(0.25, 0.75, target, 4)
+
+    expect(returned).toBe(target)
+    expect(Array.from(target.slice(4, 7))).toEqual(field(0.25, 0.75))
+    expect(target[7]).toBe(255)
+  })
+
   it('applies bounded lighter-center and darker-outer OKLab halos', () => {
     const field = prepareTwoLightField('#804020', '#204080')
     const center = field(0, 2)

@@ -53,7 +53,7 @@ export function normalizeScene({ colors = [], artUrl = '', shuffleKey = 0 } = {}
   const usable = valid.map(color => color.toLowerCase()).filter(color => color !== SENTINEL && !isNearBlack(color))
   const normalized = usable.length >= 2 ? usable.slice(0, 2)
     : usable.length === 1 ? [usable[0], usable[0]] : FALLBACK
-  const identity = `${artUrl}|${normalized.join('|')}`
+  const identity = `${shuffleKey}|${artUrl}|${normalized.join('|')}`
   return {
     artUrl,
     colors: normalized,
@@ -128,18 +128,19 @@ function drawScene(ctx, smallCtx, scene, timestamp, width, height) {
   const bx = b.baseX + Math.sin(t * b.freqX + b.phaseX) * b.ampX
   const by = b.baseY + Math.sin(t * b.freqY + b.phaseY) * b.ampY
   const field = scene.field || (scene.field = prepareTwoLightField(...scene.colors))
-  const image = smallCtx.createImageData(TINY_SIZE, TINY_SIZE)
+  const image = scene.imageData || (scene.imageData = smallCtx.createImageData(TINY_SIZE, TINY_SIZE))
 
   for (let y = 0; y < TINY_SIZE; y += 1) {
     for (let x = 0; x < TINY_SIZE; x += 1) {
       const nx = x / (TINY_SIZE - 1)
       const ny = y / (TINY_SIZE - 1)
-      const rgb = field(Math.hypot(nx - ax, ny - ay) / a.radius, Math.hypot(nx - bx, ny - by) / b.radius)
       const index = (y * TINY_SIZE + x) * 4
-      image.data[index] = rgb[0]
-      image.data[index + 1] = rgb[1]
-      image.data[index + 2] = rgb[2]
-      image.data[index + 3] = 255
+      field.sampleInto(
+        Math.hypot(nx - ax, ny - ay) / a.radius,
+        Math.hypot(nx - bx, ny - by) / b.radius,
+        image.data,
+        index,
+      )
     }
   }
   smallCtx.putImageData(image, 0, 0)
@@ -148,6 +149,30 @@ function drawScene(ctx, smallCtx, scene, timestamp, width, height) {
   ctx.filter = `blur(${Math.max(12, width / 70)}px)`
   ctx.drawImage(smallCtx.canvas, -width * 0.03, -height * 0.03, width * 1.06, height * 1.06)
   ctx.filter = 'none'
+}
+
+export function resizeCanvasesPreservingSnapshot(
+  canvases,
+  snapshotCanvas,
+  snapshotContext,
+  dpr,
+  makeCanvas = () => document.createElement('canvas'),
+) {
+  const saved = makeCanvas()
+  saved.width = Math.max(1, snapshotCanvas.width)
+  saved.height = Math.max(1, snapshotCanvas.height)
+  const savedContext = saved.getContext('2d')
+  if (savedContext) savedContext.drawImage(snapshotCanvas, 0, 0)
+
+  canvases.forEach(canvas => {
+    canvas.width = Math.max(1, Math.round(canvas.clientWidth * dpr))
+    canvas.height = Math.max(1, Math.round(canvas.clientHeight * dpr))
+  })
+  snapshotCanvas.width = canvases[0].width
+  snapshotCanvas.height = canvases[0].height
+  if (savedContext) {
+    snapshotContext.drawImage(saved, 0, 0, snapshotCanvas.width, snapshotCanvas.height)
+  }
 }
 
 export default function GradientBackground({
@@ -189,13 +214,8 @@ export default function GradientBackground({
     if (!snapshotContext) return undefined
 
     const resize = () => {
-      canvases.forEach(canvas => {
       const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2))
-      canvas.width = Math.max(1, Math.round(canvas.clientWidth * dpr))
-      canvas.height = Math.max(1, Math.round(canvas.clientHeight * dpr))
-      })
-      snapshotCanvas.width = canvases[0].width
-      snapshotCanvas.height = canvases[0].height
+      resizeCanvasesPreservingSnapshot(canvases, snapshotCanvas, snapshotContext, dpr)
     }
     resize()
     window.addEventListener('resize', resize)

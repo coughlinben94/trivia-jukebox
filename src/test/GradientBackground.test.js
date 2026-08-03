@@ -3,6 +3,7 @@ import {
   createTransitionState,
   makeLightParams,
   normalizeScene,
+  resizeCanvasesPreservingSnapshot,
   updateTransitionState,
 } from '../components/GradientBackground.jsx'
 
@@ -118,5 +119,37 @@ describe('whole-frame transition state', () => {
     expect(state.outgoing.artUrl).toBe('one.jpg')
     expect(state.incoming.artUrl).toBe('two.jpg')
     expect(state.blendStart).toBe(300)
+  })
+
+  it('starts a new scene when only shuffle key changes', () => {
+    let state = createTransitionState(current)
+    state = updateTransitionState(state, {
+      current: { ...current, shuffleKey: 3 },
+      next: { colors: ['#080808'], shuffleKey: 3 },
+      entranceActive: false,
+      now: 400,
+    })
+    expect(state.outgoing.shuffleKey).toBe(2)
+    expect(state.incoming.shuffleKey).toBe(3)
+    expect(state.blendStart).toBe(400)
+  })
+})
+
+describe('resizeCanvasesPreservingSnapshot', () => {
+  it('copies and redraws the outgoing snapshot around destructive canvas resize', () => {
+    const drawCalls = []
+    const snapshotContext = { drawImage: (...args) => drawCalls.push(args) }
+    const snapshot = { width: 120, height: 60, getContext: () => snapshotContext }
+    const visible = [{ clientWidth: 200, clientHeight: 100, width: 120, height: 60 }]
+    const tempContext = { drawImage: (...args) => drawCalls.push(args) }
+    const makeCanvas = () => ({ width: 0, height: 0, getContext: () => tempContext })
+
+    resizeCanvasesPreservingSnapshot(visible, snapshot, snapshotContext, 2, makeCanvas)
+
+    expect(visible[0]).toMatchObject({ width: 400, height: 200 })
+    expect(snapshot).toMatchObject({ width: 400, height: 200 })
+    expect(drawCalls[0][0]).toBe(snapshot)
+    expect(drawCalls.at(-1)[0]).not.toBe(snapshot)
+    expect(drawCalls.at(-1).slice(1)).toEqual([0, 0, 400, 200])
   })
 })
