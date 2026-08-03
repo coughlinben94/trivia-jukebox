@@ -9,6 +9,19 @@ import { smoothstep, relativeSaturation, warmPocketHueWeight, uglyWeight } from 
 // in the comments below, where the model was built.
 export { smoothstep, relativeSaturation, warmPocketHueWeight, uglyWeight };
 
+// Owner spec (2026-08-04): "for black albums, take the neon purple or pink
+// as a primary color, i dont want black in the background anywhere." The
+// old fixed pair here (200/20, blue/orange) predates that spec and never
+// matched it -- this is the one true-grayscale-cover fallback in the whole
+// file, so it's the only place a hardcoded hue choice like this makes
+// sense. 300 (magenta-purple) and 330 (hot pink) are 30deg apart -- close
+// enough to read as one family (matches the "neon purple OR pink" framing,
+// not "pick one arbitrarily and hope"), far enough to still have visible
+// gradient motion between them.
+export function pickMonochromeAccentHues() {
+  return [300, 330];
+}
+
 export default async function handler(req, res) {
   const { url } = req.query;
   const { cfg, overridden } = resolvePaletteConfig(req.query);
@@ -350,21 +363,8 @@ export default async function handler(req, res) {
         // hue to derive a color-wheel relationship FROM (unlike the
         // single-real-hue branch below), so this pair has to be a
         // deliberately-chosen fixed palette rather than something derived
-        // per cover. 200° cool blue / 20° warm red-orange — true
-        // complementary (180° apart; an earlier version of this comment
-        // called it "triadic," which was just wrong). Complementary is
-        // deliberately KEPT here even though the single-accent branch below
-        // moved to triadic via pickAccentHue() on 2026-07-30 (see its
-        // comment): that move fixed a minority accent (weight 0.15, 1 blob
-        // of 6) pooling as an isolated hard-edged disc, a failure mode that
-        // needs a dominant field to be isolated IN. Here both colors are
-        // equal-weight (3 blobs each), so opposition reads as the intended
-        // two-bodies duel, not a floating patch — and the pair is chosen to
-        // sit clear of the documented muddy-warm pocket (see uglyWeight/
-        // deuglify above; the 20° accent brushes the generalized band's
-        // lower hue ramp, but at 0.65 saturation it's far above the
-        // rel-sat dullness gate that actually defines mud, and synthetic
-        // colors never pass through uglyWeight anyway). Saturation eased
+        // per cover. Keep both accents in the purple-to-pink band so true
+        // monochrome art avoids the muddy warm pocket. Saturation eased
         // from the old 0.85
         // (same tone-down as the single-accent branch, 0.85 -> 0.55) to
         // 0.65 — still needs to carry the WHOLE gradient alone here since
@@ -396,7 +396,7 @@ export default async function handler(req, res) {
         // all 4 land in this exact branch and, since it's a fixed pair, all
         // 4 shared one identical near-mud background under the old floor)
         // legible without pushing the light end past what 0.75 already caps.
-        const accentHues = [200, 20];
+        const accentHues = pickMonochromeAccentHues();
         colors = accentHues.map(h => hslToHex(h, 0.65, Math.min(0.75, Math.max(0.38, avgLuma))));
         // Nothing real behind either hue here — both synthetic, so
         // buildWeights' zero-real-entries branch splits them evenly.

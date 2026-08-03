@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { populationFactor, buildWeights, relativeSaturation, uglyWeight, deuglify, mergeHueSiblings, warmPocketHueWeight, hexToOklabHueDeg, pickAccentHue } from '../../api/palette.js'
+import { populationFactor, buildWeights, relativeSaturation, uglyWeight, deuglify, mergeHueSiblings, warmPocketHueWeight, hexToOklabHueDeg, pickAccentHue, pickMonochromeAccentHues } from '../../api/palette.js'
 
 // hue / chroma / lightness triplets for real live-library colors, computed
 // exactly the way api/palette.js's own hexToHue/hexToChroma/hexToLightness
@@ -166,6 +166,16 @@ const JUNE_TAN        = '#a57d61' // OKLab hue 56.22
 const ROCKETSHIP_BLUE = '#1169b6' // OKLab hue 251.34
 const GREEN_STRESS    = '#2eb877' // HSL 152 — the base where HSL-±120 hit 149.3° OKLab
 const ACCENT_SAT = 0.40, ACCENT_L = 0.3725
+
+describe('pickMonochromeAccentHues', () => {
+  it('picks a neon purple/pink pair for a true black-and-white cover, never blue/orange', () => {
+    const [hueA, hueB] = pickMonochromeAccentHues()
+    for (const h of [hueA, hueB]) {
+      expect(h).toBeGreaterThanOrEqual(270)
+      expect(h).toBeLessThanOrEqual(340)
+    }
+  })
+})
 
 describe('warmPocketHueWeight (the pocket hue band, shared with uglyWeight)', () => {
   it('matches the uglyWeight band: full weight 28-88, zero outside 16/102', () => {
