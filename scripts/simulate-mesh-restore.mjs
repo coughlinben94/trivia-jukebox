@@ -127,8 +127,10 @@ function sweep(name, src) {
         wS += wt; L += wt * oks[bl.ci][0]; aS += wt * oks[bl.ci][1]; bS += wt * oks[bl.ci][2]; cS += wt * chrs[bl.ci]
       }
       L /= wS
-      const hue = Math.atan2(bS, aS), C = cS / wS
-      let [r, g, bb] = oklabToRgb([L, C * Math.cos(hue) * DIALS.chroma, C * Math.sin(hue) * DIALS.chroma])
+      // Cartesian a/b mixing (2026-08-03 revert of the 07-28 polar blend —
+      // see AlbumGradientMesh.jsx). `hue` retained for the presence vote.
+      const hue = Math.atan2(bS, aS)
+      let [r, g, bb] = oklabToRgb([L, (aS / wS) * DIALS.chroma, (bS / wS) * DIALS.chroma])
       {
         const mx = Math.max(r, g, bb) / 255, mn = Math.min(r, g, bb) / 255
         const chr = mx - mn, light = (mx + mn) / 2

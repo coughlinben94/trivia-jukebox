@@ -551,30 +551,35 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
         }
         L /= wSum
 
-        // Found 2026-07-28: two blobs on opposite sides of the color wheel
-        // (say rust-red vs. green) sitting at ~50/50 weight used to average
-        // straight in a/b Cartesian space — two vectors pointing opposite
-        // ways partially cancel, so the midpoint pixel landed near a=b=0,
-        // i.e. gray/muddy-olive, even though neither blob's own color was
-        // ugly. That's a vector-geometry artifact, not a bad color choice,
-        // so it couldn't be fixed in api/palette.js (that only picks which
-        // colors get used, not how they blend on screen).
+        // REVERTED to Cartesian a/b mixing (2026-08-03). The 07-28 "polar"
+        // blend (hue from the vector sum, chroma from a scalar MEAN that
+        // never dips) had a consequence nobody priced in: between two
+        // vivid, hue-distant blobs it DISPLAYS every intermediate hue at
+        // full chroma — so a green/blue/red cover (Mr. Mister's "Kyrie",
+        // watched frame-by-frame from a live recording 2026-08-03) painted
+        // vivid magenta, cyan, orange and yellow that exist nowhere on the
+        // cover or in the palette: the whole "rainbow background" /
+        // "lava lamp" complaint family in one mechanism. Every corridor
+        // artifact fix this week (mud guard v1's rainbow, the seam/fish
+        // reports) was downstream of manufactured full-chroma
+        // intermediates.
         //
-        // Fix: blend hue and chroma separately instead of blending the a/b
-        // vector directly. atan2(bSum, aSum) is exactly the hue of the OLD
-        // (buggy) vector sum — same direction as before, so the "which way
-        // does the blend lean" feel is unchanged. The actual fix is chroma:
-        // instead of using the SUM vector's magnitude (which is what
-        // collapses toward zero on cancellation), we use the weighted
-        // AVERAGE of each blob's own chroma — a plain scalar mean can never
-        // cancel toward zero the way two opposing vectors can. Re-deriving
-        // a/b from (hue, chroma) then gives a midpoint that keeps real
-        // color instead of going gray.
-        const hue = Math.atan2(bSum, aSum)
-        const C   = chromaSum / wSum
-        let a = C * Math.cos(hue)
-        let b = C * Math.sin(hue)
-        a *= chromaScl; b *= chromaScl
+        // Cartesian mixing does what paint does: distant hues partially
+        // cancel and the seam DESATURATES toward neutral — the album's own
+        // colors meet through quiet gray-ish shading, and no hue the
+        // palette never contained can appear. The 07-28 change existed
+        // because that neutral goes muddy-olive specifically in the warm
+        // pocket — which is exactly what the output-stage mud guard below
+        // now handles (v2 desaturates warm mud to clean neutral), so the
+        // polar workaround lost its reason to exist. Verified side-by-side
+        // with the real Kyrie palette (4 timestamps, both modes, guard on):
+        // identical color bodies and motion, corridors neutral instead of
+        // rainbow. blendPairRgb (the song-to-song TEMPORAL crossfade) keeps
+        // its LCh path — a whole-field fade sweeping hues briefly reads as
+        // a transition, not a standing artifact; only the SPATIAL per-pixel
+        // blend manufactured standing rainbows.
+        let a = (aSum / wSum) * chromaScl
+        let b = (bSum / wSum) * chromaScl
 
         let [r, g, bb] = oklabToRgb([L, a, b])
 
@@ -618,7 +623,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
             const [h] = rgbToHsl(r, g, bb)
             if (h > 12 && h < 110) {
               // palette-space (un-scaled) color makes the DECISION
-              const [ru, gu, bu] = oklabToRgb([L, C * Math.cos(hue), C * Math.sin(hue)])
+              const [ru, gu, bu] = oklabToRgb([L, aSum / wSum, bSum / wSum])
               const [hu, cu, lu] = rgbToHsl(ru, gu, bu)
               const du = 1 - Math.abs(2 * lu - 1)
               const su = du > 0 ? Math.min(1, cu / du) : 0
