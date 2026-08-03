@@ -726,6 +726,28 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           at this screen the longest showed a dead frame. */}
       <GradientBg colors={palette.colors} weights={palette.weights} nextColors={upcomingPalette.colors} nextWeights={upcomingPalette.weights} active={true} shuffleKey={shuffleKey} entranceActive={entranceActive} artUrl={artUrl} nextArtUrl={upcomingArtUrl} />
 
+      {/* Entrance black-out (2026-08-04, owner spec) — reverses the earlier
+          "no black snap, ever" stance from AlbumGradient/AlbumGradientMesh.
+          Those comments were about mid-session song changes (skip to skip) —
+          this is scoped ONLY to entranceActive, which is true exactly once,
+          during the very first song of a shuffle session (LiveScreen mounts
+          fresh per showLive open; entranceActive flips false ~2s later and
+          never flips true again for the rest of this mount, per the runEntrance
+          effect above). The gradient engine is already blending live underneath
+          this the whole time — this just holds a solid black curtain over it
+          until the record/tonearm entrance settles, then lifts, so the first
+          colors of a session read as a deliberate reveal instead of colors
+          already sitting there when the screen appears. Purely visual: no
+          change to the gradient math, blend state, or mid-session transitions. */}
+      <div
+        className="absolute inset-0 z-[1] pointer-events-none"
+        style={{
+          background: '#000',
+          opacity: entranceActive ? 1 : 0,
+          transition: entranceActive ? 'none' : 'opacity 900ms ease-out',
+        }}
+      />
+
       {/* Light vignette — kept subtle on purpose. This screen's whole job is
           showing off the album-gradient colors, so this only pulls focus
           toward center without visibly darkening/muting the palette itself. */}
