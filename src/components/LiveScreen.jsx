@@ -85,7 +85,7 @@ const safeGradientColor = hex => {
 const normalizeGradientWeights = weights => {
   const safe = [0, 1].map(i => Number.isFinite(weights?.[i]) && weights[i] >= 0 ? weights[i] : 0)
   const total = safe[0] + safe[1]
-  return total > 0 ? safe.map(weight => weight / total) : [0.5, 0.5]
+  return Number.isFinite(total) && total > 0 ? safe.map(weight => weight / total) : [0.5, 0.5]
 }
 
 export function pickGradientColors(colors, weights) {
@@ -116,6 +116,7 @@ export function pickGradientColors(colors, weights) {
 // primary so a raw near-black server color cannot bypass the render safeguard.
 export function applyGradientOverride(autoPicked, rawColors, overrideHex) {
   if (!overrideHex || !rawColors.length) return autoPicked
+  if (autoPicked.colors.length && autoPicked.colors.every(color => color === LOADING_SENTINEL)) return autoPicked
   return { colors: [autoPicked.colors[0], safeGradientColor(overrideHex)], weights: [0.5, 0.5] }
 }
 

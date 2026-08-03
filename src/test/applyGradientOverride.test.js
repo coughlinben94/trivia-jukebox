@@ -39,4 +39,9 @@ describe('applyGradientOverride', () => {
     const auto = { colors: ['#ea513f', '#e8a33d'], weights: [0.5, 0.5] }
     expect(applyGradientOverride(auto, ['#ea513f'], '#ABCDEF').colors).toEqual(['#ea513f', '#abcdef'])
   })
+
+  it('leaves an all-sentinel auto-picked palette unchanged regardless of override', () => {
+    const auto = { colors: ['#080808', '#080808'], weights: [0.5, 0.5] }
+    expect(applyGradientOverride(auto, ['#080808', '#080808'], '#3355ff')).toBe(auto)
+  })
 })

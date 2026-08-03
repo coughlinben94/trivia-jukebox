@@ -72,6 +72,7 @@ describe('pickGradientColors', () => {
     { weights: [-1, 3], expected: [0, 1] },
     { weights: ['2', 2], expected: [0, 1] },
     { weights: [NaN, Infinity], expected: [0.5, 0.5] },
+    { weights: [Number.MAX_VALUE, Number.MAX_VALUE], expected: [0.5, 0.5] },
     { weights: [undefined, null], expected: [0.5, 0.5] },
   ])('normalizes only finite nonnegative numeric weights: $weights', ({ weights, expected }) => {
     expect(pickGradientColors(['#ea513f', '#e8a33d'], weights).weights).toEqual(expected)
