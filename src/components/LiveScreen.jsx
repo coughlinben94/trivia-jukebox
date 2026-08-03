@@ -139,12 +139,22 @@ export function pickGradientColors(colors, weights) {
   if (partner === -1) for (let i = 1; i < colors.length; i++) {
     if (hueDelta(h0, oklabHueDeg(colors[i])) < 30) { partner = i; break }
   }
-  // Nothing safe at all -- every other candidate is >140 deg away. Drop to
-  // a single color; AlbumGradientMesh.parseColors already fans one color
-  // into six shades cleanly (fam[1] defaults to fam[0] when only one hex is
-  // passed), so this is a real, renderer-supported fallback, not a
-  // degraded state -- monochrome depth instead of a muddy pairing.
-  if (partner === -1) return { colors: [colors[0]], weights: [1] }
+  // REVERSED same night (2026-08-03, live-diagnosed): this used to drop to
+  // a single color here. That was itself the bug, one layer up from the
+  // one this whole gate was built to fix. Two live songs in a row ("Out
+  // Tonight"/Penelope Road, measured #c77f6e/#134b4f at 168deg; "When You
+  // Were Mine") rendered as a flat monochrome shade-fan and read as "way
+  // more one color" and "not random" (a single-color fan also halves the
+  // blob motion's visual complexity -- only one family is doing anything).
+  // Both complaints traced to this one line. The muddy-corridor risk this
+  // fallback existed to prevent is now handled at the RENDERER
+  // (AlbumGradientMesh's MESH_CHROMA_FLOOR, shipped earlier the same
+  // session) instead of by refusing to show a second color at all -- so
+  // falling back to the next-ranked color regardless of hue (the pre-gate
+  // legacy behavior) is safe again now that mud is handled downstream. If
+  // muddy corridors resurface as a live complaint, raise
+  // gradientTuning.js's BRIGHTNESS-dial floor, don't re-add this.
+  if (partner === -1) partner = 1
   const w0 = weights?.[0] ?? 0.5, w1 = weights?.[partner] ?? 0.5
   const s = w0 + w1
   return { colors: [colors[0], colors[partner]], weights: [w0 / s, w1 / s] }

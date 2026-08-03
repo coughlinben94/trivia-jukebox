@@ -44,22 +44,36 @@ describe('pickGradientColors (two prettiest, compatible)', () => {
     expect(onlyTwins.colors).toEqual(['#ea513f', '#f0604f'])
   })
 
-  it('drops to a single color when every other candidate is near-complementary', () => {
+  it('falls back to the next-ranked color, not single-color, when every candidate is near-complementary', () => {
+    // REVERSED 2026-08-03 (same night, live-diagnosed): the single-color
+    // fallback this test used to assert was itself the bug, just one layer
+    // up. Two live songs in a row ("Out Tonight"/Penelope Road, measured
+    // #c77f6e/#134b4f at 168deg; "When You Were Mine") rendered as a flat
+    // monochrome shade-fan -- exactly what parseColors does with 1 color --
+    // instead of the owner's explicit "two colors interacting" spec. The
+    // muddy-corridor risk this fallback existed to avoid is now handled at
+    // the RENDERER (AlbumGradientMesh's MESH_CHROMA_FLOOR, shipped earlier
+    // the same session) instead of by refusing to show a second color at
+    // all -- so the picker no longer needs to protect against it by going
+    // monochrome. Falls back to the next-ranked color regardless of hue,
+    // same as the pre-gate legacy behavior, now that mud is handled
+    // downstream.
     const onlyComplement = pickGradientColors(['#ea513f', '#2fd3c8'], [0.5, 0.3])
-    expect(onlyComplement.colors).toEqual(['#ea513f'])
-    expect(onlyComplement.weights).toEqual([1])
+    expect(onlyComplement.colors).toEqual(['#ea513f', '#2fd3c8'])
+    expect(onlyComplement.weights[0] + onlyComplement.weights[1]).toBeCloseTo(1, 5)
   })
 
-  it('gate now runs even at exactly 2 raw colors (the gate-bypass bug)', () => {
+  it('gate runs at exactly 2 raw colors but no longer rejects a wide-hue pair to single-color', () => {
     // Live-measured case: John Hollier & the Rêverie, "Somewhere Down the
     // Road" -- api/palette.js returned exactly these 2 colors, 147.5 deg
-    // apart, and the OLD code skipped this function's hue check entirely
-    // whenever colors.length <= MAX_GRADIENT_COLORS, letting a
-    // near-complementary pair through untouched. It must now fall back to
-    // single-color instead of passing the muddy pair straight through.
+    // apart. The steady-state gate still RUNS at colors.length===2 (that
+    // part of the earlier fix stands -- see the gate-bypass comment on
+    // pickGradientColors above), but its own outcome changed: it no longer
+    // drops to single-color on a miss, it just uses the pair anyway (see
+    // the fallback comment above). Both colors pass through unchanged.
     const result = pickGradientColors(['#fac698', '#54aab9'], [0.57, 0.43])
-    expect(result.colors).toEqual(['#fac698'])
-    expect(result.weights).toEqual([1])
+    expect(result.colors).toEqual(['#fac698', '#54aab9'])
+    expect(result.weights).toEqual([0.57, 0.43])
   })
 
   it('handles the empty/fallback case without throwing', () => {
