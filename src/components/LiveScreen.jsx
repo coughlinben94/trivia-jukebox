@@ -96,6 +96,16 @@ const TEXT_SCRIM = '0 0 4px rgba(0,0,0,0.55), 0 0 10px rgba(0,0,0,0.45), 0 0 20p
 //    into gray moats under Cartesian blending (measured repeatedly this
 //    week). If nothing lands in the band, fall back to the first color
 //    ≥30° away, then to index 1 — always two entries out when two exist.
+// GATE-BYPASS FIX (2026-08-03, live-diagnosed): the hue-compatibility gate
+// below used to be skipped entirely whenever api/palette.js returned
+// MAX_GRADIENT_COLORS or fewer, on the assumption that "nothing to choose
+// between" meant nothing to check. That's wrong when the server itself only
+// ever found 2 colors and they happen to be hue-distant -- exactly what
+// happened live on John Hollier & the Rêverie's "Somewhere Down the Road"
+// (#fac698 peach / #54aab9 teal, measured 147.5° apart -- a hair past this
+// gate's own 140° ceiling) and read on screen as the "muddy" corridor
+// complaint. The gate now always runs, on however many colors actually
+// exist, colors.length===2 included.
 const MAX_GRADIENT_COLORS = 2
 function oklabHueDeg(hex) {
   const lin = v => { v = parseInt(v, 16) / 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4) }
@@ -109,20 +119,51 @@ function oklabHueDeg(hex) {
 }
 const hueDelta = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d }
 export function pickGradientColors(colors, weights) {
-  if (!colors.length) return { colors, weights }
-  if (colors.length <= MAX_GRADIENT_COLORS) return { colors, weights }
+  if (colors.length <= 1) return { colors, weights }
   const h0 = oklabHueDeg(colors[0])
   let partner = -1
   for (let i = 1; i < colors.length; i++) {
     if (hueDelta(h0, oklabHueDeg(colors[i])) >= 30 && hueDelta(h0, oklabHueDeg(colors[i])) <= 140) { partner = i; break }
   }
+  // Tier 2 (2026-08-03, replaces the old unbounded ">=30, no ceiling"
+  // fallback): if nothing landed in the compatible band, prefer a
+  // near-duplicate hue (<30 deg) over a near-complementary one (>140 deg).
+  // Near-duplicates blend into essentially the same hue -- safe, just less
+  // varied. Near-complementary is the documented gray-moat case this whole
+  // gate exists to prevent. The old fallback here had NO upper bound at
+  // all, which is exactly what let a >140 pair through as "better than
+  // nothing" -- including, critically, the exactly-2-colors case that used
+  // to skip this function's checks entirely (see the gate-bypass note
+  // above). It wasn't better. It was the bug (measured live: John Hollier's
+  // #fac698/#54aab9 at 147.5 deg).
   if (partner === -1) for (let i = 1; i < colors.length; i++) {
-    if (hueDelta(h0, oklabHueDeg(colors[i])) >= 30) { partner = i; break }
+    if (hueDelta(h0, oklabHueDeg(colors[i])) < 30) { partner = i; break }
   }
-  if (partner === -1) partner = 1
+  // Nothing safe at all -- every other candidate is >140 deg away. Drop to
+  // a single color; AlbumGradientMesh.parseColors already fans one color
+  // into six shades cleanly (fam[1] defaults to fam[0] when only one hex is
+  // passed), so this is a real, renderer-supported fallback, not a
+  // degraded state -- monochrome depth instead of a muddy pairing.
+  if (partner === -1) return { colors: [colors[0]], weights: [1] }
   const w0 = weights?.[0] ?? 0.5, w1 = weights?.[partner] ?? 0.5
   const s = w0 + w1
   return { colors: [colors[0], colors[partner]], weights: [w0 / s, w1 / s] }
+}
+
+// Manual gradient-color override (2026-08-03, thinktank round 3): if the
+// owner has picked a color for this song in SongDetailModal, it REPLACES
+// pickGradientColors' auto-picked partner entirely rather than being
+// filtered through the same hue gate again — it's already been auto-snapped
+// into the compatible band at picker-set time (src/lib/gradientColor.js),
+// against this exact rawColors[0], so re-gating it here would be redundant
+// at best and, if the server's color-0 ranking ever shifts slightly between
+// requests, could reject a perfectly valid saved override. colors[0] always
+// stays the server's own top pick — only the second color is ever
+// overridden, matching the picker's own "auto first color, manual second"
+// framing.
+export function applyGradientOverride(autoPicked, rawColors, overrideHex) {
+  if (!overrideHex || !rawColors.length) return autoPicked
+  return { colors: [rawColors[0], overrideHex], weights: [0.5, 0.5] }
 }
 
 function preloadImage(url) {
@@ -183,6 +224,11 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   const [textVisible, setTextVisible]     = useState(false)
   const [spinPaused, setSpinPaused]       = useState(false)
   const [upcomingArtUrl, setUpcomingArtUrl] = useState(null)
+  // Upcoming song's manual gradient override (see palette useMemo below) —
+  // onUpcomingTrack only ever handed the art URL through before; the full
+  // song object it receives already carries gradientOverride, this just
+  // also captures that instead of discarding the rest of the object.
+  const [upcomingGradientOverride, setUpcomingGradientOverride] = useState(null)
   const [textInstant, setTextInstant]     = useState(false)
   const [closing, setClosing]             = useState(false)
   const [entranceActive, setEntranceActive] = useState(true)
@@ -260,8 +306,14 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // during the fade-out like the onFadeStart/onUpcomingTrack plumbing
   // already intends. useMemo restores the same stable-unless-really-changed
   // reference usePalette itself provides.
-  const palette         = useMemo(() => pickGradientColors(paletteColorsFull, paletteWeightsFull), [paletteColorsFull, paletteWeightsFull])
-  const upcomingPalette = useMemo(() => pickGradientColors(upcomingPaletteColorsFull, upcomingPaletteWeightsFull), [upcomingPaletteColorsFull, upcomingPaletteWeightsFull])
+  const palette = useMemo(
+    () => applyGradientOverride(pickGradientColors(paletteColorsFull, paletteWeightsFull), paletteColorsFull, shown?.gradientOverride),
+    [paletteColorsFull, paletteWeightsFull, shown?.gradientOverride]
+  )
+  const upcomingPalette = useMemo(
+    () => applyGradientOverride(pickGradientColors(upcomingPaletteColorsFull, upcomingPaletteWeightsFull), upcomingPaletteColorsFull, upcomingGradientOverride),
+    [upcomingPaletteColorsFull, upcomingPaletteWeightsFull, upcomingGradientOverride]
+  )
 
   const tonearmCtrl = useAnimation()
   const flyCtrl     = useAnimation()
@@ -276,7 +328,10 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
 
   // Register palette-prefetch handler with Jukebox so advanceToNext can notify us
   useEffect(() => {
-    onUpcomingTrack?.((song) => setUpcomingArtUrl(song?.album?.images?.[0]?.url ?? null))
+    onUpcomingTrack?.((song) => {
+      setUpcomingArtUrl(song?.album?.images?.[0]?.url ?? null)
+      setUpcomingGradientOverride(song?.gradientOverride ?? null)
+    })
     return () => onUpcomingTrack?.(null)
   }, [onUpcomingTrack])
 

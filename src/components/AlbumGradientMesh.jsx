@@ -104,34 +104,31 @@ const MESH_CHROMA_FLOOR = 0.045
 // seeded orbiting bodies at the same speeds/sizes, and three independent
 // pair-frequencies plus the boundary wobble keep the symmetry from reading
 // as mechanical. No new constants, no new dials.
-function hashSeed(key) {
-  const x = Math.sin(key * 12.9898) * 43758.5453
-  return x - Math.floor(x)
-}
-
-// seedKey (2026-08-03, thinktank round 2, motion fix): blob geometry itself
-// (base position, amplitude, frequency, radius, antipodal mirroring) stays
-// fully deterministic -- that's not the problem. The problem is that with
-// blob-to-color assignment now FIXED (see the removed-rotationFor note
-// below), the same six orbit paths meet at the exact same loci every single
-// song, forever -- whatever seam artifact exists today repeats identically
-// instead of being randomized-away intermittently like before, which is
-// what made it read as a mechanical/trackable "fishy" defect rather than
-// ambient motion (thinktank motion critic, round 1). Fix: rotate every
-// blob's phase by one shared per-session nudge derived from seedKey (the
-// component passes shuffleKey) -- same character of motion, different
-// position in it, each shuffle session. Scaled by 0.35 so it's a shift, not
-// a reshuffle. Antipodal mirroring still works unchanged: the odd blob
-// copies the even blob's (already-nudged) phase +pi, so the balance-pinning
-// guarantee from the antipodal fix holds regardless of seedKey.
-function makeBlobParams(seedKey = 0) {
+// seedKey/phaseNudge REVERTED (2026-08-03, same day it shipped). Intent was
+// sound (blob-to-color assignment is fixed, so a bad meet repeats
+// identically every song -- see the removed-rotationFor note below) but the
+// delivery mechanism was wrong: rekeying blobParams's useMemo on shuffleKey
+// forced the canvas/RAF mount effect below to fully re-run every shuffle
+// (recreate the offscreen small canvas, rebind the resize listener, restart
+// the RAF loop) -- live-reported the same session as a grey flash right
+// after hitting shuffle and a changed crossfade "flow." It also likely
+// wasn't earning its keep: blob orbit period is 9-15s inside a 3-4 minute
+// song, so nearly the full motion cycle plays out every song regardless of
+// phase offset -- shifting the start point doesn't stop a bad meet from
+// appearing, it just moves when in the song it lands. Reverted rather than
+// patched (e.g. moving the phase read behind a ref instead of a remount)
+// because the underlying benefit didn't justify chasing a second bug to
+// keep it. If seam-repetition ever needs solving for real, it likely needs
+// per-cover variation in something other than a single shared global phase
+// (see the removed rotationFor's per-cover hash for the shape that used to
+// exist here).
+function makeBlobParams() {
   function rng(i, slot) {
     const x = Math.sin((i * 7 + slot) * 9301 + 49297) * 233280
     return x - Math.floor(x)
   }
   const speed = orbitSpeed()
   const size  = blobRadius()
-  const phaseNudge = hashSeed(seedKey) * Math.PI * 2 * 0.35
   const makeOne = (i) => ({
     baseX:  0.10 + rng(i, 0) * 0.80,
     baseY:  0.10 + rng(i, 1) * 0.80,
@@ -139,8 +136,8 @@ function makeBlobParams(seedKey = 0) {
     yAmp:   0.33,
     xFreq:  speed / (10 + rng(i, 2) * 7),
     yFreq:  speed / (10 + rng(i, 3) * 7),
-    xPhase: rng(i, 4) * Math.PI * 2 + phaseNudge,
-    yPhase: rng(i, 5) * Math.PI * 2 + phaseNudge,
+    xPhase: rng(i, 4) * Math.PI * 2,
+    yPhase: rng(i, 5) * Math.PI * 2,
     radius: size + rng(i, 6) * 0.13,
   })
   return Array.from({ length: NUM_BLOBS }, (_, i) => {
@@ -192,6 +189,46 @@ function hexToRgb(hex) {
     parseInt(hex.slice(3, 5), 16),
     parseInt(hex.slice(5, 7), 16),
   ]
+}
+
+function hexHueDeg(hex) {
+  const [L, a, b] = rgbToOklab(hexToRgb(hex))
+  return (Math.atan2(b, a) * 180 / Math.PI + 360) % 360
+}
+function hueDeltaDeg(a, b) { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d }
+
+// resolveCrossfadeHex (2026-08-03, thinktank round 3): closes a gap the
+// steady-state hue gate in LiveScreen's pickGradientColors never covered.
+// That gate validates a song's OWN 2 colors against each other at t=0/t=1,
+// but each blob crossfades independently (blendPairRgb, ~7.5s OKLab lerp,
+// family A = even blobs, family B = odd -- see parseColors), so mid-fade,
+// family A's partial blend and family B's partial blend can land far apart
+// in hue even when both songs' own pairs are individually clean -- measured
+// live via Monte Carlo (200k simulated transitions, each pair pre-gated):
+// a real, non-rare fraction swing past the 140deg ceiling mid-fade, worst
+// case 178.7deg at real chroma (not just a near-gray blip).
+//
+// Fix: family assignment is index-parity (outHex[0]/inHex[0] -> family A,
+// [1] -> family B), so swapping which incoming color feeds which family
+// flips BOTH cross-pairs (outA-vs-inB and outB-vs-inA) at once -- cheap,
+// no new state, no per-pixel cost. Try the direct assignment; if either
+// cross-pair exceeds 140deg, try the swap; if that also fails, fall back
+// to a single color (AlbumGradientMesh.parseColors already fans one color
+// into six shades cleanly), same fallback pickGradientColors uses for the
+// steady-state case.
+//
+// Exported and pure (no OKLab/canvas dependency beyond hexHueDeg above) so
+// it's unit-testable without mounting the component — see
+// src/test/resolveCrossfadeHex.test.js.
+export function resolveCrossfadeHex(outHex, inHex) {
+  if (outHex.length < 2 || inHex.length < 2) return inHex
+  const outA = hexHueDeg(outHex[0]), outB = hexHueDeg(outHex[1])
+  const inA  = hexHueDeg(inHex[0]),  inB  = hexHueDeg(inHex[1])
+  const directOk  = hueDeltaDeg(outA, inB) <= 140 && hueDeltaDeg(outB, inA) <= 140
+  if (directOk) return inHex
+  const swappedOk = hueDeltaDeg(outA, inA) <= 140 && hueDeltaDeg(outB, inB) <= 140
+  if (swappedOk) return [inHex[1], inHex[0]]
+  return [inHex[0]]
 }
 
 // (rotationFor — the per-cover orbit-assignment hash — removed 2026-08-03
@@ -402,6 +439,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
     const initial = parseColors(colors, NUM_BLOBS)
     st.current = {
       steadyRgb:  initial.map(c => [...c]),
+      steadyHex:  colors,
       outRgb:     initial.map(c => [...c]),
       inRgb:      initial.map(c => [...c]),
       blendStart: -1,
@@ -417,7 +455,14 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
     } else {
       s.outRgb = s.steadyRgb.map(c => [...c])
     }
-    s.inRgb      = parseColors(newHex, NUM_BLOBS)
+    // Cross-family crossfade gate (thinktank round 3) -- see
+    // resolveCrossfadeHex above. Resolves against whatever's actually
+    // steady on screen right now (s.steadyHex), not necessarily `colors`,
+    // since a blend can chain into another blend before the first
+    // completes.
+    const resolvedHex = resolveCrossfadeHex(s.steadyHex ?? [], newHex)
+    s.inHex      = resolvedHex
+    s.inRgb      = parseColors(resolvedHex, NUM_BLOBS)
     s.blendStart = performance.now()
     if (!rafRef.current && mountedRef.current) startLoop()
   }
@@ -454,7 +499,9 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
       pendingBlendRef.current = null
       const s = st.current
       s.inRgb     = parseColors(colors, NUM_BLOBS)
+      s.inHex     = colors
       s.steadyRgb = parseColors(colors, NUM_BLOBS)
+      s.steadyHex = colors
     } else {
       if (entranceActiveRef.current) { pendingBlendRef.current = { colors }; return }
       startBlendTo(colors)
@@ -505,6 +552,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
       liveColors = s.outRgb.map((c, i) => blendPairRgb(c, s.inRgb[i], t))
       if (t >= 1) {
         s.steadyRgb = s.inRgb.map(c => [...c])
+        s.steadyHex = s.inHex ?? s.steadyHex
         s.blendStart = -1
       }
     } else {

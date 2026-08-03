@@ -1,9 +1,16 @@
 import { useState, useEffect, useRef } from 'react'
 import { fmt, TimeField, SetMarkerButton } from './ScrubberControls'
+import { usePalette } from '../hooks/usePalette'
+import { snapToCompatibleHue } from '../lib/gradientColor'
 
 const MIN_CLIP_MS = 1000
 
-export default function SongDetailModal({ track, player, onUpdateTimes, onClose, moveOrCopySong, sets, activeId, onToast, isLiveShuffling, onStopLiveShuffle }) {
+// How many extracted-palette swatches to offer as one-tap picks, beyond the
+// server's own top color (index 0, which stays fixed — only the SECOND
+// gradient color is ever manually overridden, see LiveScreen.applyGradientOverride).
+const MAX_SWATCHES = 6
+
+export default function SongDetailModal({ track, player, onUpdateTimes, onUpdateGradientOverride, onClose, moveOrCopySong, sets, activeId, onToast, isLiveShuffling, onStopLiveShuffle }) {
   const { position, duration, seek, playTrack, pause, currentTrack, isPaused } = player
 
   const isActive = currentTrack?.uri === track.uri
@@ -23,6 +30,33 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose,
 
   const [startMs, setStartMs] = useState(track.startMs ?? 0)
   const [stopMs, setStopMs]   = useState(track.stopMs  ?? track.duration_ms ?? 0)
+
+  // Manual gradient-color override (2026-08-03, thinktank round 3, owner
+  // spec: "add the 2nd color picker to the album popup where the scrubber
+  // lives"). Local state + callback-on-change, same pattern as
+  // startMs/stopMs above — doesn't depend on the `track` prop refreshing
+  // from the parent after a save. Sourced from the album's own extracted
+  // palette (usePalette, same hook LiveScreen's gradient uses — same
+  // client-side cache, so this costs nothing extra) so the swatches are
+  // real colors from the cover, not an arbitrary wheel. baseColor is
+  // whatever the server would pick as color 1 (index 0) — the auto-snap
+  // barrier validates every manual pick against THIS, not against
+  // whatever's currently on screen, since color 0 is never itself overridden.
+  const { colors: paletteColors } = usePalette(track.album?.images?.[0]?.url)
+  const baseColor        = paletteColors?.[0]
+  const swatchCandidates = (paletteColors ?? []).slice(1, 1 + MAX_SWATCHES)
+  const [gradientOverride, setGradientOverride] = useState(track.gradientOverride ?? null)
+
+  const handlePickGradientColor = (hex) => {
+    if (!baseColor) return
+    const snapped = snapToCompatibleHue(baseColor, hex)
+    setGradientOverride(snapped)
+    onUpdateGradientOverride?.(track.id, snapped)
+  }
+  const handleResetGradientColor = () => {
+    setGradientOverride(null)
+    onUpdateGradientOverride?.(track.id, null)
+  }
 
   // Keep refs so handleClose always has current values even inside closures
   const startMsRef     = useRef(startMs)
@@ -233,6 +267,56 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onClose,
               </button>
             </div>
             <TimeField label="Out" value={stopMs}  minMs={Math.min(displayDuration, startMs + MIN_CLIP_MS)} maxMs={displayDuration} onChange={v => { setStopMs(v);  stopMsRef.current  = v; onUpdateTimes(track.id, startMsRef.current, v) }} />
+          </div>
+
+          {/* Manual gradient color override — auto-picks color 1 (index 0)
+              from the cover; this picker only ever sets/replaces color 2.
+              Every pick is auto-snapped into the compatible band against
+              color 1 (see handlePickGradientColor) so it can't reproduce
+              the muddy-corridor bug no matter what gets clicked. */}
+          <div className="mb-3 rounded-xl bg-white/[0.04] border border-white/[0.07] p-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] font-semibold text-white uppercase tracking-wide">Gradient color</span>
+              {gradientOverride && (
+                <button
+                  onClick={handleResetGradientColor}
+                  className="text-[10px] text-white hover:text-white cursor-pointer transition-colors duration-150"
+                >
+                  ↺ auto
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              {swatchCandidates.map((hex, i) => (
+                <button
+                  key={hex + i}
+                  onClick={() => handlePickGradientColor(hex)}
+                  title={hex}
+                  aria-label={`Use ${hex} as gradient color`}
+                  style={{ background: hex, transition: 'transform 160ms cubic-bezier(0.23,1,0.32,1)' }}
+                  className={`w-7 h-7 rounded-full cursor-pointer active:scale-[0.92] ${
+                    gradientOverride === hex ? 'ring-2 ring-white' : 'ring-1 ring-white/20'
+                  }`}
+                />
+              ))}
+              <label
+                className="w-7 h-7 rounded-full cursor-pointer relative overflow-hidden flex items-center justify-center ring-1 ring-white/20"
+                style={{
+                  background: gradientOverride && !swatchCandidates.includes(gradientOverride)
+                    ? gradientOverride
+                    : 'conic-gradient(from 0deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)',
+                }}
+                title="Pick a custom gradient color"
+              >
+                <input
+                  type="color"
+                  aria-label="Pick a custom gradient color"
+                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                  value={gradientOverride ?? '#888888'}
+                  onChange={e => handlePickGradientColor(e.target.value)}
+                />
+              </label>
+            </div>
           </div>
 
           {/* Move / Copy to another library */}

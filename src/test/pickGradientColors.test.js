@@ -31,13 +31,35 @@ describe('pickGradientColors (two prettiest, compatible)', () => {
     expect(result.colors).toEqual(['#ea513f', '#8460c8'])
   })
 
-  it('falls back to any distinct hue, then to index 1', () => {
-    // only near-duplicates and one far complement available -> takes the
-    // >=30 deg fallback (the complement) over showing one color twice
+  it('prefers a near-duplicate hue over a near-complementary one when neither is in-band', () => {
+    // 2026-08-03: this used to prefer the far complement ("better than
+    // showing one color twice"). That's backwards -- near-duplicates are
+    // the SAFE fallback (they blend into essentially one hue), and
+    // near-complementary is the muddy/gray-moat case this whole gate
+    // exists to reject. f0604f (~10 deg, near-dup) now wins over 2fd3c8
+    // (~180 deg, near-complementary).
     const onlyFar = pickGradientColors(['#ea513f', '#f0604f', '#2fd3c8'], [0.5, 0.3, 0.2])
-    expect(onlyFar.colors).toEqual(['#ea513f', '#2fd3c8'])
+    expect(onlyFar.colors).toEqual(['#ea513f', '#f0604f'])
     const onlyTwins = pickGradientColors(['#ea513f', '#f0604f', '#ee5a48'], [0.5, 0.3, 0.2])
     expect(onlyTwins.colors).toEqual(['#ea513f', '#f0604f'])
+  })
+
+  it('drops to a single color when every other candidate is near-complementary', () => {
+    const onlyComplement = pickGradientColors(['#ea513f', '#2fd3c8'], [0.5, 0.3])
+    expect(onlyComplement.colors).toEqual(['#ea513f'])
+    expect(onlyComplement.weights).toEqual([1])
+  })
+
+  it('gate now runs even at exactly 2 raw colors (the gate-bypass bug)', () => {
+    // Live-measured case: John Hollier & the Rêverie, "Somewhere Down the
+    // Road" -- api/palette.js returned exactly these 2 colors, 147.5 deg
+    // apart, and the OLD code skipped this function's hue check entirely
+    // whenever colors.length <= MAX_GRADIENT_COLORS, letting a
+    // near-complementary pair through untouched. It must now fall back to
+    // single-color instead of passing the muddy pair straight through.
+    const result = pickGradientColors(['#fac698', '#54aab9'], [0.57, 0.43])
+    expect(result.colors).toEqual(['#fac698'])
+    expect(result.weights).toEqual([1])
   })
 
   it('handles the empty/fallback case without throwing', () => {

@@ -445,7 +445,7 @@ const [newSetName, setNewSetName] = useState('')
       for (const [id, set] of Object.entries(prev.items)) {
         items[id] = {
           ...set,
-          songs: (set.songs ?? []).map(s => ({ ...slimTrack(s), startMs: s.startMs, stopMs: s.stopMs })),
+          songs: (set.songs ?? []).map(s => ({ ...slimTrack(s), startMs: s.startMs, stopMs: s.stopMs, gradientOverride: s.gradientOverride })),
         }
       }
       return { ...prev, items }
@@ -686,6 +686,16 @@ const [newSetName, setNewSetName] = useState('')
     setLibrary(prev => prev.map(t => t.id === id ? { ...t, startMs, stopMs } : t))
   }, [setLibrary])
 
+  // Manual gradient-color override (2026-08-03, thinktank round 3): a
+  // per-song hex the owner picked in SongDetailModal to replace the
+  // auto-extracted second gradient color, already auto-snapped to the
+  // 30-140deg compatible band (see src/lib/gradientColor.js) before it
+  // ever reaches here — this callback just stores whatever it's handed.
+  // hex === null clears the override, falling back to auto-pick.
+  const updateGradientOverride = useCallback((id, hex) => {
+    setLibrary(prev => prev.map(t => t.id === id ? { ...t, gradientOverride: hex } : t))
+  }, [setLibrary])
+
   const moveOrCopySong = useCallback((songId, destSetId, mode) => {
     setSets(prev => {
       const activeSongs = prev.items[prev.activeId]?.songs ?? []
@@ -697,7 +707,7 @@ const [newSetName, setNewSetName] = useState('')
         ...prev.items,
         [destSetId]: {
           ...prev.items[destSetId],
-          songs: [{ ...slimTrack(song), startMs: song.startMs, stopMs: song.stopMs }, ...destSongs],
+          songs: [{ ...slimTrack(song), startMs: song.startMs, stopMs: song.stopMs, gradientOverride: song.gradientOverride }, ...destSongs],
         },
       }
       if (mode === 'move') {
@@ -1233,6 +1243,7 @@ const [newSetName, setNewSetName] = useState('')
           track={modalTrack}
           player={player}
           onUpdateTimes={updateTimes}
+          onUpdateGradientOverride={updateGradientOverride}
           onClose={() => setModalTrack(null)}
           moveOrCopySong={moveOrCopySong}
           sets={sets}
