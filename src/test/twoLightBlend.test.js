@@ -5,6 +5,7 @@ import {
   mixWithSeam,
   oklabToRgb,
   prepareTwoLightBlend,
+  prepareTwoLightField,
   rgbToOklab,
 } from '../lib/twoLightBlend.js'
 
@@ -129,5 +130,22 @@ describe('prepareTwoLightBlend', () => {
     const blendPrepared = prepareTwoLightBlend('#ff0000', '#0000ff')
 
     expect(() => blendPrepared(distance, 1)).toThrow(TypeError)
+  })
+})
+
+describe('prepareTwoLightField', () => {
+  it('applies bounded lighter-center and darker-outer OKLab halos', () => {
+    const field = prepareTwoLightField('#804020', '#204080')
+    const center = field(0, 2)
+    const outer = field(0.9, 4)
+
+    for (const rgb of [center, outer]) {
+      expect(rgb).toHaveLength(3)
+      rgb.forEach(channel => expect(channel).toBeGreaterThanOrEqual(0))
+      rgb.forEach(channel => expect(channel).toBeLessThanOrEqual(255))
+      expect(rgb).not.toEqual([0, 0, 0])
+    }
+    expect(rgbToOklab(center)[0]).toBeGreaterThan(rgbToOklab(hexToRgb('#804020'))[0])
+    expect(rgbToOklab(outer)[0]).toBeLessThan(rgbToOklab(hexToRgb('#804020'))[0])
   })
 })

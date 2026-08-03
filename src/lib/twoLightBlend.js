@@ -15,6 +15,10 @@ function rgbToHex([r, g, b]) {
   return `#${channel(r)}${channel(g)}${channel(b)}`
 }
 
+function clampRgb(rgb) {
+  return rgb.map(value => Math.max(0, Math.min(255, Math.round(value))))
+}
+
 function srgbToLinear(c) { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4) }
 function linearToSrgb(c) { c = c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(Math.max(c, 0), 1 / 2.4) - 0.055; return Math.max(0, Math.min(255, c * 255)) }
 function cbrt(x) { return Math.sign(x) * Math.pow(Math.abs(x), 1 / 3) }
@@ -77,9 +81,9 @@ export function prepareTwoLightBlend(hexA, hexB) {
   }
 }
 
-function blendPreparedLights({ hexA, hexB, labA, labB, distA, distB }) {
-  if (distA === 0 && distB > 0) return hexA
-  if (distB === 0 && distA > 0) return hexB
+function blendPreparedLights({ hexA, hexB, labA, labB, distA, distB, asRgb = false }) {
+  if (distA === 0 && distB > 0 && !asRgb) return hexA
+  if (distB === 0 && distA > 0 && !asRgb) return hexB
 
   const rawWeightA = 1 / (distA + 0.001)
   const rawWeightB = 1 / (distB + 0.001)
@@ -95,12 +99,39 @@ function blendPreparedLights({ hexA, hexB, labA, labB, distA, distB }) {
     weightA,
     weightB,
   )
-  const result = rgbToHex(oklabToRgb(mixed))
+  const rgb = clampRgb(oklabToRgb(mixed))
+  const result = rgbToHex(rgb)
 
   if (result === '#000000' && hexA.toLowerCase() !== '#000000' && hexB.toLowerCase() !== '#000000') {
-    return lightnessA >= lightnessB ? hexA : hexB
+    return asRgb
+      ? hexToRgb(lightnessA >= lightnessB ? hexA : hexB)
+      : (lightnessA >= lightnessB ? hexA : hexB)
   }
-  return result
+  return asRgb ? rgb : result
+}
+
+// Prepared Canvas hot-path API. Each light's family is 10% lighter at its
+// center and 10% darker at the edge of its normalized radius. Color parsing
+// and sRGB-to-OKLab conversion happen once, while seam behavior continues to
+// use blendPreparedLights/mixWithSeam above.
+export function prepareTwoLightField(hexA, hexB) {
+  if (!/^#[0-9a-f]{6}$/i.test(hexA) || !/^#[0-9a-f]{6}$/i.test(hexB)) {
+    throw new TypeError('Two-light colors must be six-digit hex strings')
+  }
+  const baseA = rgbToOklab(hexToRgb(hexA))
+  const baseB = rgbToOklab(hexToRgb(hexB))
+
+  return (distA, distB) => {
+    if (!Number.isFinite(distA) || !Number.isFinite(distB)) {
+      throw new TypeError('Two-light distances must be finite numbers')
+    }
+    distA = Math.max(0, distA)
+    distB = Math.max(0, distB)
+    const halo = distance => 0.1 * (1 - 2 * Math.min(1, distance))
+    const labA = [Math.max(0, Math.min(1, baseA[0] + halo(distA))), baseA[1], baseA[2]]
+    const labB = [Math.max(0, Math.min(1, baseB[0] + halo(distB))), baseB[1], baseB[2]]
+    return blendPreparedLights({ hexA, hexB, labA, labB, distA, distB, asRgb: true })
+  }
 }
 
 export function blendTwoLights({ hexA, hexB, distA, distB }) {
