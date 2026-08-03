@@ -144,6 +144,8 @@ export function prepareTwoLightField(hexA, hexB, options = {}) {
   const brightnessAdjustment = options.brightnessAdjustment ?? 0
   const haloDepth = options.haloDepth ?? HALO_DELTA_L
   const seamBlend = options.seamBlend ?? 0.6
+  const populationA = Math.max(0.001, Number.isFinite(options.weightA) ? options.weightA : 0.5)
+  const populationB = Math.max(0.001, Number.isFinite(options.weightB) ? options.weightB : 0.5)
 
   function sampleInto(distA, distB, target, offset = 0) {
     if (!Number.isFinite(distA) || !Number.isFinite(distB)) {
@@ -153,8 +155,8 @@ export function prepareTwoLightField(hexA, hexB, options = {}) {
     distB = Math.max(0, distB)
     const lightnessA = Math.max(0, Math.min(1, baseAL + brightnessAdjustment + haloDepth * (1 - 2 * Math.min(1, distA))))
     const lightnessB = Math.max(0, Math.min(1, baseBL + brightnessAdjustment + haloDepth * (1 - 2 * Math.min(1, distB))))
-    const rawWeightA = 1 / (distA + 0.001)
-    const rawWeightB = 1 / (distB + 0.001)
+    const rawWeightA = populationA / (distA + 0.001)
+    const rawWeightB = populationB / (distB + 0.001)
     const weightSum = rawWeightA + rawWeightB
     const weightA = rawWeightA / weightSum
     const weightB = rawWeightB / weightSum

@@ -25,6 +25,15 @@ describe('GradientBackground scene preparation', () => {
     expect(scene.colors).toEqual(['#702070', '#d83a88'])
     expect(scene.ready).toBe(false)
   })
+
+  it('normalizes valid population weights and falls back to equal weights', () => {
+    expect(normalizeScene({
+      colors: ['#ff0000', '#0088ff'], weights: [8, 2],
+    }).weights).toEqual([0.8, 0.2])
+    expect(normalizeScene({
+      colors: ['#ff0000', '#0088ff'], weights: [Infinity, -1],
+    }).weights).toEqual([0.5, 0.5])
+  })
 })
 
 describe('makeLightParams', () => {
@@ -63,6 +72,23 @@ describe('whole-frame transition state', () => {
     })
     expect(state.blendStart).toBe(100)
     expect(state.incoming.artUrl).toBe('two.jpg')
+  })
+
+  it('includes weights in scene identity so weighted promotion does not restart', () => {
+    const weightedNext = { ...next, colors: ['#0088ff', '#ff00ff'], weights: [0.8, 0.2] }
+    let state = createTransitionState({ ...current, weights: [0.5, 0.5] })
+    state = updateTransitionState(state, {
+      current: { ...current, weights: [0.5, 0.5] }, next: weightedNext,
+      entranceActive: false, now: 100,
+    })
+    const identity = state.incoming.identity
+    state = updateTransitionState(state, {
+      current: weightedNext, next: { colors: ['#080808'] },
+      entranceActive: false, now: 250,
+    })
+    expect(state.current.identity).toBe(identity)
+    expect(state.current.weights).toEqual([0.8, 0.2])
+    expect(state.blendStart).toBe(100)
   })
 
   it('defers a ready upcoming scene during entrance and flushes it on release', () => {

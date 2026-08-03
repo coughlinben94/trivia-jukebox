@@ -49,17 +49,28 @@ function isNearBlack(hex) {
   return 0.299 * r + 0.587 * g + 0.114 * b < 32
 }
 
-export function normalizeScene({ colors = [], artUrl = '', shuffleKey = 0 } = {}) {
-  const valid = colors.filter(color => typeof color === 'string' && VALID_HEX.test(color))
+export function normalizeScene({ colors = [], weights = [], artUrl = '', shuffleKey = 0 } = {}) {
+  const valid = colors.map((color, index) => ({ color, weight: weights[index] }))
+    .filter(({ color }) => typeof color === 'string' && VALID_HEX.test(color))
   const allSentinel = valid.length > 0 && valid.length === colors.length &&
-    valid.every(color => color.toLowerCase() === SENTINEL)
-  const usable = valid.map(color => color.toLowerCase()).filter(color => color !== SENTINEL && !isNearBlack(color))
-  const normalized = usable.length >= 2 ? usable.slice(0, 2)
-    : usable.length === 1 ? [usable[0], usable[0]] : FALLBACK
-  const identity = `${shuffleKey}|${artUrl}|${normalized.join('|')}`
+    valid.every(({ color }) => color.toLowerCase() === SENTINEL)
+  const usable = valid.map(({ color, weight }) => ({ color: color.toLowerCase(), weight }))
+    .filter(({ color }) => color !== SENTINEL && !isNearBlack(color))
+  const selected = usable.length >= 2 ? usable.slice(0, 2)
+    : usable.length === 1 ? [usable[0], usable[0]]
+      : FALLBACK.map(color => ({ color, weight: undefined }))
+  const normalized = selected.map(({ color }) => color)
+  const rawWeights = selected.map(({ weight }) => weight)
+  const validWeights = rawWeights.every(weight => Number.isFinite(weight) && weight >= 0)
+  const totalWeight = validWeights ? rawWeights[0] + rawWeights[1] : 0
+  const normalizedWeights = totalWeight > 0
+    ? rawWeights.map(weight => weight / totalWeight)
+    : [0.5, 0.5]
+  const identity = `${shuffleKey}|${artUrl}|${normalized.join('|')}|${normalizedWeights.join('|')}`
   return {
     artUrl,
     colors: normalized,
+    weights: normalizedWeights,
     identity,
     ready: usable.length > 0 && !allSentinel,
     shuffleKey,
@@ -134,6 +145,8 @@ function drawScene(ctx, smallCtx, scene, timestamp, width, height) {
     brightnessAdjustment: brightnessAdjustment(),
     haloDepth: haloDepth(),
     seamBlend: seamBlend(),
+    weightA: scene.weights[0],
+    weightB: scene.weights[1],
   }))
   const image = scene.imageData || (scene.imageData = smallCtx.createImageData(TINY_SIZE, TINY_SIZE))
 
@@ -185,24 +198,20 @@ export function resizeCanvasesPreservingSnapshot(
 export default function GradientBackground({
   colors = [], nextColors = [], active = true, shuffleKey = 0,
   entranceActive = false, artUrl = '', nextArtUrl = '',
-  // Kept for drop-in parity. Two equal visual light bodies do not consume
-  // palette population weights.
-  weights: _weights, nextWeights: _nextWeights,
+  weights = [], nextWeights = [],
 }) {
-  void _weights
-  void _nextWeights
   const canvasesRef = useRef([])
-  const transitionRef = useRef(createTransitionState({ colors, artUrl, shuffleKey }))
+  const transitionRef = useRef(createTransitionState({ colors, weights, artUrl, shuffleKey }))
   const rafRef = useRef(null)
 
   useEffect(() => {
     transitionRef.current = updateTransitionState(transitionRef.current, {
-      current: { colors, artUrl, shuffleKey },
-      next: { colors: nextColors, artUrl: nextArtUrl, shuffleKey },
+      current: { colors, weights, artUrl, shuffleKey },
+      next: { colors: nextColors, weights: nextWeights, artUrl: nextArtUrl, shuffleKey },
       entranceActive,
       now: performance.now(),
     })
-  }, [artUrl, colors, entranceActive, nextArtUrl, nextColors, shuffleKey])
+  }, [artUrl, colors, entranceActive, nextArtUrl, nextColors, nextWeights, shuffleKey, weights])
 
   useEffect(() => {
     if (!active) return undefined

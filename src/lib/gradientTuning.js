@@ -151,26 +151,26 @@ export function exportSnippet() {
   const touched = DIALS.filter(d => isOverridden(d.id))
   if (!touched.length) { lines.push('// (no dials moved from default)'); return lines.join('\n') }
   if (isOverridden('BRIGHTNESS')) {
-    lines.push('', '// GradientBackground.jsx → prepareTwoLightField options:', `brightnessAdjustment: ${fmt(brightnessAdjustment())}`)
+    lines.push('', '// gradientTuning.js — replace brightnessAdjustment():', `export function brightnessAdjustment() { return ${fmt(brightnessAdjustment())} }`)
   }
   if (isOverridden('MOTION')) {
-    lines.push('', '// GradientBackground.jsx → makeLightParams:', `motionSpeed: ${fmt(motionSpeed())}`)
+    lines.push('', '// gradientTuning.js — replace motionSpeed():', `export function motionSpeed() { return ${fmt(motionSpeed())} }`)
   }
   if (isOverridden('SIZE')) {
-    lines.push('', '// GradientBackground.jsx → makeLightParams:', `lightRadius: ${fmt(lightRadius())}`)
+    lines.push('', '// gradientTuning.js — replace lightRadius():', `export function lightRadius() { return ${fmt(lightRadius())} }`)
   }
   if (isOverridden('BLEND')) {
-    lines.push('', '// twoLightBlend.js → prepareTwoLightField options:', `seamBlend: ${fmt(seamBlend())}`)
+    lines.push('', '// gradientTuning.js — replace seamBlend():', `export function seamBlend() { return ${fmt(seamBlend())} }`)
   }
   if (isOverridden('DEPTH')) {
-    lines.push('', '// twoLightBlend.js → prepareTwoLightField options:', `haloDepth: ${fmt(haloDepth())}`)
+    lines.push('', '// gradientTuning.js — replace haloDepth():', `export function haloDepth() { return ${fmt(haloDepth())} }`)
   }
   if (isOverridden('VARIETY')) {
     const cfg = varietyConfig()
-    lines.push('', '// api/palette.js — replace the MIN_COLORS/HUE_GAP_DEG in the const line:', `MIN_COLORS = ${cfg.MIN_COLORS}, HUE_GAP_DEG = ${cfg.HUE_GAP_DEG}`)
+    lines.push('', '// paletteDefaults.js — replace varietyToConfig() to freeze these values:', `export function varietyToConfig() { return { HUE_GAP_DEG: ${cfg.HUE_GAP_DEG}, MIN_COLORS: ${cfg.MIN_COLORS} } }`)
   }
   if (isOverridden('CROSSFADE')) {
-    lines.push('', '// GradientBackground.jsx — crossfade duration:', `const BLEND_DURATION_MS = ${Math.round(blendDurationMs())}`)
+    lines.push('', '// gradientTuning.js — replace blendDurationMs():', `export function blendDurationMs() { return ${Math.round(blendDurationMs())} }`)
   }
   return lines.join('\n')
 }

@@ -158,4 +158,17 @@ describe('prepareTwoLightField', () => {
     expect(rgbToOklab(center)[0]).toBeGreaterThan(rgbToOklab(hexToRgb('#804020'))[0])
     expect(rgbToOklab(outer)[0]).toBeLessThan(rgbToOklab(hexToRgb('#804020'))[0])
   })
+
+  it('biases the midpoint by population while each light still owns its center', () => {
+    const equal = prepareTwoLightField('#ff0000', '#0000ff')
+    const weighted = prepareTwoLightField('#ff0000', '#0000ff', { weightA: 0.8, weightB: 0.2 })
+    const red = rgbToOklab(hexToRgb('#ff0000'))
+    const distance = rgb => {
+      const lab = rgbToOklab(rgb)
+      return Math.hypot(lab[0] - red[0], lab[1] - red[1], lab[2] - red[2])
+    }
+
+    expect(distance(weighted(0.5, 0.5))).toBeLessThan(distance(equal(0.5, 0.5)))
+    expect(distance(weighted(1, 0))).toBeGreaterThan(distance(weighted(0, 1)))
+  })
 })
