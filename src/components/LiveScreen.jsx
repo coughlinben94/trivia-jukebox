@@ -67,127 +67,35 @@ const FONT_BODY    = "'DM Sans', system-ui, sans-serif"
 // a background box, and hold up against any hue the gradient lands on.
 const TEXT_SCRIM = '0 0 4px rgba(0,0,0,0.55), 0 0 10px rgba(0,0,0,0.45), 0 0 20px rgba(0,0,0,0.35)'
 
-// Weight-based selection (2026-07-30, replaces the OKLab-distance 2-colors-
-// 3-max cap from earlier the same day, which itself replaced a hue-delta-
-// only version). Per the deep-debug root-cause review: capping to 2-3
-// regardless of how many real distinct colors palette.js found was itself
-// the core bug on covers like Sub-Radio's "1990something" -- the server
-// correctly extracted 5 genuinely distinct hues (yellow/teal/coral/purple/
-// pink), and every version of this function so far threw 3 of them away,
-// because the old rule only ever reached past index 2 when the top 2 were
-// "too close." Busy, colorful covers -- the ones a cap like that should
-// matter LEAST for -- got hit every time; a live scan found every cover
-// with 3+ real color families got clipped to 2, while the "reach for a
-// 3rd" trigger only ever fired on covers that already had 2 or fewer.
-//
-// Now that api/palette.js returns a real `weights` array (population-
-// derived, see buildWeights() there), there's no need to guess how many
-// colors are "safe" to show — pass all of them through, sorted by weight
-// so the least-significant colors are what gets dropped if there are more
-// colors than the mesh has blobs to represent (NUM_BLOBS, 6 -- importing
-// the renderer's own constant here would create a circular import between
-// LiveScreen and AlbumGradientMesh, so it's duplicated as
-// MAX_GRADIENT_COLORS; keep both in sync if NUM_BLOBS ever changes).
-// TWO PRETTIEST, COMPATIBLE (2026-08-03 — the owner's spec, stated on
-// 07-30 and finally implemented in full): the screen shows exactly TWO
-// colors per song. History of the cap: 6 (diluted colors into lone-blob
-// fish), 3 (every 3-color cover has multiple cross-hue meeting zones —
-// blue+orange+green covers grew a gray cancellation mass at the triple
-// junction, owner: "that gray is soooo ugly"). At 2, there is ONE
-// color relationship on screen, and the renderer fans each color into
-// tonal shades for depth (see AlbumGradientMesh.parseColors).
-//
-// Selection is by PRETTINESS + COMPATIBILITY, not population:
-//  · colors[] arrives in api/palette.js's score order (chroma ranked,
-//    ugly-browns penalized, population-tempered) — index 0 is the
-//    server's best-looking color. Take it.
-//  · The partner is the highest-ranked color whose OKLab hue sits
-//    30°–140° away: closer than 30° reads as one color (no second color
-//    on screen — the original complaint); farther than ~140° is
-//    near-complementary, and near-complementary pairs are what cancel
-//    into gray moats under Cartesian blending (measured repeatedly this
-//    week). If nothing lands in the band, fall back to the first color
-//    ≥30° away, then to index 1 — always two entries out when two exist.
-// GATE-BYPASS FIX (2026-08-03, live-diagnosed): the hue-compatibility gate
-// below used to be skipped entirely whenever api/palette.js returned
-// MAX_GRADIENT_COLORS or fewer, on the assumption that "nothing to choose
-// between" meant nothing to check. That's wrong when the server itself only
-// ever found 2 colors and they happen to be hue-distant -- exactly what
-// happened live on John Hollier & the Rêverie's "Somewhere Down the Road"
-// (#fac698 peach / #54aab9 teal, measured 147.5° apart -- a hair past this
-// gate's own 140° ceiling) and read on screen as the "muddy" corridor
-// complaint. The gate now always runs, on however many colors actually
-// exist, colors.length===2 included.
-const MAX_GRADIENT_COLORS = 2
-function oklabHueDeg(hex) {
-  const lin = v => { v = parseInt(v, 16) / 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4) }
-  const r = lin(hex.slice(1, 3)), g = lin(hex.slice(3, 5)), b = lin(hex.slice(5, 7))
-  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
-  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
-  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
-  const a = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s
-  const bb = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s
-  return (Math.atan2(bb, a) * 180 / Math.PI + 360) % 360
+// colors[] arrives in the server's prettiness order. Use the first two
+// exactly, preserving their relative population weights. Near-black colors
+// are replaced before rendering so palette fallbacks cannot black out a scene.
+const safeGradientColor = hex => {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return 0.299 * r + 0.587 * g + 0.114 * b < 60 ? '#ff2fb0' : hex
 }
-const hueDelta = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d }
+
 export function pickGradientColors(colors, weights) {
-  if (colors.length <= 1) return { colors, weights }
-  const h0 = oklabHueDeg(colors[0])
-  let partner = -1
-  for (let i = 1; i < colors.length; i++) {
-    if (hueDelta(h0, oklabHueDeg(colors[i])) >= 30 && hueDelta(h0, oklabHueDeg(colors[i])) <= 140) { partner = i; break }
+  if (!colors.length) return { colors: [], weights: [] }
+  if (colors.length === 1) {
+    const color = safeGradientColor(colors[0])
+    return { colors: [color, color], weights: [0.5, 0.5] }
   }
-  // Tier 2 (2026-08-03, replaces the old unbounded ">=30, no ceiling"
-  // fallback): if nothing landed in the compatible band, prefer a
-  // near-duplicate hue (<30 deg) over a near-complementary one (>140 deg).
-  // Near-duplicates blend into essentially the same hue -- safe, just less
-  // varied. Near-complementary is the documented gray-moat case this whole
-  // gate exists to prevent. The old fallback here had NO upper bound at
-  // all, which is exactly what let a >140 pair through as "better than
-  // nothing" -- including, critically, the exactly-2-colors case that used
-  // to skip this function's checks entirely (see the gate-bypass note
-  // above). It wasn't better. It was the bug (measured live: John Hollier's
-  // #fac698/#54aab9 at 147.5 deg).
-  if (partner === -1) for (let i = 1; i < colors.length; i++) {
-    if (hueDelta(h0, oklabHueDeg(colors[i])) < 30) { partner = i; break }
-  }
-  // RE-REVERSED same night (2026-08-03): the "always show 2 colors, trust
-  // the chroma floor" attempt above lasted about ten minutes live before
-  // causing a WORSE regression -- song-to-song transitions flashing
-  // black/gray for a beat. Root cause (not yet fully confirmed, see below):
-  // this branch used to be nearly dead code, because pickGradientColors
-  // returned a single color often enough that AlbumGradientMesh's
-  // resolveCrossfadeHex (its own outHex.length<2 early return) skipped its
-  // hue math on most transitions entirely. Making this branch return 2
-  // colors far more often meant resolveCrossfadeHex started actually
-  // running its OKLab hue comparisons on every transition -- including
-  // against usePalette's near-black FALLBACK_COLORS (#080808) during the
-  // brief window before a real fetch resolves, where hue is numerically
-  // unstable (near-zero a/b -> atan2 noise) and can send resolveCrossfadeHex
-  // down its own single-color fallback mid-crossfade. Reverted to the
-  // single-color fallback here rather than chase that theory live --
-  // AlbumGradientMesh.parseColors fans one color into six shades cleanly,
-  // so this is a real, renderer-supported fallback, not a degraded state.
-  if (partner === -1) return { colors: [colors[0]], weights: [1] }
-  const w0 = weights?.[0] ?? 0.5, w1 = weights?.[partner] ?? 0.5
+  const w0 = weights?.[0] ?? 0.5, w1 = weights?.[1] ?? 0.5
   const s = w0 + w1
-  return { colors: [colors[0], colors[partner]], weights: [w0 / s, w1 / s] }
+  const normalizedWeights = s > 0 ? [w0 / s, w1 / s] : [0.5, 0.5]
+  return { colors: colors.slice(0, 2).map(safeGradientColor), weights: normalizedWeights }
 }
 
 // Manual gradient-color override (2026-08-03, thinktank round 3): if the
 // owner has picked a color for this song in SongDetailModal, it REPLACES
-// pickGradientColors' auto-picked partner entirely rather than being
-// filtered through the same hue gate again — it's already been auto-snapped
-// into the compatible band at picker-set time (src/lib/gradientColor.js),
-// against this exact rawColors[0], so re-gating it here would be redundant
-// at best and, if the server's color-0 ranking ever shifts slightly between
-// requests, could reject a perfectly valid saved override. colors[0] always
-// stays the server's own top pick — only the second color is ever
-// overridden, matching the picker's own "auto first color, manual second"
-// framing.
+// pickGradientColors' auto-picked partner. Preserve the sanitized auto-picked
+// primary so a raw near-black server color cannot bypass the render safeguard.
 export function applyGradientOverride(autoPicked, rawColors, overrideHex) {
   if (!overrideHex || !rawColors.length) return autoPicked
-  return { colors: [rawColors[0], overrideHex], weights: [0.5, 0.5] }
+  return { colors: [autoPicked.colors[0], overrideHex], weights: [0.5, 0.5] }
 }
 
 function preloadImage(url) {

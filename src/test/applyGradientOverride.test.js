@@ -20,4 +20,10 @@ describe('applyGradientOverride', () => {
     const auto = { colors: [], weights: [] }
     expect(applyGradientOverride(auto, [], '#3355ff')).toBe(auto)
   })
+
+  it('preserves the sanitized auto-picked primary when applying an override', () => {
+    const auto = { colors: ['#ff2fb0', '#e8a33d'], weights: [0.7, 0.3] }
+    const result = applyGradientOverride(auto, ['#080808', '#e8a33d'], '#3355ff')
+    expect(result).toEqual({ colors: ['#ff2fb0', '#3355ff'], weights: [0.5, 0.5] })
+  })
 })
