@@ -139,22 +139,24 @@ export function pickGradientColors(colors, weights) {
   if (partner === -1) for (let i = 1; i < colors.length; i++) {
     if (hueDelta(h0, oklabHueDeg(colors[i])) < 30) { partner = i; break }
   }
-  // REVERSED same night (2026-08-03, live-diagnosed): this used to drop to
-  // a single color here. That was itself the bug, one layer up from the
-  // one this whole gate was built to fix. Two live songs in a row ("Out
-  // Tonight"/Penelope Road, measured #c77f6e/#134b4f at 168deg; "When You
-  // Were Mine") rendered as a flat monochrome shade-fan and read as "way
-  // more one color" and "not random" (a single-color fan also halves the
-  // blob motion's visual complexity -- only one family is doing anything).
-  // Both complaints traced to this one line. The muddy-corridor risk this
-  // fallback existed to prevent is now handled at the RENDERER
-  // (AlbumGradientMesh's MESH_CHROMA_FLOOR, shipped earlier the same
-  // session) instead of by refusing to show a second color at all -- so
-  // falling back to the next-ranked color regardless of hue (the pre-gate
-  // legacy behavior) is safe again now that mud is handled downstream. If
-  // muddy corridors resurface as a live complaint, raise
-  // gradientTuning.js's BRIGHTNESS-dial floor, don't re-add this.
-  if (partner === -1) partner = 1
+  // RE-REVERSED same night (2026-08-03): the "always show 2 colors, trust
+  // the chroma floor" attempt above lasted about ten minutes live before
+  // causing a WORSE regression -- song-to-song transitions flashing
+  // black/gray for a beat. Root cause (not yet fully confirmed, see below):
+  // this branch used to be nearly dead code, because pickGradientColors
+  // returned a single color often enough that AlbumGradientMesh's
+  // resolveCrossfadeHex (its own outHex.length<2 early return) skipped its
+  // hue math on most transitions entirely. Making this branch return 2
+  // colors far more often meant resolveCrossfadeHex started actually
+  // running its OKLab hue comparisons on every transition -- including
+  // against usePalette's near-black FALLBACK_COLORS (#080808) during the
+  // brief window before a real fetch resolves, where hue is numerically
+  // unstable (near-zero a/b -> atan2 noise) and can send resolveCrossfadeHex
+  // down its own single-color fallback mid-crossfade. Reverted to the
+  // single-color fallback here rather than chase that theory live --
+  // AlbumGradientMesh.parseColors fans one color into six shades cleanly,
+  // so this is a real, renderer-supported fallback, not a degraded state.
+  if (partner === -1) return { colors: [colors[0]], weights: [1] }
   const w0 = weights?.[0] ?? 0.5, w1 = weights?.[partner] ?? 0.5
   const s = w0 + w1
   return { colors: [colors[0], colors[partner]], weights: [w0 / s, w1 / s] }
