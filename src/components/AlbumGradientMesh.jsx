@@ -140,63 +140,17 @@ function hexToRgb(hex) {
   ]
 }
 
-// Found 2026-07-30: blob motion (baseX/baseY/frequencies/phases from
-// makeBlobParams) is memoized with an EMPTY dependency array — verified
-// numerically, e.g. blob index 0 always orbits around baseX=0.771/
-// baseY=0.175 (never reaches the bottom or left edge — max extent is
-// x:[0.44,1.10] y:[-0.16,0.51]), while blob index 4 always orbits around
-// baseX=0.108/baseY=0.692 (range x:[-0.22,0.44] y:[0.36,1.02] — the one
-// whose fixed path actually sweeps the bottom-left corner). That per-mount
-// fixed-orbit memoization is intentional and stays untouched — it's what
-// gives the tuning board's "same six bodies" continuity.
-//
-// The actual structural bug is one level up: draw() always pulled each
-// blob's color as oklabColors[i % oklabColors.length], and this function
-// always filled that array as src[i % src.length] — so blob index 0 (a
-// FIXED orbit path, same every song, same every page load) always got
-// colors[0]. api/palette.js hands colors[] back most-vivid-first, so the
-// single most-interesting hue was pinned to whichever screen region blob
-// 0's fixed orbit happens to cover, forever, on every single song — a
-// structural artifact ("hard-edged magenta pool always in the same corner"
-// / "blue pool always behind the record"), not per-song bad luck.
-//
-// Fix: rotate which palette index feeds which blob slot, per palette (not
-// per pixel/frame) — a deterministic hash of the incoming array's first hex
-// string, mod the array length. Deterministic (not Math.random() or a
-// mount-time counter) so re-rendering the SAME album cover always resolves
-// to the SAME mapping — no flicker if this function gets called twice for
-// one song — but DIFFERENT covers almost always hash to a different
-// rotation, which is enough to stop one fixed blob slot from being the
-// eternal home of colors[0]. Critically, this only changes which index of
-// hexArr gets READ here — it can't destabilize the crossfade contract in
-// startBlendTo/draw, because by the time blendPairRgb() runs, outRgb[i]/
-// inRgb[i] are already-resolved RGB triplets sitting in blob-index slots;
-// blendPairRgb blends two concrete colors per slot and has no notion of
-// (and no dependency on) which palette index either one came from, or
-// whether the rotation differed between the outgoing and incoming call.
-function rotationFor(src, mod = src.length) {
-  if (!src.length || !mod) return 0
-  const hex = src[0] || '#000000'
-  let sum = 0
-  for (let k = 1; k < hex.length; k++) sum += hex.charCodeAt(k)
-  return sum % mod
-}
+// (rotationFor — the per-cover orbit-assignment hash — removed 2026-08-03
+// with the two-family shade fan below: assignment is now FIXED so every
+// song runs identical motion, per the owner's spec. Git history has it.)
 
-// Equal split RESTORED 2026-07-30 (owner call, end of the weighted-palette
-// day): every palette color gets an equal alternating share of the 6 blobs
-// — src[(i+rot) % len] — the exact math that was live on 2026-07-27 and
-// remembered as "looked real nice." The weight-driven blob allocation that
-// replaced it earlier today (Hamilton apportionment + greedy arena
-// assignment) measured 22/30 covers broken in a 30-cover live audit: a
-// 15%-weight color got exactly 1 of 6 blobs, and 1 blob is either
-// INVISIBLE (mean 2% frame share — it loses the chroma-weighted hue vote
-// everywhere but its own core; reported as "one color on screen") or a
-// LONE ORBITING DISC (a compact pool circling one fixed orbit all song;
-// reported as "lava lamp" / "blue blob going round and round"). Equal
-// split scored 27/30 clean on the same covers, same math, same frames.
-// Weights still order the palette server-side (most-dominant first) and
-// still gate LiveScreen's >6-color cap; the renderer just no longer sizes
-// by them. The weights/nextWeights props stay accepted-and-unused so the
+// History (2026-07-30): equal alternating split replaced weight-driven
+// blob allocation, which measured 22/30 covers broken (lone-blob discs /
+// invisible colors) in a 30-cover live audit. The shade fan below keeps
+// the equal-split geometry with two color families.
+// Weights still order the palette server-side and still feed LiveScreen's
+// pair selection; the renderer no longer sizes by them.
+// The weights/nextWeights props stay accepted-and-unused so the
 // engine A/B contract with LiveScreen needs no change.
 //
 // With modulo assignment over the fixed antipodal arenas ((0,1),(2,3),
@@ -208,10 +162,37 @@ function rotationFor(src, mod = src.length) {
 // palette size. That stabilizer is the one piece of the weighted-era work
 // that stays: it fixes a measured 07-27 defect (0.29→0.72 share swings)
 // without changing the look class.
+// TWO-FAMILY SHADE FAN (2026-08-03 — the owner's spec, verbatim: "pull the
+// 2 prettiest colors from each album cover... gradiented 5%-10% in both
+// directions to give depth and difference"). pickGradientColors
+// (LiveScreen.jsx) hands this at most TWO colors — the server's
+// best-looking pick plus its most compatible partner. Each family fans
+// into dark/mid/light shades (±SHADE_DL OKLab lightness), filling the six
+// blobs as [A-dark, B-dark, A-mid, B-mid, A-light, B-light]: families
+// alternate so every antipodal arena stays an A-vs-B duel (balance
+// pinned), and tonal depth lives across arenas. Same-family shade seams
+// are gorgeous by construction (cousins); only ONE cross-family
+// relationship exists on the whole screen, chosen compatible upstream.
+// Single-color palettes fan into six shades of the one color — monochrome
+// depth instead of a flat wash.
+//
+// Assignment is FIXED — the per-cover rotation hash is gone. It made
+// "the math change song to song" (owner-reported): each cover dealt
+// colors onto different orbit personalities. Now every song runs the
+// same motion; only the colors swap in. (The hash existed to stop one
+// palette index from owning one corner forever in the 6-distinct-color
+// era; with two families alternating over antipodal pairs, both families
+// cover the whole canvas symmetrically and the concern is moot.)
+const SHADE_DL = 0.07 // ±7% OKLab lightness — inside the owner's 5-10%
+function shadeOf(rgb, dl) {
+  const [L, a, b] = rgbToOklab(rgb)
+  return oklabToRgb([Math.min(0.93, Math.max(0.12, L + dl)), a, b])
+}
 function parseColors(hexArr, n) {
   const src = hexArr.length ? hexArr : ['#080808']
-  const rot = rotationFor(src, src.length)
-  return Array.from({ length: n }, (_, i) => [...hexToRgb(src[(i + rot) % src.length])])
+  const fam = [hexToRgb(src[0]), hexToRgb(src[1] ?? src[0])]
+  const dls = [-SHADE_DL, 0, SHADE_DL]
+  return Array.from({ length: n }, (_, i) => shadeOf(fam[i % 2], dls[Math.floor(i / 2) % 3]))
 }
 
 // (HSL helper functions for the per-pixel mud guard lived here 07-30..08-03;
@@ -257,14 +238,8 @@ function oklabToRgb([L, a, b]) {
   return [linearToSrgb(r), linearToSrgb(g), linearToSrgb(bb)]
 }
 
-function rgbToOklch(rgb) {
-  const [L, a, b] = rgbToOklab(rgb)
-  return [L, Math.sqrt(a * a + b * b), Math.atan2(b, a)]
-}
-
-function oklchToRgb(L, C, H) {
-  return oklabToRgb([L, C * Math.cos(H), C * Math.sin(H)])
-}
+// (rgbToOklch/oklchToRgb removed 2026-08-03 — only the LCh crossfade used
+// them; see blendPairRgb.)
 
 // Bakes a small tile of random black/white 1px dots ONCE and returns a
 // repeating canvas pattern, instead of the 700 individual fillRect() calls
@@ -293,14 +268,7 @@ function makeGrainPattern(ctx) {
   return ctx.createPattern(tile, 'repeat')
 }
 
-// Shortest-arc hue interpolation (radians) — without this, lerping hue
-// straight (e.g. 10° -> 350°) sweeps the LONG way around the wheel through
-// every hue in between instead of the short 20° hop.
-function hueLerp(h1, h2, t) {
-  let delta = h2 - h1
-  delta = ((delta + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI
-  return h1 + delta * t
-}
+// (hueLerp removed 2026-08-03 with the LCh crossfade — see blendPairRgb.)
 
 // Found 2026-07-28 (same day as the spatial-blend hue/chroma fix below, same
 // root cause): the song-to-song crossfade (outRgb -> inRgb, one color per
@@ -314,9 +282,17 @@ function hueLerp(h1, h2, t) {
 // the shortest arc, instead of lerping the raw RGB channels or the raw a/b
 // vector (either of which can cancel toward gray the same way).
 function blendPairRgb(rgbA, rgbB, t) {
-  const [La, Ca, Ha] = rgbToOklch(rgbA)
-  const [Lb, Cb, Hb] = rgbToOklch(rgbB)
-  return oklchToRgb(lerp(La, Lb, t), lerp(Ca, Cb, t), hueLerp(Ha, Hb, t))
+  // Straight OKLab lerp (2026-08-03) — the "dimmer switch" crossfade. The
+  // previous LCh shortest-arc version WALKED THE HUE WHEEL between songs:
+  // a blob fading blue→red wore vivid violet and magenta for ~5s of every
+  // intro (owner: "4-5 diff colors pop up" — verified with rendered fade
+  // strips: three slots touring orange/magenta/cyan simultaneously).
+  // Componentwise OKLab interpolation passes through a muted middle
+  // instead — never a hue that neither song owns. Same fix, same
+  // reasoning as the spatial Cartesian revert; the warm-sludge case that
+  // originally justified LCh is handled palette-side (deuglify).
+  const a = rgbToOklab(rgbA), b = rgbToOklab(rgbB)
+  return oklabToRgb([lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)])
 }
 
 // Cheap 2D pseudo-noise (sum of offset sines) — not simplex, but visually
@@ -583,7 +559,12 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], weight
     // guarantee against hard edges. Overdraw slightly past the canvas bounds
     // so the blur doesn't create a visible vignette from sampling outside
     // the source.
-    ctx.filter = 'blur(24px)'
+    // 24 -> 12 (2026-08-03, owner: "have them meet more abruptly without
+    // that spacing in the middle"; Emil: blur masks transitions but stays
+    // subtle — heavy blur reads as two objects overlapping, which is
+    // exactly the mushy corridor complaint). 12px still guarantees no
+    // pixel-hard edge; the per-pixel wobble supplies the organic contour.
+    ctx.filter = 'blur(12px)'
     ctx.clearRect(0, 0, W, H)
     const pad = Math.max(W, H) * 0.06
     ctx.drawImage(small, -pad, -pad, W + pad * 2, H + pad * 2)

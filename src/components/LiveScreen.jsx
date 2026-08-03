@@ -76,34 +76,53 @@ const TEXT_SCRIM = '0 0 4px rgba(0,0,0,0.55), 0 0 10px rgba(0,0,0,0.45), 0 0 20p
 // the renderer's own constant here would create a circular import between
 // LiveScreen and AlbumGradientMesh, so it's duplicated as
 // MAX_GRADIENT_COLORS; keep both in sync if NUM_BLOBS ever changes).
-// 6 → 3 (2026-07-30, late): with the equal alternating blob split restored
-// in AlbumGradientMesh, a 5-6 color palette dilutes each color to ~1 of 6
-// blobs — recreating in miniature the exact 1-blob failure the equal-split
-// restore killed (a lone bright core wandering a field, live-reported as
-// "fishes swimming," worst on neon-vivid covers; and colors effectively
-// missing, live-reported as "look at the blue" on Texas Hill's "Easy on
-// the Eyes" — its #00d3ff cyan was IN the palette but held 1 blob among 4
-// louder families). At 3 colors the split is always 2/2/2 — every color
-// owns a full antipodal arena, no lone blobs can exist — which is exactly
-// the configuration the 30-cover audit measured cleanest (27/30). Top 3
-// by weight keeps the cover's dominant families; a genuinely-5-hue cover
-// keeps its three biggest.
-const MAX_GRADIENT_COLORS = 3
+// TWO PRETTIEST, COMPATIBLE (2026-08-03 — the owner's spec, stated on
+// 07-30 and finally implemented in full): the screen shows exactly TWO
+// colors per song. History of the cap: 6 (diluted colors into lone-blob
+// fish), 3 (every 3-color cover has multiple cross-hue meeting zones —
+// blue+orange+green covers grew a gray cancellation mass at the triple
+// junction, owner: "that gray is soooo ugly"). At 2, there is ONE
+// color relationship on screen, and the renderer fans each color into
+// tonal shades for depth (see AlbumGradientMesh.parseColors).
+//
+// Selection is by PRETTINESS + COMPATIBILITY, not population:
+//  · colors[] arrives in api/palette.js's score order (chroma ranked,
+//    ugly-browns penalized, population-tempered) — index 0 is the
+//    server's best-looking color. Take it.
+//  · The partner is the highest-ranked color whose OKLab hue sits
+//    30°–140° away: closer than 30° reads as one color (no second color
+//    on screen — the original complaint); farther than ~140° is
+//    near-complementary, and near-complementary pairs are what cancel
+//    into gray moats under Cartesian blending (measured repeatedly this
+//    week). If nothing lands in the band, fall back to the first color
+//    ≥30° away, then to index 1 — always two entries out when two exist.
+const MAX_GRADIENT_COLORS = 2
+function oklabHueDeg(hex) {
+  const lin = v => { v = parseInt(v, 16) / 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4) }
+  const r = lin(hex.slice(1, 3)), g = lin(hex.slice(3, 5)), b = lin(hex.slice(5, 7))
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+  const a = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s
+  const bb = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s
+  return (Math.atan2(bb, a) * 180 / Math.PI + 360) % 360
+}
+const hueDelta = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d }
 export function pickGradientColors(colors, weights) {
   if (!colors.length) return { colors, weights }
   if (colors.length <= MAX_GRADIENT_COLORS) return { colors, weights }
-  const paired = colors.map((hex, i) => [hex, weights[i]]).sort((a, b) => b[1] - a[1])
-  const top = paired.slice(0, MAX_GRADIENT_COLORS)
-  const keptWeight = top.reduce((s, [, w]) => s + w, 0)
-  return {
-    colors: top.map(([hex]) => hex),
-    // Renormalize so the kept colors' weights still sum to 1 after dropping
-    // the tail -- otherwise a heavily-truncated palette (8 colors -> 6)
-    // would hand the renderer weights that only sum to ~0.9, silently
-    // shrinking every blob instead of the dropped colors' share going to
-    // the ones that survived.
-    weights: top.map(([, w]) => w / keptWeight),
+  const h0 = oklabHueDeg(colors[0])
+  let partner = -1
+  for (let i = 1; i < colors.length; i++) {
+    if (hueDelta(h0, oklabHueDeg(colors[i])) >= 30 && hueDelta(h0, oklabHueDeg(colors[i])) <= 140) { partner = i; break }
   }
+  if (partner === -1) for (let i = 1; i < colors.length; i++) {
+    if (hueDelta(h0, oklabHueDeg(colors[i])) >= 30) { partner = i; break }
+  }
+  if (partner === -1) partner = 1
+  const w0 = weights?.[0] ?? 0.5, w1 = weights?.[partner] ?? 0.5
+  const s = w0 + w1
+  return { colors: [colors[0], colors[partner]], weights: [w0 / s, w1 / s] }
 }
 
 function preloadImage(url) {

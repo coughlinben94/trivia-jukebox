@@ -1,37 +1,43 @@
 import { describe, it, expect } from 'vitest'
 import { pickGradientColors } from '../components/LiveScreen.jsx'
 
-// MAX_GRADIENT_COLORS went 6 -> 3 on 2026-07-30 (late): under the equal
-// alternating blob split, 5-6 palette colors dilute to ~1 blob each — the
-// same lone-blob failure the equal-split restore killed, in miniature
-// (live: "fishes swimming", "look at the blue"). At 3 the split is always
-// 2/2/2 — every color owns a full antipodal arena. The old tests here
-// (5-color passthrough, the "1990something keeps all 5" regression test)
-// encoded the 6-cap design and were retired with it: dropping to the top
-// 3 by weight is now the intended behavior, not a regression.
-describe('pickGradientColors (top-3-by-weight cap)', () => {
-  it('passes through untouched at or under 3 colors', () => {
-    const colors = ['#fec50d', '#1ea48f', '#ff8e84']
-    const weights = [0.5, 0.3, 0.2]
+// TWO PRETTIEST, COMPATIBLE (2026-08-03, owner spec). colors[] arrives in
+// the server's prettiness (score) order. Keep index 0; partner = highest-
+// ranked color whose OKLab hue is 30-140 deg away (closer reads as one
+// color; near-complementary cancels to gray). Fallbacks: first >=30 deg,
+// then index 1. Earlier cap eras (6, then 3) and their tests are retired —
+// see the spec doc's addenda for why each died.
+describe('pickGradientColors (two prettiest, compatible)', () => {
+  it('passes through at or under 2 colors', () => {
+    const colors = ['#ea513f', '#7b92d9']
+    const weights = [0.7, 0.3]
     expect(pickGradientColors(colors, weights)).toEqual({ colors, weights })
   })
 
-  it('keeps the top 3 by weight from a 5-color palette, renormalized', () => {
-    const colors = ['#fec50d', '#1ea48f', '#ff8e84', '#8348bc', '#e48bc3']
-    const weights = [0.35, 0.3, 0.2, 0.1, 0.05]
-    const result = pickGradientColors(colors, weights)
-    expect(result.colors).toEqual(['#fec50d', '#1ea48f', '#ff8e84'])
-    expect(result.weights.reduce((s, w) => s + w, 0)).toBeCloseTo(1, 5)
-    // relative order of kept weights preserved
-    expect(result.weights[0]).toBeGreaterThan(result.weights[1])
-    expect(result.weights[1]).toBeGreaterThan(result.weights[2])
+  it('skips a near-duplicate hue for a compatible partner', () => {
+    // red first; #f0604f is the same red family (~10 deg away) and must be
+    // skipped; #e8a33d gold (~55 deg) is the first in-band partner.
+    const colors = ['#ea513f', '#f0604f', '#e8a33d', '#3a6fd8']
+    const result = pickGradientColors(colors, [0.4, 0.3, 0.2, 0.1])
+    expect(result.colors).toEqual(['#ea513f', '#e8a33d'])
+    expect(result.weights[0] + result.weights[1]).toBeCloseTo(1, 5)
   })
 
-  it('sorts by weight, not input order, when picking the top 3', () => {
-    const colors = ['#111111', '#222222', '#333333', '#444444']
-    const weights = [0.1, 0.4, 0.2, 0.3]
-    const result = pickGradientColors(colors, weights)
-    expect(result.colors).toEqual(['#222222', '#444444', '#333333'])
+  it('skips a near-complementary hue for a compatible partner', () => {
+    // red first; #2fd3c8 teal sits ~180 deg away (gray-moat pair) and must
+    // be skipped even though it ranks higher than the in-band violet.
+    const colors = ['#ea513f', '#2fd3c8', '#8460c8']
+    const result = pickGradientColors(colors, [0.5, 0.3, 0.2])
+    expect(result.colors).toEqual(['#ea513f', '#8460c8'])
+  })
+
+  it('falls back to any distinct hue, then to index 1', () => {
+    // only near-duplicates and one far complement available -> takes the
+    // >=30 deg fallback (the complement) over showing one color twice
+    const onlyFar = pickGradientColors(['#ea513f', '#f0604f', '#2fd3c8'], [0.5, 0.3, 0.2])
+    expect(onlyFar.colors).toEqual(['#ea513f', '#2fd3c8'])
+    const onlyTwins = pickGradientColors(['#ea513f', '#f0604f', '#ee5a48'], [0.5, 0.3, 0.2])
+    expect(onlyTwins.colors).toEqual(['#ea513f', '#f0604f'])
   })
 
   it('handles the empty/fallback case without throwing', () => {
