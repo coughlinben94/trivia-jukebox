@@ -55,15 +55,26 @@ function renderModal(trackOverrides = {}, playerOverrides = {}, handlers = {}) {
 }
 
 describe('Gradient color override', () => {
-  it('saves the exact valid color selected by the user', () => {
+  it('saves the exact valid color selected by the user for color 2', () => {
     const onUpdateGradientOverride = vi.fn()
     renderModal({}, {}, { onUpdateGradientOverride })
 
-    fireEvent.change(screen.getByLabelText('Pick a custom gradient color'), {
+    fireEvent.change(screen.getByLabelText('Pick a custom color 2'), {
       target: { value: '#abcdef' },
     })
 
-    expect(onUpdateGradientOverride).toHaveBeenCalledWith('track-1', '#abcdef')
+    expect(onUpdateGradientOverride).toHaveBeenCalledWith('track-1', 2, '#abcdef')
+  })
+
+  it('saves the exact valid color selected by the user for color 1', () => {
+    const onUpdateGradientOverride = vi.fn()
+    renderModal({}, {}, { onUpdateGradientOverride })
+
+    fireEvent.change(screen.getByLabelText('Pick a custom color 1'), {
+      target: { value: '#abcdef' },
+    })
+
+    expect(onUpdateGradientOverride).toHaveBeenCalledWith('track-1', 1, '#abcdef')
   })
 })
 

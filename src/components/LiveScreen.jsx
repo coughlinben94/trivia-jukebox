@@ -1,15 +1,12 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, memo } from 'react'
 import { motion, useAnimation } from 'framer-motion'
-// TEMP (2026-08-04, owner request): swapped back to the pre-mesh circle-blobs
-// engine as it stood at commit 043b3ed (2026-07-13, last commit before the
-// 5-day gap to 07-18 -- "circa July 15, the build before a long break in
-// deploys"). Scoped intentionally to ONLY this import -- every non-background
-// fix that shipped in the weeks since (playback races, Trivia OS handoff,
-// title display, etc.) stays on current. Goal is to look at this live and
-// chip away at real issues from here, not a permanent revert -- see
-// AlbumGradient.jsx's own file history for why it was replaced in the first
-// place before reintroducing any of its old bugs.
-import GradientBackground from './AlbumGradient'
+// 2026-08-04, owner request: after looking at the pre-mesh circle-blobs
+// engine live (AlbumGradient.jsx, temp-revert earlier this session), the
+// 'screen' composite blob centers read as washed-out/white -- switched to
+// AlbumGradientMesh.jsx instead, revived from an early mesh commit and
+// adapted for the app's current 2-color-max picker-driven model (see that
+// file's header for the full history and what was fixed vs. the original).
+import GradientBackground from './AlbumGradientMesh'
 import { usePalette } from '../hooks/usePalette'
 import { displayName } from '../lib/track'
 
@@ -77,14 +74,19 @@ export function pickGradientColors(colors, weights) {
   return { colors: colors.slice(0, 2).map(safeGradientColor), weights: normalizeGradientWeights(weights) }
 }
 
-// Manual gradient-color override (2026-08-03, thinktank round 3): if the
-// owner has picked a color for this song in SongDetailModal, it REPLACES
-// pickGradientColors' auto-picked partner. Preserve the sanitized auto-picked
-// primary so a raw near-black server color cannot bypass the render safeguard.
-export function applyGradientOverride(autoPicked, rawColors, overrideHex) {
-  if (!overrideHex || !rawColors.length) return autoPicked
+// Manual gradient-color override (2026-08-03, thinktank round 3; extended
+// 2026-08-04 to cover color 1 too): if the owner has picked a color for this
+// song in SongDetailModal, it REPLACES pickGradientColors' auto-picked
+// color at that slot. overrideHex1 replaces colors[0] (field name
+// `gradientOverride1`), overrideHex2 replaces colors[1] (field name
+// `gradientOverride`, kept as-is for backward compat with songs saved
+// before color 1 was overridable). Either, both, or neither may be set.
+export function applyGradientOverride(autoPicked, rawColors, overrideHex1, overrideHex2) {
+  if ((!overrideHex1 && !overrideHex2) || !rawColors.length) return autoPicked
   if (autoPicked.colors.length && autoPicked.colors.every(color => color === LOADING_SENTINEL)) return autoPicked
-  return { colors: [autoPicked.colors[0], safeGradientColor(overrideHex)], weights: [0.5, 0.5] }
+  const color1 = overrideHex1 ? safeGradientColor(overrideHex1) : autoPicked.colors[0]
+  const color2 = overrideHex2 ? safeGradientColor(overrideHex2) : autoPicked.colors[1]
+  return { colors: [color1, color2], weights: [0.5, 0.5] }
 }
 
 function preloadImage(url) {
@@ -145,7 +147,8 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // onUpcomingTrack only ever handed the art URL through before; the full
   // song object it receives already carries gradientOverride, this just
   // also captures that instead of discarding the rest of the object.
-  const [upcomingGradientOverride, setUpcomingGradientOverride] = useState(null)
+  const [upcomingGradientOverride, setUpcomingGradientOverride]   = useState(null)
+  const [upcomingGradientOverride1, setUpcomingGradientOverride1] = useState(null)
   const [textInstant, setTextInstant]     = useState(false)
   const [closing, setClosing]             = useState(false)
   const [entranceActive, setEntranceActive] = useState(true)
@@ -224,12 +227,12 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // already intends. useMemo restores the same stable-unless-really-changed
   // reference usePalette itself provides.
   const palette = useMemo(
-    () => applyGradientOverride(pickGradientColors(paletteColorsFull, paletteWeightsFull), paletteColorsFull, shown?.gradientOverride),
-    [paletteColorsFull, paletteWeightsFull, shown?.gradientOverride]
+    () => applyGradientOverride(pickGradientColors(paletteColorsFull, paletteWeightsFull), paletteColorsFull, shown?.gradientOverride1, shown?.gradientOverride),
+    [paletteColorsFull, paletteWeightsFull, shown?.gradientOverride1, shown?.gradientOverride]
   )
   const upcomingPalette = useMemo(
-    () => applyGradientOverride(pickGradientColors(upcomingPaletteColorsFull, upcomingPaletteWeightsFull), upcomingPaletteColorsFull, upcomingGradientOverride),
-    [upcomingPaletteColorsFull, upcomingPaletteWeightsFull, upcomingGradientOverride]
+    () => applyGradientOverride(pickGradientColors(upcomingPaletteColorsFull, upcomingPaletteWeightsFull), upcomingPaletteColorsFull, upcomingGradientOverride1, upcomingGradientOverride),
+    [upcomingPaletteColorsFull, upcomingPaletteWeightsFull, upcomingGradientOverride1, upcomingGradientOverride]
   )
 
   const tonearmCtrl = useAnimation()
@@ -248,6 +251,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
     onUpcomingTrack?.((song) => {
       setUpcomingArtUrl(song?.album?.images?.[0]?.url ?? null)
       setUpcomingGradientOverride(song?.gradientOverride ?? null)
+      setUpcomingGradientOverride1(song?.gradientOverride1 ?? null)
     })
     return () => onUpcomingTrack?.(null)
   }, [onUpcomingTrack])

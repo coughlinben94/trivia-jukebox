@@ -4,10 +4,13 @@ import { usePalette } from '../hooks/usePalette'
 
 const MIN_CLIP_MS = 1000
 
-// How many extracted-palette swatches to offer as one-tap picks, beyond the
-// server's own top color (index 0, which stays fixed — only the SECOND
-// gradient color is ever manually overridden, see LiveScreen.applyGradientOverride).
+// How many extracted-palette swatches to offer as one-tap picks for each
+// color slot (2026-08-04: both color 1 and color 2 are now manually
+// overridable, see LiveScreen.applyGradientOverride).
 const MAX_SWATCHES = 6
+
+// Simple RGB->hex, used by the cover-art eyedropper.
+const rgbToHex = (r, g, b) => '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')
 
 export default function SongDetailModal({ track, player, onUpdateTimes, onUpdateGradientOverride, onClose, moveOrCopySong, sets, activeId, onToast, isLiveShuffling, onStopLiveShuffle }) {
   const { position, duration, seek, playTrack, pause, currentTrack, isPaused } = player
@@ -30,29 +33,71 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onUpdate
   const [startMs, setStartMs] = useState(track.startMs ?? 0)
   const [stopMs, setStopMs]   = useState(track.stopMs  ?? track.duration_ms ?? 0)
 
-  // Manual gradient-color override (2026-08-03, thinktank round 3, owner
-  // spec: "add the 2nd color picker to the album popup where the scrubber
-  // lives"). Local state + callback-on-change, same pattern as
-  // startMs/stopMs above — doesn't depend on the `track` prop refreshing
-  // from the parent after a save. Sourced from the album's own extracted
-  // palette (usePalette, same hook LiveScreen's gradient uses — same
-  // client-side cache, so this costs nothing extra) so the swatches are
-  // real colors from the cover, not an arbitrary wheel. baseColor is
-  // whatever the server picks as color 1 (index 0); color 0 is never manually
-  // overridden.
+  // Manual gradient-color override (2026-08-03, thinktank round 3; extended
+  // 2026-08-04 to let color 1 be picked too, plus a cover-art eyedropper).
+  // Local state + callback-on-change, same pattern as startMs/stopMs above —
+  // doesn't depend on the `track` prop refreshing from the parent after a
+  // save. Sourced from the album's own extracted palette (usePalette, same
+  // hook LiveScreen's gradient uses — same client-side cache, so this costs
+  // nothing extra) so the swatches are real colors from the cover, not an
+  // arbitrary wheel. autoColor1/autoColor2 are whatever the server picks by
+  // default; either can be manually overridden independently.
   const { colors: paletteColors } = usePalette(track.album?.images?.[0]?.url)
-  const baseColor        = paletteColors?.[0]
-  const swatchCandidates = (paletteColors ?? []).slice(1, 1 + MAX_SWATCHES)
-  const [gradientOverride, setGradientOverride] = useState(track.gradientOverride ?? null)
+  const autoColor1       = paletteColors?.[0]
+  const autoColor2       = paletteColors?.[1]
+  const swatchCandidates = (paletteColors ?? []).slice(0, MAX_SWATCHES)
+  const [gradientOverride1, setGradientOverride1] = useState(track.gradientOverride1 ?? null)
+  const [gradientOverride2, setGradientOverride2] = useState(track.gradientOverride  ?? null)
 
-  const handlePickGradientColor = (hex) => {
-    if (!baseColor) return
-    setGradientOverride(hex)
-    onUpdateGradientOverride?.(track.id, hex)
+  // Which color slot (1 or 2) is currently "armed" to sample from the cover
+  // art on next click, or null when the eyedropper is idle. Mirrored into a
+  // ref because the Escape-key listener below is registered once on mount
+  // (stable deps) and would otherwise close over a stale null forever.
+  const [armedSlot, setArmedSlot] = useState(null)
+  const armedSlotRef = useRef(null)
+  useEffect(() => { armedSlotRef.current = armedSlot }, [armedSlot])
+  const coverImgRef  = useRef(null)
+
+  const handlePickGradientColor = (slot, hex) => {
+    if (slot === 1) { setGradientOverride1(hex); onUpdateGradientOverride?.(track.id, 1, hex) }
+    else            { setGradientOverride2(hex); onUpdateGradientOverride?.(track.id, 2, hex) }
   }
-  const handleResetGradientColor = () => {
-    setGradientOverride(null)
-    onUpdateGradientOverride?.(track.id, null)
+
+  // Cover-art eyedropper: only active while a slot is armed. Reads the
+  // clicked pixel off the already-rendered <img> via an offscreen canvas —
+  // confirmed 2026-08-04 that Spotify's image CDN (i.scdn.co) sends CORS
+  // headers permitting crossOrigin="anonymous" canvas reads, so this needs
+  // no server round-trip. Accounts for object-contain's letterboxing so a
+  // click in the blank padding around a non-square cover is ignored rather
+  // than sampling the wrong pixel.
+  const handleCoverClick = (e) => {
+    const slot = armedSlotRef.current
+    const el   = coverImgRef.current
+    if (!slot || !el || !el.naturalWidth) return
+
+    const rect  = el.getBoundingClientRect()
+    const scale = Math.min(rect.width / el.naturalWidth, rect.height / el.naturalHeight)
+    const renderedW = el.naturalWidth  * scale
+    const renderedH = el.naturalHeight * scale
+    const offsetX = (rect.width  - renderedW) / 2
+    const offsetY = (rect.height - renderedH) / 2
+    const x = e.clientX - rect.left - offsetX
+    const y = e.clientY - rect.top  - offsetY
+    if (x < 0 || y < 0 || x > renderedW || y > renderedH) return  // clicked the letterbox padding, not the art
+
+    try {
+      const canvas = document.createElement('canvas')
+      canvas.width  = el.naturalWidth
+      canvas.height = el.naturalHeight
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(el, 0, 0)
+      const [r, g, b] = ctx.getImageData(Math.floor(x / scale), Math.floor(y / scale), 1, 1).data
+      handlePickGradientColor(slot, rgbToHex(r, g, b))
+    } catch {
+      onToast?.('Could not sample that color — try again')
+    } finally {
+      setArmedSlot(null)
+    }
   }
 
   // Keep refs so handleClose always has current values even inside closures
@@ -141,11 +186,14 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onUpdate
   useEffect(() => {
     const h = (e) => {
       if (e.repeat) return
-      if (e.key === 'Escape') handleCloseRef.current()
+      if (e.key === 'Escape') {
+        if (armedSlotRef.current) { setArmedSlot(null); return }  // cancel eyedropper first, don't close the modal under it
+        handleCloseRef.current()
+      }
     }
     window.addEventListener('keydown', h)
     return () => window.removeEventListener('keydown', h)
-  }, [])  // stable: h always calls handleCloseRef.current which is always current
+  }, [])  // stable: h always calls handleCloseRef.current / armedSlotRef.current, both always current
 
   return (
     <div
@@ -168,10 +216,20 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onUpdate
           )}
           {img && (
             <img
+              ref={coverImgRef}
               src={img.url}
               alt=""
-              className="relative mx-auto h-full object-contain drop-shadow-2xl"
+              crossOrigin="anonymous"
+              onClick={handleCoverClick}
+              className={`relative mx-auto h-full object-contain drop-shadow-2xl ${armedSlot ? 'cursor-crosshair' : ''}`}
             />
+          )}
+          {armedSlot && (
+            <div className="absolute inset-x-0 bottom-2 flex justify-center">
+              <span className="px-2.5 py-1 rounded-full bg-black/70 text-white text-[10px] font-medium">
+                tap the cover to pick color {armedSlot} · esc to cancel
+              </span>
+            </div>
           )}
           <button
             onClick={handleClose}
@@ -266,51 +324,71 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onUpdate
             <TimeField label="Out" value={stopMs}  minMs={Math.min(displayDuration, startMs + MIN_CLIP_MS)} maxMs={displayDuration} onChange={v => { setStopMs(v);  stopMsRef.current  = v; onUpdateTimes(track.id, startMsRef.current, v) }} />
           </div>
 
-          {/* Manual gradient color override — color 1 remains automatic from
-              the cover; this picker saves the exact chosen color as color 2. */}
+          {/* Manual gradient color override — colors 1 and 2 both pickable,
+              independently: palette swatches, a custom wheel, or the
+              droplet button which arms the cover-art eyedropper above. */}
           <div className="mb-3 rounded-xl bg-white/[0.04] border border-white/[0.07] p-3">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] font-semibold text-white uppercase tracking-wide">Gradient color</span>
-              {gradientOverride && (
-                <button
-                  onClick={handleResetGradientColor}
-                  className="text-[10px] text-white hover:text-white cursor-pointer transition-colors duration-150"
-                >
-                  ↺ auto
-                </button>
-              )}
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              {swatchCandidates.map((hex, i) => (
-                <button
-                  key={hex + i}
-                  onClick={() => handlePickGradientColor(hex)}
-                  title={hex}
-                  aria-label={`Use ${hex} as gradient color`}
-                  style={{ background: hex, transition: 'transform 160ms cubic-bezier(0.23,1,0.32,1)' }}
-                  className={`w-7 h-7 rounded-full cursor-pointer active:scale-[0.92] ${
-                    gradientOverride === hex ? 'ring-2 ring-white' : 'ring-1 ring-white/20'
-                  }`}
-                />
-              ))}
-              <label
-                className="w-7 h-7 rounded-full cursor-pointer relative overflow-hidden flex items-center justify-center ring-1 ring-white/20"
-                style={{
-                  background: gradientOverride && !swatchCandidates.includes(gradientOverride)
-                    ? gradientOverride
-                    : 'conic-gradient(from 0deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)',
-                }}
-                title="Pick a custom gradient color"
-              >
-                <input
-                  type="color"
-                  aria-label="Pick a custom gradient color"
-                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                  value={gradientOverride ?? '#888888'}
-                  onChange={e => handlePickGradientColor(e.target.value)}
-                />
-              </label>
-            </div>
+            <span className="block text-[10px] font-semibold text-white uppercase tracking-wide mb-2">Gradient colors</span>
+            {[1, 2].map(slot => {
+              const override = slot === 1 ? gradientOverride1 : gradientOverride2
+              const auto     = slot === 1 ? autoColor1        : autoColor2
+              const current  = override ?? auto
+              return (
+                <div key={slot} className="flex items-center gap-2 flex-wrap mb-2 last:mb-0">
+                  <span className="text-[10px] text-white w-11 shrink-0">Color {slot}</span>
+                  <button
+                    onClick={() => setArmedSlot(s => s === slot ? null : slot)}
+                    title="Pick from cover art"
+                    aria-label={`Pick color ${slot} from cover art`}
+                    style={{ background: current ?? '#333', transition: 'transform 160ms cubic-bezier(0.23,1,0.32,1)' }}
+                    className={`w-7 h-7 rounded-full cursor-pointer flex items-center justify-center active:scale-[0.92] ${
+                      armedSlot === slot ? 'ring-2 ring-accent' : 'ring-1 ring-white/20'
+                    }`}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinejoin="round" style={{ filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.8))' }}>
+                      <path d="M19 3a3 3 0 0 1 0 4.24l-9.5 9.5-4.5 1 1-4.5 9.5-9.5A3 3 0 0 1 19 3z" />
+                    </svg>
+                  </button>
+                  {swatchCandidates.map((hex, i) => (
+                    <button
+                      key={hex + i}
+                      onClick={() => handlePickGradientColor(slot, hex)}
+                      title={hex}
+                      aria-label={`Use ${hex} as color ${slot}`}
+                      style={{ background: hex, transition: 'transform 160ms cubic-bezier(0.23,1,0.32,1)' }}
+                      className={`w-7 h-7 rounded-full cursor-pointer active:scale-[0.92] ${
+                        current === hex ? 'ring-2 ring-white' : 'ring-1 ring-white/20'
+                      }`}
+                    />
+                  ))}
+                  <label
+                    className="w-7 h-7 rounded-full cursor-pointer relative overflow-hidden flex items-center justify-center ring-1 ring-white/20"
+                    style={{
+                      background: override && !swatchCandidates.includes(override)
+                        ? override
+                        : 'conic-gradient(from 0deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)',
+                    }}
+                    title={`Pick a custom color ${slot}`}
+                  >
+                    <input
+                      type="color"
+                      aria-label={`Pick a custom color ${slot}`}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                      value={override ?? current ?? '#888888'}
+                      onChange={e => handlePickGradientColor(slot, e.target.value)}
+                    />
+                  </label>
+                  {override && (
+                    <button
+                      onClick={() => handlePickGradientColor(slot, null)}
+                      className="text-[10px] text-white hover:text-white cursor-pointer transition-colors duration-150"
+                    >
+                      ↺ auto
+                    </button>
+                  )}
+                </div>
+              )
+            })}
           </div>
 
           {/* Move / Copy to another library */}

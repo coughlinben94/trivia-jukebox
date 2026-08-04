@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Jukebox — entrance / overtake motion studies</title>
+<style>
+  :root{ --bg:#0a0a0c; --panel:#141416; --line:#26262a; --text:#eee; --dim:#8a8a92; }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif; padding:24px; }
+  h1{font-size:18px; font-weight:600; margin:0 0 4px;}
+  h2{font-size:14px; font-weight:600; margin:32px 0 4px;}
+  .sub{color:var(--dim); font-size:13px; margin:0 0 8px; max-width:720px; line-height:1.5;}
+  .row{display:flex; gap:16px; flex-wrap:wrap; margin-top:12px;}
+  .cell{width:300px;}
+  canvas{ width:300px; height:169px; border-radius:8px; display:block; background:#000;
+    box-shadow:0 0 0 1px var(--line); }
+  .label{font-size:12px; font-weight:600; margin-top:8px;}
+  .desc{font-size:12px; color:var(--dim); line-height:1.45; margin-top:2px;}
+  button{ padding:6px 11px; border-radius:6px; border:1px solid var(--line);
+    background:#1c1c1f; color:var(--text); font-size:11px; cursor:pointer; margin-top:8px; }
+  button:hover{border-color:#555;}
+  .tag{display:inline-block; font-size:10px; color:#666; border:1px solid var(--line);
+    border-radius:4px; padding:1px 5px; margin-left:6px;}
+</style>
+</head>
+<body>
+
+<h1>Entrance / overtake motion studies</h1>
+<p class="sub">Layout's locked, so this drops the record + text — just the field itself, ported directly from the live GradientBackground.jsx math (same noise, same OKLab two-pool blend, same anchor drift/rate-limited-angle clamp). Column 1 in each row is the current live mechanism as a reference point; the others are alternates to react to. Each loops on its own — nothing to click except replay.</p>
+
+<h2>Entrance — first color arriving on a black screen</h2>
+<div class="row" id="entranceRow"></div>
+
+<h2>Song-to-song overtake — new colors replacing old</h2>
+<div class="row" id="overtakeRow"></div>
+
+<script>
+/* ============================================================
+   Ported 1:1 from src/lib/flowNoise.js, twoLightBlend.js
+   (prepareTwoPoolField), gradientTuning.js defaults (DEPTH/SIZE/
+   BLEND/MOTION all at 50 -> the shipped default), and
+   GradientBackground.jsx's makeLightParams/computeAnchorPositions.
+   ============================================================ */
+
+function makeFlowNoise2D(seed) {
+  let s = seed >>> 0;
+  const rand = () => { s ^= s << 13; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+  const perm = new Uint8Array(512);
+  const p = Array.from({length:256}, (_,i)=>i);
+  for (let i=255;i>0;i--){ const j=Math.floor(rand()*(i+1)); const tmp=p[i]; p[i]=p[j]; p[j]=tmp; }
+  for (let i=0;i<512;i++) perm[i]=p[i&255];
+  const grad = [[1,1],[-1,1],[1,-1],[-1,-1],[1,0],[-1,0],[0,1],[0,-1]];
+  const fade = t => t*t*t*(t*(t*6-15)+10);
+  const lerp = (a,b,t) => a+(b-a)*t;
+  function noise(x,y){
+    const X=Math.floor(x)&255, Y=Math.floor(y)&255;
+    const xf=x-Math.floor(x), yf=y-Math.floor(y);
+    const gradAt=(ix,iy)=>grad[perm[(perm[ix&255]+iy)&255]&7];
+    const dot=(gv,gx,gy)=>gv[0]*gx+gv[1]*gy;
+    const n00=dot(gradAt(X,Y),xf,yf), n10=dot(gradAt(X+1,Y),xf-1,yf);
+    const n01=dot(gradAt(X,Y+1),xf,yf-1), n11=dot(gradAt(X+1,Y+1),xf-1,yf-1);
+    const u=fade(xf), v=fade(yf);
+    return lerp(lerp(n00,n10,u), lerp(n01,n11,u), v);
+  }
+  function fbm(x,y,octaves=2){
+    let value=0, amp=0.5, freq=1;
+    for(let i=0;i<octaves;i++){ value+=amp*noise(x*freq,y*freq); freq*=2; amp*=0.5; }
+    return value;
+  }
+  return { noise, fbm };
+}
+
+function srgbToLinear(c){ c/=255; return c<=0.04045 ? c/12.92 : Math.pow((c+0.055)/1.055,2.4); }
+function linearToSrgb(c){ c = c<=0.0031308 ? c*12.92 : 1.055*Math.pow(Math.max(c,0),1/2.4)-0.055; return Math.max(0,Math.min(255,c*255)); }
+function cbrt(x){ return Math.sign(x)*Math.pow(Math.abs(x),1/3); }
+function hexToRgb(hex){ return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)]; }
+function rgbToOklab([r,g,b]){
+  r=srgbToLinear(r); g=srgbToLinear(g); b=srgbToLinear(b);
+  const l=0.4122214708*r+0.5363325363*g+0.0514459929*b;
+  const m=0.2119034982*r+0.6806995451*g+0.1073969566*b;
+  const s=0.0883024619*r+0.2817188376*g+0.6299787005*b;
+  const l_=cbrt(l), m_=cbrt(m), s_=cbrt(s);
+  return [
+    0.2104542553*l_+0.7936177850*m_-0.0040720468*s_,
+    1.9779984951*l_-2.4285922050*m_+0.4505937099*s_,
+    0.0259040371*l_+0.7827717662*m_-0.8086757660*s_,
+  ];
+}
+function writeOklabToRgb(L,a,b,target,offset){
+  const lRoot=L+0.3963377774*a+0.2158037573*b;
+  const mRoot=L-0.1055613458*a-0.0638541728*b;
+  const sRoot=L-0.0894841775*a-1.2914855480*b;
+  const l=lRoot*lRoot*lRoot, m=mRoot*mRoot*mRoot, s=sRoot*sRoot*sRoot;
+  target[offset]=linearToSrgb(4.0767416621*l-3.3077115913*m+0.2309699292*s);
+  target[offset+1]=linearToSrgb(-1.2684380046*l+2.6097574011*m-0.3413193965*s);
+  target[offset+2]=linearToSrgb(-0.0041960863*l-0.7034186147*m+1.7076147010*s);
+}
+function seamEased(weightA,weightB){ const balance=1-Math.abs(weightA-weightB); return balance*balance*(3-2*balance); }
+function smoothstep(edge0,edge1,x){ const t=Math.max(0,Math.min(1,(x-edge0)/(edge1-edge0))); return t*t*(3-2*t); }
+
+function prepareTwoPoolField(hexA, hexB, options={}){
+  const [La0,aA,bA] = rgbToOklab(hexToRgb(hexA));
+  const [Lb0,aB,bB] = rgbToOklab(hexToRgb(hexB));
+  const brightnessAdjustment = options.brightnessAdjustment ?? 0;
+  const La = Math.max(0,Math.min(1,La0+brightnessAdjustment));
+  const Lb = Math.max(0,Math.min(1,Lb0+brightnessAdjustment));
+  const seamWidth = Math.max(0.02, options.seamWidth ?? 0.05);
+  const glowDeltaL = options.glowDeltaL ?? 0.08;
+  const populationA = options.weightA ?? 0.5, populationB = options.weightB ?? 0.5;
+  const totalPop = populationA+populationB;
+  const bias = totalPop>0 ? ((populationA/totalPop)-0.5)*0.5 : 0;
+  function sampleInto(signedField, shade, target, offset=0){
+    const blendT = smoothstep(-seamWidth+bias, seamWidth+bias, signedField);
+    let L = La*(1-blendT)+Lb*blendT;
+    const a = aA*(1-blendT)+aB*blendT;
+    const b = bA*(1-blendT)+bB*blendT;
+    const eased = seamEased(1-blendT, blendT);
+    L += (Math.min(1,L+glowDeltaL)-L)*eased;
+    L = Math.max(0,Math.min(1,L+(Number.isFinite(shade)?shade:0)));
+    writeOklabToRgb(L,a,b,target,offset);
+    target[offset+3]=255;
+  }
+  // Fable-consultant catch (2026-08-04): O3's invasion mask was mixing an
+  // alpha-composited layer OVER a whole separate scene -- sRGB averaging
+  // between two unrelated fields, not the field's own OKLab seam. That's a
+  // second, foreign blend stacked on top of the one this app actually has,
+  // and it's what read as "colors overlapping and making new colors."
+  // sampleLab exposes the pre-RGB (L,a,b) triple so an OUTER caller (the
+  // invasion boundary between two whole scenes) can run through the exact
+  // same OKLab lerp + glow this field already uses at its own internal
+  // seam, instead of inventing a different blend mechanism.
+  function sampleLab(signedField, shade){
+    const blendT = smoothstep(-seamWidth+bias, seamWidth+bias, signedField);
+    let L = La*(1-blendT)+Lb*blendT;
+    const a = aA*(1-blendT)+aB*blendT;
+    const b = bA*(1-blendT)+bB*blendT;
+    const eased = seamEased(1-blendT, blendT);
+    L += (Math.min(1,L+glowDeltaL)-L)*eased;
+    L = Math.max(0,Math.min(1,L+(Number.isFinite(shade)?shade:0)));
+    return [L,a,b];
+  }
+  return { sampleInto, sampleLab };
+}
+
+// Defaults at DEPTH/SIZE/BLEND/MOTION = 50 (shipped values)
+const FBM_PEAK = 0.53;
+const WOBBLE_AMOUNT = 0.106;
+const SHADE_AMOUNT = 0.105;
+const ANCHOR_AMPLITUDE = 0.15;
+const MOTION_SPEED = 1.2;
+const MIN_ANCHOR_SEPARATION = 0.35;
+const MAX_ANGLE_STEP_DEG_PER_SEC = 240;
+const SHADE_SPATIAL_FREQ = 1.3;
+const TINY = 48;
+
+function hashString(value){
+  let hash=2166136261;
+  for(let i=0;i<value.length;i++){ hash^=value.charCodeAt(i); hash=Math.imul(hash,16777619); }
+  return hash>>>0;
+}
+
+function makeLightParams(seedStr){
+  let seed = hashString(seedStr);
+  const rng = () => { seed += 0x6d2b79f5; let v=seed; v=Math.imul(v^(v>>>15), v|1); v^=v+Math.imul(v^(v>>>7), v|61); return ((v^(v>>>14))>>>0)/4294967296; };
+  const amp = ANCHOR_AMPLITUDE;
+  const baseAX = 0.25+rng()*0.5, baseAY = 0.25+rng()*0.5;
+  const baseSep = 0.45+rng()*0.25, baseAngle = rng()*Math.PI*2;
+  const bases = [
+    {baseX:baseAX, baseY:baseAY},
+    {baseX:baseAX+Math.cos(baseAngle)*baseSep, baseY:baseAY+Math.sin(baseAngle)*baseSep},
+  ];
+  return bases.map(base => ({
+    ...base,
+    ampX: amp+(rng()-0.5)*amp*0.4, ampY: amp+(rng()-0.5)*amp*0.4,
+    freqX: (0.35+rng()*0.2)*MOTION_SPEED, freqY: (0.3+rng()*0.2)*MOTION_SPEED,
+    phaseX: rng()*Math.PI*2, phaseY: rng()*Math.PI*2,
+    driftPhaseX: rng()*1000, driftPhaseY: rng()*1000,
+    driftFreqMult: 0.7+rng()*0.6,
+  }));
+}
+
+function computeAnchorPositions(lights, t, wobbleNoise, state){
+  const [a,b] = lights;
+  const driftFor = light => {
+    const freqMult = light.driftFreqMult ?? 1;
+    return {
+      dx: wobbleNoise.fbm(t*0.025*freqMult+light.driftPhaseX, t*0.017*freqMult+0.31, 2)/FBM_PEAK*light.ampX*2.8,
+      dy: wobbleNoise.fbm(t*0.021*freqMult+light.driftPhaseY, t*0.014*freqMult+0.77, 2)/FBM_PEAK*light.ampY*2.8,
+    };
+  };
+  const driftA = driftFor(a), driftB = driftFor(b);
+  const speedMod = 1+(wobbleNoise.fbm(t*0.016+271.3, t*0.012+613.7, 2)/FBM_PEAK)*0.15;
+  let ax = a.baseX+Math.sin(t*a.freqX*speedMod+a.phaseX)*a.ampX+driftA.dx;
+  let ay = a.baseY+Math.sin(t*a.freqY*speedMod+a.phaseY)*a.ampY+driftA.dy;
+  let bx = b.baseX+Math.sin(t*b.freqX*speedMod+b.phaseX)*b.ampX+driftB.dx;
+  let by = b.baseY+Math.sin(t*b.freqY*speedMod+b.phaseY)*b.ampY+driftB.dy;
+
+  const rawMidX=(ax+bx)/2, rawMidY=(ay+by)/2;
+  const squash=(v,c,l)=>c+l*Math.tanh((v-c)/l);
+  const midX=squash(rawMidX,0.5,0.30), midY=squash(rawMidY,0.5,0.30);
+  const shiftX=midX-rawMidX, shiftY=midY-rawMidY;
+  ax+=shiftX; bx+=shiftX; ay+=shiftY; by+=shiftY;
+
+  const dx=bx-ax, dy=by-ay;
+  const sep=Math.hypot(dx,dy);
+  const minSeparation=Math.max(MIN_ANCHOR_SEPARATION, WOBBLE_AMOUNT*2);
+  const rawAngle = sep>1e-6 ? Math.atan2(dy,dx) : (state.prevAngle ?? 0);
+  let angle;
+  if(state.prevAngle===null || state.prevT===null){ angle=rawAngle; }
+  else {
+    const dt=Math.max(0,t-state.prevT);
+    const maxStep=MAX_ANGLE_STEP_DEG_PER_SEC*Math.min(dt,0.5)*(Math.PI/180);
+    let diff=rawAngle-state.prevAngle;
+    diff -= Math.round(diff/(2*Math.PI))*2*Math.PI;
+    const step=Math.max(-maxStep,Math.min(maxStep,diff));
+    angle=state.prevAngle+step;
+  }
+  if(sep<minSeparation){
+    const ux=Math.cos(angle), uy=Math.sin(angle);
+    const mx=(ax+bx)/2, my=(ay+by)/2, half=minSeparation/2;
+    ax=mx-ux*half; ay=my-uy*half; bx=mx+ux*half; by=my+uy*half;
+  }
+  state.prevAngle=angle; state.prevT=t;
+  return {ax,ay,bx,by};
+}
+
+/* one reusable "scene" = colors + seeded anchors + noise generators */
+function makeScene(colorA, colorB, seedTag){
+  return {
+    colors: [colorA, colorB],
+    lights: makeLightParams(seedTag),
+    field: prepareTwoPoolField(colorA, colorB, {}),
+    wobble: makeFlowNoise2D(hashString('wobble|'+seedTag)),
+    shade: makeFlowNoise2D(hashString('shade|'+seedTag)),
+    angleState: { prevAngle:null, prevT:null },
+  };
+}
+
+/* renders one scene's field into a TINYxTINY ImageData, with an optional
+   per-pixel visibility gate fn(nx,ny,t) -> 0..1 and optional anchor override */
+function renderScene(scene, t, imageData, opts={}){
+  const { ax:ax0, ay:ay0, bx:bx0, by:by0 } = computeAnchorPositions(scene.lights, t, scene.wobble, scene.angleState);
+  const ax = opts.anchorOverride ? opts.anchorOverride.ax : ax0;
+  const ay = opts.anchorOverride ? opts.anchorOverride.ay : ay0;
+  const bx = opts.anchorOverride ? opts.anchorOverride.bx : bx0;
+  const by = opts.anchorOverride ? opts.anchorOverride.by : by0;
+  const gate = opts.gate; // (nx,ny)=>0..1
+  const target = imageData.data;
+  for(let y=0;y<TINY;y++){
+    for(let x=0;x<TINY;x++){
+      const nx=x/(TINY-1), ny=y/(TINY-1);
+      const idx=(y*TINY+x)*4;
+      const distA=Math.hypot(nx-ax, ny-ay), distB=Math.hypot(nx-bx, ny-by);
+      const w = scene.wobble.fbm(nx*2.4+t*0.05, ny*2.4-t*0.04, 2)/FBM_PEAK*WOBBLE_AMOUNT;
+      const shade = scene.shade.fbm(nx*SHADE_SPATIAL_FREQ+t*0.03, ny*SHADE_SPATIAL_FREQ-t*0.025, 2)/FBM_PEAK*SHADE_AMOUNT;
+      scene.field.sampleInto(distA-distB+w, shade, target, idx);
+      // Opus-consultant catch: gate the ALPHA channel, not RGB. Zeroing RGB
+      // paints opaque black over whatever's underneath (fine against a bare
+      // black page, wrong the moment this is a real second layer over a
+      // still-moving old field -- it erases the old field instead of
+      // invading it). Alpha lets the layer beneath show through untouched.
+      if(gate){
+        const g = gate(nx,ny);
+        target[idx+3] = 255*g;
+      }
+    }
+  }
+  return {ax,ay,bx,by};
+}
+
+const PAIRS = [
+  ["#ff2fb0","#3366aa"], ["#f2a71b","#1b6e6e"], ["#7c3aed","#e0c341"],
+  ["#0fbf6f","#c81e3a"], ["#ffd166","#26547c"], ["#ff5e5b","#00cecb"],
+];
+let pairCursor = 0;
+function nextPair(){ pairCursor=(pairCursor+1)%PAIRS.length; return PAIRS[pairCursor]; }
+
+function makeCell(row, id, label, desc){
+  const cell = document.createElement('div'); cell.className='cell';
+  const canvas = document.createElement('canvas'); canvas.width=300; canvas.height=169; canvas.id=id;
+  const lab = document.createElement('div'); lab.className='label'; lab.textContent=label;
+  const d = document.createElement('div'); d.className='desc'; d.textContent=desc;
+  cell.appendChild(canvas); cell.appendChild(lab); cell.appendChild(d);
+  row.appendChild(cell);
+  return canvas;
+}
+
+function upscale(ctx, small, w, h){
+  ctx.imageSmoothingEnabled = true;
+  ctx.filter = `blur(${Math.max(6, w/40)}px)`;
+  ctx.drawImage(small, -w*0.04, -h*0.04, w*1.08, h*1.08);
+  ctx.filter = 'none';
+}
+
+/* ================= ENTRANCE ROW ================= */
+const entranceRow = document.getElementById('entranceRow');
+
+/* E1 — baseline: exactly the live mechanism (freeze black scene, crossfade
+   to first real scene) */
+(function(){
+  const canvas = makeCell(entranceRow, 'e1', 'Current (live)', 'Freeze black, crossfade to first color the same way song-to-song works. Reference point.');
+  const ctx = canvas.getContext('2d');
+  const small = document.createElement('canvas'); small.width=TINY; small.height=TINY;
+  const sctx = small.getContext('2d');
+  const img = sctx.createImageData(TINY,TINY);
+
+  let black = makeScene('#000000','#000000','e1-black');
+  let real, blendStart, DUR=2.2, cycleStart=performance.now();
+
+  function reset(){
+    const p = nextPair();
+    real = makeScene(p[0], p[1], 'e1-'+p.join('-')+Math.random());
+    blendStart = performance.now();
+  }
+  reset();
+
+  function draw(now){
+    const t = now/1000;
+    const elapsed = (now-blendStart)/1000;
+    const p = Math.min(1, elapsed/DUR);
+    renderScene(black, 0, img); sctx.putImageData(img,0,0);
+    ctx.clearRect(0,0,300,169);
+    ctx.globalAlpha=1; upscale(ctx, small, 300, 169);
+    renderScene(real, t, img); sctx.putImageData(img,0,0);
+    ctx.globalAlpha=p; upscale(ctx, small, 300, 169);
+    ctx.globalAlpha=1;
+    if(now-cycleStart > 5500){ cycleStart=now; reset(); }
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+})();
+
+/* E2 — carried-in spill, rebuilt as an invasion FROM BLACK (Fable-consultant
+   pass, 2026-08-04): the previous version had two separate, uncoupled
+   systems -- a mask traveling in from an edge point, and the scene's own
+   two anchors sitting wherever makeLightParams seeded them (bases 0.25-
+   0.75), fully unrelated to the mask's path. The mask and the actual color
+   could visibly disagree about where the color "is." Fixed the same way
+   O3's invasion was fixed: ONE mechanism. The two anchors themselves now
+   travel in from off-canvas (each its own edge point, like E3's
+   anchorOverride) instead of a separate mask riding on top of a
+   already-fully-colored field, and the reveal boundary is a second signed
+   field blended against black through the same OKLab seam prepareTwoPoolField
+   uses internally -- literally "the entrance is what song-to-song already
+   does, but from black" (this repo's own GradientBackground.jsx comment). */
+(function(){
+  const canvas = makeCell(entranceRow, 'e2', 'Anchors carried in', 'The two color anchors start off-screen and travel to their resting position -- the reveal boundary IS their motion, not a separate mask. Blends against black through the same OKLab seam the field uses at its own boundary, so nothing invents a color that isn\'t black or the arriving pair.');
+  const ctx = canvas.getContext('2d');
+  const small = document.createElement('canvas'); small.width=TINY; small.height=TINY;
+  const sctx = small.getContext('2d');
+  const img = sctx.createImageData(TINY,TINY);
+  const spillNoise = makeFlowNoise2D(99871);
+  const ENT_SEAM = 0.06;
+
+  let scene, start, entryA, entryB, DUR=4.8, cycleStart=performance.now();
+  function ease(p){ return p*p*(3-2*p); }
+  function edgePoint(){
+    const ang = Math.random()*Math.PI*2;
+    const r = 0.62+Math.random()*0.23;
+    return [0.5+Math.cos(ang)*r, 0.5+Math.sin(ang)*r];
+  }
+  function reset(){
+    const p = nextPair();
+    scene = makeScene(p[0], p[1], 'e2-'+p.join('-')+Math.random());
+    entryA = edgePoint(); entryB = edgePoint();
+    start = performance.now();
+  }
+  reset();
+
+  function draw(now){
+    const t=now/1000;
+    const elapsed=(now-start)/1000;
+    const p = Math.min(1, elapsed/DUR);
+    const e = ease(p);
+    const real = computeAnchorPositions(scene.lights, t, scene.wobble, scene.angleState);
+    const ax = entryA[0]+(real.ax-entryA[0])*e, ay = entryA[1]+(real.ay-entryA[1])*e;
+    const bx = entryB[0]+(real.bx-entryB[0])*e, by = entryB[1]+(real.by-entryB[1])*e;
+    // The reveal boundary follows the anchors' own midpoint -- there is no
+    // second, independent path; wherever the color anchors currently are
+    // is, by construction, where the arriving edge is too.
+    const ox = (ax+bx)/2, oy = (ay+by)/2;
+    const radius = 0.3 + smoothstepJS(0.35,1,p)*1.4;
+
+    for(let y=0;y<TINY;y++){
+      for(let x=0;x<TINY;x++){
+        const nx=x/(TINY-1), ny=y/(TINY-1);
+        const idx=(y*TINY+x)*4;
+        const distA=Math.hypot(nx-ax,ny-ay), distB=Math.hypot(nx-bx,ny-by);
+        const w = scene.wobble.fbm(nx*2.4+t*0.05, ny*2.4-t*0.04, 2)/FBM_PEAK*WOBBLE_AMOUNT;
+        const shade = scene.shade.fbm(nx*SHADE_SPATIAL_FREQ+t*0.03, ny*SHADE_SPATIAL_FREQ-t*0.025, 2)/FBM_PEAK*SHADE_AMOUNT;
+        const colorLab = scene.field.sampleLab(distA-distB+w, shade);
+
+        const warp = spillNoise.fbm(nx*3.4+t*0.2, ny*3.4+t*0.16, 3)*0.4
+                   + spillNoise.fbm(nx*7+t*0.35, ny*7-t*0.28, 2)*0.14;
+        const d = Math.hypot(nx-ox, ny-oy) + warp;
+        const bt = smoothstep(-ENT_SEAM, ENT_SEAM, radius-d); // 1 = color, 0 = black
+        let L = colorLab[0]*bt;      // black is L=0,a=0,b=0 -- lerp toward it is just *bt
+        const a = colorLab[1]*bt, b = colorLab[2]*bt;
+        const eased2 = seamEased(1-bt, bt);
+        L += (Math.min(1,L+0.05)-L)*eased2;
+        writeOklabToRgb(L,a,b,img.data,idx);
+        img.data[idx+3]=255;
+      }
+    }
+    sctx.putImageData(img,0,0);
+    ctx.clearRect(0,0,300,169);
+    upscale(ctx, small, 300, 169);
+    if(now-cycleStart > 7400){ cycleStart=now; reset(); }
+    requestAnimationFrame(draw);
+  }
+  function smoothstepJS(e0,e1,x){ const t=Math.max(0,Math.min(1,(x-e0)/(e1-e0))); return t*t*(3-2*t); }
+  requestAnimationFrame(draw);
+})();
+
+/* E3 — anchors walk in: both anchors start off-canvas and travel to their
+   real resting position; the field is always live, so the pools themselves
+   are the reveal (no mask) */
+(function(){
+  const canvas = makeCell(entranceRow, 'e3', 'Anchors walk in', 'The two color anchors start off-screen and travel to their normal position — no mask or wipe, the colors themselves arrive and the pools grow in behind them.');
+  const ctx = canvas.getContext('2d');
+  const small = document.createElement('canvas'); small.width=TINY; small.height=TINY;
+  const sctx = small.getContext('2d');
+  const img = sctx.createImageData(TINY,TINY);
+
+  let scene, start, entryA, entryB, DUR=2.8, cycleStart=performance.now();
+  function reset(){
+    const p = nextPair();
+    scene = makeScene(p[0], p[1], 'e3-'+p.join('-')+Math.random());
+    const edge = ang => [0.5+Math.cos(ang)*1.4, 0.5+Math.sin(ang)*1.4];
+    const angA = Math.random()*Math.PI*2, angB = angA+Math.PI*0.8+Math.random()*0.6;
+    entryA = edge(angA); entryB = edge(angB);
+    start = performance.now();
+  }
+  reset();
+  function ease(t){ return t*t*(3-2*t); }
+
+  function draw(now){
+    const t=now/1000;
+    const elapsed=(now-start)/1000;
+    const p = Math.min(1, elapsed/DUR);
+    const e = ease(p);
+    const real = computeAnchorPositions(scene.lights, t, scene.wobble, scene.angleState);
+    const ax = entryA[0]+(real.ax-entryA[0])*e, ay = entryA[1]+(real.ay-entryA[1])*e;
+    const bx = entryB[0]+(real.bx-entryB[0])*e, by = entryB[1]+(real.by-entryB[1])*e;
+    renderScene(scene, t, img, { anchorOverride:{ax,ay,bx,by} });
+    sctx.putImageData(img,0,0);
+    ctx.clearRect(0,0,300,169);
+    upscale(ctx, small, 300, 169);
+    if(now-cycleStart > 5500){ cycleStart=now; reset(); }
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+})();
+
+/* ================= OVERTAKE ROW ================= */
+const overtakeRow = document.getElementById('overtakeRow');
+
+/* O1 — baseline: exactly the live mechanism (freeze outgoing frame, alpha
+   crossfade new live layer over it) */
+(function(){
+  const canvas = makeCell(overtakeRow, 'o1', 'Current (live)', 'Outgoing frame freezes as a still image; the new field fades in live on top. Reference point.');
+  const ctx = canvas.getContext('2d');
+  const small = document.createElement('canvas'); small.width=TINY; small.height=TINY;
+  const sctx = small.getContext('2d');
+  const img = sctx.createImageData(TINY,TINY);
+
+  const p0 = nextPair();
+  let scene = makeScene(p0[0], p0[1], 'o1-init-'+Math.random());
+  let frozen = document.createElement('canvas'); frozen.width=300; frozen.height=169;
+  let blendStart=null, DUR=1.6, cycleStart=performance.now();
+
+  function swap(){
+    const snap = document.createElement('canvas'); snap.width=300; snap.height=169;
+    snap.getContext('2d').drawImage(canvas,0,0);
+    frozen = snap;
+    const p = nextPair();
+    scene = makeScene(p[0], p[1], 'o1-'+p.join('-')+Math.random());
+    blendStart = performance.now();
+  }
+
+  function draw(now){
+    const t=now/1000;
+    renderScene(scene, t, img); sctx.putImageData(img,0,0);
+    ctx.clearRect(0,0,300,169);
+    if(blendStart!==null){
+      const p = Math.min(1, (now-blendStart)/1000/DUR);
+      ctx.globalAlpha=1; ctx.drawImage(frozen,0,0);
+      ctx.globalAlpha=p; upscale(ctx, small, 300, 169);
+      ctx.globalAlpha=1;
+      if(p>=1) blendStart=null;
+    } else {
+      upscale(ctx, small, 300, 169);
+    }
+    if(now-cycleStart > 4500){ cycleStart=now; swap(); }
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+})();
+
+/* O2 — color migration: same anchors, same continuous motion, only the hex
+   colors driving the field lerp (in OKLab) from old pair to new pair; the
+   flow never pauses or double-exposes, it just changes color while moving */
+(function(){
+  const canvas = makeCell(overtakeRow, 'o2', 'Color migration', 'Same anchors, same motion, no fade layer — the two colors themselves shift from old to new while the field keeps flowing. Never pauses, never double-exposes.');
+  const ctx = canvas.getContext('2d');
+  const small = document.createElement('canvas'); small.width=TINY; small.height=TINY;
+  const sctx = small.getContext('2d');
+  const img = sctx.createImageData(TINY,TINY);
+
+  const p0 = nextPair();
+  let lights = makeLightParams('o2-lights-'+Math.random());
+  let wobble = makeFlowNoise2D(hashString('o2-wobble'));
+  let shade = makeFlowNoise2D(hashString('o2-shade'));
+  let angleState = {prevAngle:null, prevT:null};
+  let colorsFrom = p0, colorsTo = p0, migT=1, migStart=0, DUR=2.2, cycleStart=performance.now();
+
+  function swap(){
+    colorsFrom = colorsTo;
+    colorsTo = nextPair();
+    migStart = performance.now(); migT=0;
+  }
+
+  function draw(now){
+    const t=now/1000;
+    migT = Math.min(1, (now-migStart)/1000/DUR);
+    const labFrom = [rgbToOklab(hexToRgb(colorsFrom[0])), rgbToOklab(hexToRgb(colorsFrom[1]))];
+    const labTo = [rgbToOklab(hexToRgb(colorsTo[0])), rgbToOklab(hexToRgb(colorsTo[1]))];
+    const e = migT*migT*(3-2*migT);
+    const lerpLab = (a,b,tt)=>[a[0]+(b[0]-a[0])*tt, a[1]+(b[1]-a[1])*tt, a[2]+(b[2]-a[2])*tt];
+    const La = lerpLab(labFrom[0], labTo[0], e), Lb = lerpLab(labFrom[1], labTo[1], e);
+
+    const {ax,ay,bx,by} = computeAnchorPositions(lights, t, wobble, angleState);
+    const seamWidth=0.05, glowDeltaL=0.08;
+    for(let y=0;y<TINY;y++){
+      for(let x=0;x<TINY;x++){
+        const nx=x/(TINY-1), ny=y/(TINY-1);
+        const idx=(y*TINY+x)*4;
+        const distA=Math.hypot(nx-ax,ny-ay), distB=Math.hypot(nx-bx,ny-by);
+        const w = wobble.fbm(nx*2.4+t*0.05, ny*2.4-t*0.04, 2)/FBM_PEAK*WOBBLE_AMOUNT;
+        const shd = shade.fbm(nx*SHADE_SPATIAL_FREQ+t*0.03, ny*SHADE_SPATIAL_FREQ-t*0.025, 2)/FBM_PEAK*SHADE_AMOUNT;
+        const signedField = distA-distB+w;
+        const blendT = smoothstep(-seamWidth, seamWidth, signedField);
+        let L = La[0]*(1-blendT)+Lb[0]*blendT;
+        const a = La[1]*(1-blendT)+Lb[1]*blendT;
+        const b = La[2]*(1-blendT)+Lb[2]*blendT;
+        const eased = seamEased(1-blendT, blendT);
+        L += (Math.min(1,L+glowDeltaL)-L)*eased;
+        L = Math.max(0, Math.min(1, L+shd));
+        writeOklabToRgb(L,a,b,img.data,idx);
+        img.data[idx+3]=255;
+      }
+    }
+    sctx.putImageData(img,0,0);
+    ctx.clearRect(0,0,300,169);
+    upscale(ctx, small, 300, 169);
+    if(now-cycleStart > 4500){ cycleStart=now; swap(); }
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+})();
+
+/* O3 — one-sided invasion: new colors spill in from one edge point over the
+   old field, so the new pair visibly invades and the old pair recedes
+   rather than the whole frame fading uniformly.
+   Fable-consultant rebuild (2026-08-04, owner: "colors are overlapping and
+   making new colors, no overlapping should be occurring"): the previous
+   pass rendered the old and new scenes as two SEPARATE canvases and alpha-
+   composited one over the other with a soft, wide, partly-translucent
+   mask -- that's sRGB averaging between two unrelated fields, on top of a
+   whole separate interior opacity ramp, which manufactures muddy colors
+   neither field actually contains. This app's real identity (both in the
+   current live two-pool field and the older "crisp meets" mesh era, per
+   git history) has exactly ONE kind of blend anywhere: a narrow OKLab lerp
+   at a seam, glow and all. So the invasion boundary is now built the same
+   way -- both scenes render into ONE shared buffer, and at every pixel a
+   second signed field (distance to the traveling invasion point, minus its
+   current radius) picks old-scene OKLab vs. new-scene OKLab through the
+   exact same seam math prepareTwoPoolField already uses at its own
+   boundary (see sampleLab above). Old and new never sRGB-average; there's
+   one seam, narrow, in OKLab, same as everywhere else in this app. */
+(function(){
+  const canvas = makeCell(overtakeRow, 'o3', 'Invasion + precursor', 'One shared field, not two composited layers -- old and new colors meet at a narrow OKLab seam (same math the field already uses internally), so nothing sRGB-averages into a muddy third color. The invasion point travels in from past the edge; old field gets pushed away from it as it advances.');
+  const ctx = canvas.getContext('2d');
+  const small = document.createElement('canvas'); small.width=TINY; small.height=TINY;
+  const sctx = small.getContext('2d');
+  const img = sctx.createImageData(TINY,TINY);
+  const invNoise = makeFlowNoise2D(55321);
+  const INV_SEAM = 0.06; // matches the field's own default seamWidth() scale
+
+  const p0 = nextPair();
+  let oldScene = makeScene(p0[0], p0[1], 'o3-init-'+Math.random());
+  let newScene = null, entry, rest, invStart=null, PRECURSOR_DUR=2.4, INVADE_DUR=4.4, cycleStart=performance.now();
+  const TOTAL_DUR = PRECURSOR_DUR+INVADE_DUR;
+  const RECEDE_PUSH = 0.30;
+
+  function edgePoint(){
+    const ang = Math.random()*Math.PI*2;
+    const r = 0.62+Math.random()*0.23;
+    return [0.5+Math.cos(ang)*r, 0.5+Math.sin(ang)*r];
+  }
+  function ease(p){ return p*p*(3-2*p); }
+  function smoothstep2(e0,e1,x){ const tt=Math.max(0,Math.min(1,(x-e0)/(e1-e0))); return tt*tt*(3-2*tt); }
+
+  function swap(){
+    const p = nextPair();
+    newScene = makeScene(p[0], p[1], 'o3-'+p.join('-')+Math.random());
+    entry = edgePoint();
+    rest = [0.28+Math.random()*0.44, 0.28+Math.random()*0.44];
+    invStart = performance.now();
+  }
+
+  function draw(now){
+    const t=now/1000;
+
+    if(!newScene){
+      renderScene(oldScene, t, img);
+      sctx.putImageData(img,0,0);
+      ctx.clearRect(0,0,300,169);
+      upscale(ctx, small, 300, 169);
+      if(now-cycleStart > 7800){ cycleStart=now; swap(); }
+      requestAnimationFrame(draw);
+      return;
+    }
+
+    const elapsed = (now-invStart)/1000;
+    const travelP = Math.min(1, elapsed/TOTAL_DUR);
+    const invadeP = Math.max(0, Math.min(1, (elapsed-PRECURSOR_DUR)/INVADE_DUR));
+    const ox = entry[0]+(rest[0]-entry[0])*ease(travelP);
+    const oy = entry[1]+(rest[1]-entry[1])*ease(travelP);
+    const radius = elapsed < PRECURSOR_DUR
+      ? 0.2 + smoothstep2(0,1, elapsed/PRECURSOR_DUR) * 0.2   // small comet trailing the traveling point
+      : 0.4 + smoothstep2(0,1, invadeP) * 1.5;                 // opens up once essentially arrived
+
+    // Old scene's anchors get pushed away from the invasion point as it
+    // advances -- "there isn't enough blended motion" (owner). Real anchor
+    // positions computed once here (not inside renderScene) so both this
+    // push AND the per-pixel field below use the same positions.
+    const oldReal = computeAnchorPositions(oldScene.lights, t, oldScene.wobble, oldScene.angleState);
+    const pushEase = invadeP*invadeP*(3-2*invadeP);
+    const pushFrom = (px,py) => {
+      const dx=px-ox, dy=py-oy, d=Math.max(0.001, Math.hypot(dx,dy));
+      const strength = pushEase * RECEDE_PUSH * (1/(1+d*1.5));
+      return { x: px+(dx/d)*strength, y: py+(dy/d)*strength };
+    };
+    const oa = pushFrom(oldReal.ax, oldReal.ay), ob = pushFrom(oldReal.bx, oldReal.by);
+    const newReal = computeAnchorPositions(newScene.lights, t, newScene.wobble, newScene.angleState);
+
+    for(let y=0;y<TINY;y++){
+      for(let x=0;x<TINY;x++){
+        const nx=x/(TINY-1), ny=y/(TINY-1);
+        const idx=(y*TINY+x)*4;
+
+        const distOA=Math.hypot(nx-oa.x, ny-oa.y), distOB=Math.hypot(nx-ob.x, ny-ob.y);
+        const wOld = oldScene.wobble.fbm(nx*2.4+t*0.05, ny*2.4-t*0.04, 2)/FBM_PEAK*WOBBLE_AMOUNT;
+        const shadeOld = oldScene.shade.fbm(nx*SHADE_SPATIAL_FREQ+t*0.03, ny*SHADE_SPATIAL_FREQ-t*0.025, 2)/FBM_PEAK*SHADE_AMOUNT;
+        const oldLab = oldScene.field.sampleLab(distOA-distOB+wOld, shadeOld);
+
+        const distNA=Math.hypot(nx-newReal.ax, ny-newReal.ay), distNB=Math.hypot(nx-newReal.bx, ny-newReal.by);
+        const wNew = newScene.wobble.fbm(nx*2.4+t*0.05, ny*2.4-t*0.04, 2)/FBM_PEAK*WOBBLE_AMOUNT;
+        const shadeNew = newScene.shade.fbm(nx*SHADE_SPATIAL_FREQ+t*0.03, ny*SHADE_SPATIAL_FREQ-t*0.025, 2)/FBM_PEAK*SHADE_AMOUNT;
+        const newLab = newScene.field.sampleLab(distNA-distNB+wNew, shadeNew);
+
+        const warp = invNoise.fbm(nx*3.4+t*0.22, ny*3.4+t*0.18, 3)*0.42
+                   + invNoise.fbm(nx*7.5+t*0.4, ny*7.5-t*0.32, 2)*0.15;
+        const d = Math.hypot(nx-ox, ny-oy)+warp;
+        const bt = smoothstep(-INV_SEAM, INV_SEAM, radius-d); // 1 inside the invasion, 0 outside, narrow band
+        let L = oldLab[0]*(1-bt)+newLab[0]*bt;
+        const a = oldLab[1]*(1-bt)+newLab[1]*bt;
+        const b = oldLab[2]*(1-bt)+newLab[2]*bt;
+        const eased2 = seamEased(1-bt, bt);
+        L += (Math.min(1,L+0.05)-L)*eased2;
+        writeOklabToRgb(L,a,b,img.data,idx);
+        img.data[idx+3]=255;
+      }
+    }
+    sctx.putImageData(img,0,0);
+    ctx.clearRect(0,0,300,169);
+    upscale(ctx, small, 300, 169);
+
+    if(elapsed >= TOTAL_DUR+0.3){ oldScene = newScene; newScene = null; cycleStart = now; }
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>

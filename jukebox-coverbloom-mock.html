@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Jukebox — AlbumCoverBloom scaffolding</title>
+<style>
+  :root{ --bg:#0a0a0c; --panel:#141416; --line:#26262a; --text:#eee; --dim:#8a8a92; }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif; padding:24px; }
+  h1{font-size:18px; font-weight:600; margin:0 0 4px;}
+  .sub{color:var(--dim); font-size:13px; margin:0 0 20px; max-width:680px; line-height:1.55;}
+  .stage-wrap{width:480px;}
+  .stage{
+    width:480px; height:270px; border-radius:10px; overflow:hidden; position:relative;
+    background:#000; box-shadow:0 0 0 1px var(--line);
+  }
+  .controls{display:flex; gap:8px; margin-top:14px; flex-wrap:wrap;}
+  button{ padding:7px 12px; border-radius:7px; border:1px solid var(--line);
+    background:#1c1c1f; color:var(--text); font-size:12px; cursor:pointer; }
+  button:hover{border-color:#555;}
+  .meta{max-width:640px; margin-top:18px;}
+  .meta p{font-size:13px; color:var(--dim); line-height:1.6; margin:0 0 10px;}
+  .tag{display:inline-block; font-size:11px; color:#666; border:1px solid var(--line);
+    border-radius:4px; padding:2px 6px; margin-right:6px;}
+
+  .layer{ position:absolute; inset:0; overflow:hidden; }
+  .layer-inner{ position:absolute; top:-25%; left:-25%; width:150%; height:150%; }
+  .art{ position:absolute; inset:0; filter: blur(60px) saturate(1.25); }
+  .wash{ position:absolute; inset:0; filter: blur(28px); mix-blend-mode:overlay; opacity:0.85; }
+
+  @keyframes coverBloomDrift {
+    from { transform: translate(0%,0%) scale(1.18); }
+    to   { transform: translate(-4%,3%) scale(1.24); }
+  }
+</style>
+</head>
+<body>
+
+<h1>AlbumCoverBloom scaffolding + live two-pool duel, married</h1>
+<p class="sub">CoverBloom's own scaffolding (deleted <code>AlbumCoverBloom.jsx</code>, commit <code>7e07acb</code>) supplies the presentation: two full-bleed layers, heavy 60px blur, plain CSS transform/opacity, directional off-canvas slide for song changes. The "art" layer's CONTENT is no longer independent glowing blobs, though — it's the live app's own two-pool nearest-anchor field (same math as <code>GradientBackground.jsx</code>/<code>twoLightBlend.js</code>), the thing that actually produces a real territory duel: every pixel belongs to whichever color anchor is spatially closer, so as the anchors move one pool visibly GAINS ground and the other visibly LOSES it, meeting at one seam — not two independent glows piling up wherever they happen to overlap.</p>
+
+<div class="stage-wrap">
+  <div class="stage" id="stage"></div>
+  <div class="controls">
+    <button onclick="triggerEntrance()">Replay entrance</button>
+    <button onclick="triggerNextSong()">Next song</button>
+  </div>
+</div>
+
+<div class="meta">
+  <p><span class="tag">duel</span>The "art" layer is the live app's two-pool field, not a stand-in for a photo anymore — it's the two colors themselves contesting territory, same mechanism the everyday flowing background already uses and you confirmed was "kinda right."</p>
+  <p><span class="tag">texture</span>The wash canvas on top is still the old CoverBloom layer, boosted in speed/amplitude — it's energy/texture riding over the duel, not the main event.</p>
+  <p><span class="tag">entrance</span>Black to the two colors dancing on, no slide, no direction — just the duel fading up from nothing, per your last note.</p>
+  <p><span class="tag">song change</span>Still CoverBloom's directional conveyor slide: outgoing keeps moving one direction while fading, incoming enters from the opposite edge moving the same direction.</p>
+</div>
+
+<script>
+/* ============================================================
+   Owner, live: "the two colors arent really dancing with each
+   other, its more of one is just overtaking the other... marry
+   the two things." The drawArt blobs below were two independent
+   'lighter'-composited radial gradients -- additive glow, which
+   just piles up wherever they overlap rather than one visibly
+   contesting the other's ground. The thing that actually produces
+   real territory duel is the LIVE APP's own two-pool nearest-
+   anchor field (ported earlier into jukebox-motion-mocks.html,
+   same source as GradientBackground.jsx/twoLightBlend.js/
+   flowNoise.js/gradientTuning.js) -- every pixel belongs to
+   whichever anchor is spatially closer, full stop, so as the
+   anchors move one pool visibly GAINS ground and the other
+   visibly LOSES it, meeting at one narrow OKLab seam. That's the
+   marriage: this field replaces drawArt as the "art" layer inside
+   CoverBloom's own blur/wash/slide scaffolding -- the duel comes
+   from the live app's proven mechanism, the presentation (heavy
+   blur, live wash layer on top, directional slide transitions,
+   black-to-dance entrance) stays CoverBloom's. */
+function hash(x,y){ let n=Math.sin(x*127.1+y*311.7)*43758.5453123; return n-Math.floor(n); }
+function smoothN(t){ return t*t*(3-2*t); }
+function noise2(x,y){
+  const x0=Math.floor(x), y0=Math.floor(y), xf=x-x0, yf=y-y0;
+  const tl=hash(x0,y0), tr=hash(x0+1,y0), bl=hash(x0,y0+1), br=hash(x0+1,y0+1);
+  const u=smoothN(xf), v=smoothN(yf);
+  return (tl*(1-u)+tr*u)*(1-v)+(bl*(1-u)+br*u)*v;
+}
+function fbmSimple(x,y,oct){ let val=0,amp=0.5,freq=1; for(let i=0;i<oct;i++){ val+=amp*noise2(x*freq,y*freq); amp*=0.5; freq*=2; } return val; }
+function makeFlowNoise2D(seed){
+  let s=seed>>>0;
+  const rand=()=>{ s^=s<<13; s^=s>>>17; s^=s<<5; s>>>=0; return s/4294967296; };
+  const perm=new Uint8Array(512), p=Array.from({length:256},(_,i)=>i);
+  for(let i=255;i>0;i--){ const j=Math.floor(rand()*(i+1)); const tmp=p[i]; p[i]=p[j]; p[j]=tmp; }
+  for(let i=0;i<512;i++) perm[i]=p[i&255];
+  const grad=[[1,1],[-1,1],[1,-1],[-1,-1],[1,0],[-1,0],[0,1],[0,-1]];
+  const fade=t=>t*t*t*(t*(t*6-15)+10), lerp=(a,b,t)=>a+(b-a)*t;
+  function noise(x,y){
+    const X=Math.floor(x)&255, Y=Math.floor(y)&255, xf=x-Math.floor(x), yf=y-Math.floor(y);
+    const gradAt=(ix,iy)=>grad[perm[(perm[ix&255]+iy)&255]&7];
+    const dot=(gv,gx,gy)=>gv[0]*gx+gv[1]*gy;
+    const n00=dot(gradAt(X,Y),xf,yf), n10=dot(gradAt(X+1,Y),xf-1,yf);
+    const n01=dot(gradAt(X,Y+1),xf,yf-1), n11=dot(gradAt(X+1,Y+1),xf-1,yf-1);
+    const u=fade(xf), v=fade(yf);
+    return lerp(lerp(n00,n10,u),lerp(n01,n11,u),v);
+  }
+  function fbm(x,y,octaves=2){ let value=0,amp=0.5,freq=1; for(let i=0;i<octaves;i++){ value+=amp*noise(x*freq,y*freq); freq*=2; amp*=0.5; } return value; }
+  return { noise, fbm };
+}
+function srgbToLinear(c){ c/=255; return c<=0.04045?c/12.92:Math.pow((c+0.055)/1.055,2.4); }
+function linearToSrgb(c){ c=c<=0.0031308?c*12.92:1.055*Math.pow(Math.max(c,0),1/2.4)-0.055; return Math.max(0,Math.min(255,c*255)); }
+function cbrt(x){ return Math.sign(x)*Math.pow(Math.abs(x),1/3); }
+function hexToRgb(hex){ return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)]; }
+function rgbToOklab([r,g,b]){
+  r=srgbToLinear(r); g=srgbToLinear(g); b=srgbToLinear(b);
+  const l=0.4122214708*r+0.5363325363*g+0.0514459929*b;
+  const m=0.2119034982*r+0.6806995451*g+0.1073969566*b;
+  const s=0.0883024619*r+0.2817188376*g+0.6299787005*b;
+  const l_=cbrt(l), m_=cbrt(m), s_=cbrt(s);
+  return [0.2104542553*l_+0.7936177850*m_-0.0040720468*s_, 1.9779984951*l_-2.4285922050*m_+0.4505937099*s_, 0.0259040371*l_+0.7827717662*m_-0.8086757660*s_];
+}
+function writeOklabToRgb(L,a,b,target,offset){
+  const lRoot=L+0.3963377774*a+0.2158037573*b, mRoot=L-0.1055613458*a-0.0638541728*b, sRoot=L-0.0894841775*a-1.2914855480*b;
+  const l=lRoot*lRoot*lRoot, m=mRoot*mRoot*mRoot, s=sRoot*sRoot*sRoot;
+  target[offset]=linearToSrgb(4.0767416621*l-3.3077115913*m+0.2309699292*s);
+  target[offset+1]=linearToSrgb(-1.2684380046*l+2.6097574011*m-0.3413193965*s);
+  target[offset+2]=linearToSrgb(-0.0041960863*l-0.7034186147*m+1.7076147010*s);
+}
+function seamEased(wA,wB){ const bal=1-Math.abs(wA-wB); return bal*bal*(3-2*bal); }
+function smoothstepN(e0,e1,x){ const t=Math.max(0,Math.min(1,(x-e0)/(e1-e0))); return t*t*(3-2*t); }
+function prepareTwoPoolField(hexA,hexB,options={}){
+  const [La0,aA,bA]=rgbToOklab(hexToRgb(hexA)), [Lb0,aB,bB]=rgbToOklab(hexToRgb(hexB));
+  const brightnessAdjustment=options.brightnessAdjustment??0;
+  const La=Math.max(0,Math.min(1,La0+brightnessAdjustment)), Lb=Math.max(0,Math.min(1,Lb0+brightnessAdjustment));
+  const seamWidth=Math.max(0.02, options.seamWidth??0.05), glowDeltaL=options.glowDeltaL??0.08;
+  function sampleInto(signedField, shade, target, offset=0){
+    const blendT=smoothstepN(-seamWidth,seamWidth,signedField);
+    let L=La*(1-blendT)+Lb*blendT;
+    const a=aA*(1-blendT)+aB*blendT, b=bA*(1-blendT)+bB*blendT;
+    const eased=seamEased(1-blendT,blendT);
+    L+=(Math.min(1,L+glowDeltaL)-L)*eased;
+    L=Math.max(0,Math.min(1,L+(Number.isFinite(shade)?shade:0)));
+    writeOklabToRgb(L,a,b,target,offset);
+    target[offset+3]=255;
+  }
+  return { sampleInto };
+}
+const FBM_PEAK=0.53, WOBBLE_AMOUNT=0.106, SHADE_AMOUNT=0.105, ANCHOR_AMPLITUDE=0.15, MOTION_SPEED=1.2;
+const MIN_ANCHOR_SEPARATION=0.35, MAX_ANGLE_STEP_DEG_PER_SEC=240, SHADE_SPATIAL_FREQ=1.3;
+function hashString(value){ let h=2166136261; for(let i=0;i<value.length;i++){ h^=value.charCodeAt(i); h=Math.imul(h,16777619); } return h>>>0; }
+function makeLightParams(seedStr){
+  let seed=hashString(seedStr);
+  const rng=()=>{ seed+=0x6d2b79f5; let v=seed; v=Math.imul(v^(v>>>15),v|1); v^=v+Math.imul(v^(v>>>7),v|61); return ((v^(v>>>14))>>>0)/4294967296; };
+  const amp=ANCHOR_AMPLITUDE;
+  const baseAX=0.25+rng()*0.5, baseAY=0.25+rng()*0.5, baseSep=0.45+rng()*0.25, baseAngle=rng()*Math.PI*2;
+  const bases=[{baseX:baseAX,baseY:baseAY},{baseX:baseAX+Math.cos(baseAngle)*baseSep,baseY:baseAY+Math.sin(baseAngle)*baseSep}];
+  return bases.map(base=>({ ...base,
+    ampX:amp+(rng()-0.5)*amp*0.4, ampY:amp+(rng()-0.5)*amp*0.4,
+    freqX:(0.35+rng()*0.2)*MOTION_SPEED, freqY:(0.3+rng()*0.2)*MOTION_SPEED,
+    phaseX:rng()*Math.PI*2, phaseY:rng()*Math.PI*2,
+    driftPhaseX:rng()*1000, driftPhaseY:rng()*1000, driftFreqMult:0.7+rng()*0.6,
+  }));
+}
+function computeAnchorPositions(lights,t,wobbleNoise,state){
+  const [a,b]=lights;
+  const driftFor=light=>{
+    const freqMult=light.driftFreqMult??1;
+    return {
+      dx: wobbleNoise.fbm(t*0.025*freqMult+light.driftPhaseX, t*0.017*freqMult+0.31, 2)/FBM_PEAK*light.ampX*2.8,
+      dy: wobbleNoise.fbm(t*0.021*freqMult+light.driftPhaseY, t*0.014*freqMult+0.77, 2)/FBM_PEAK*light.ampY*2.8,
+    };
+  };
+  const driftA=driftFor(a), driftB=driftFor(b);
+  const speedMod=1+(wobbleNoise.fbm(t*0.016+271.3,t*0.012+613.7,2)/FBM_PEAK)*0.15;
+  let ax=a.baseX+Math.sin(t*a.freqX*speedMod+a.phaseX)*a.ampX+driftA.dx;
+  let ay=a.baseY+Math.sin(t*a.freqY*speedMod+a.phaseY)*a.ampY+driftA.dy;
+  let bx=b.baseX+Math.sin(t*b.freqX*speedMod+b.phaseX)*b.ampX+driftB.dx;
+  let by=b.baseY+Math.sin(t*b.freqY*speedMod+b.phaseY)*b.ampY+driftB.dy;
+  const rawMidX=(ax+bx)/2, rawMidY=(ay+by)/2;
+  const squash=(v,c,l)=>c+l*Math.tanh((v-c)/l);
+  const midX=squash(rawMidX,0.5,0.30), midY=squash(rawMidY,0.5,0.30);
+  const shiftX=midX-rawMidX, shiftY=midY-rawMidY;
+  ax+=shiftX; bx+=shiftX; ay+=shiftY; by+=shiftY;
+  const dx=bx-ax, dy=by-ay, sep=Math.hypot(dx,dy);
+  const minSeparation=Math.max(MIN_ANCHOR_SEPARATION, WOBBLE_AMOUNT*2);
+  const rawAngle=sep>1e-6?Math.atan2(dy,dx):(state.prevAngle??0);
+  let angle;
+  if(state.prevAngle===null||state.prevT===null){ angle=rawAngle; }
+  else {
+    const dt=Math.max(0,t-state.prevT);
+    const maxStep=MAX_ANGLE_STEP_DEG_PER_SEC*Math.min(dt,0.5)*(Math.PI/180);
+    let diff=rawAngle-state.prevAngle;
+    diff-=Math.round(diff/(2*Math.PI))*2*Math.PI;
+    const step=Math.max(-maxStep,Math.min(maxStep,diff));
+    angle=state.prevAngle+step;
+  }
+  if(sep<minSeparation){
+    const ux=Math.cos(angle), uy=Math.sin(angle), mx=(ax+bx)/2, my=(ay+by)/2, half=minSeparation/2;
+    ax=mx-ux*half; ay=my-uy*half; bx=mx+ux*half; by=my+uy*half;
+  }
+  state.prevAngle=angle; state.prevT=t;
+  return {ax,ay,bx,by};
+}
+function makeDuelScene(colorA,colorB,seedTag){
+  return {
+    field: prepareTwoPoolField(colorA,colorB,{}),
+    lights: makeLightParams(seedTag),
+    wobble: makeFlowNoise2D(hashString('wobble|'+seedTag)),
+    shade: makeFlowNoise2D(hashString('shade|'+seedTag)),
+    angleState: { prevAngle:null, prevT:null },
+  };
+}
+function drawDuelField(ctx, imgData, w, h, scene, t){
+  const {ax,ay,bx,by} = computeAnchorPositions(scene.lights, t, scene.wobble, scene.angleState);
+  const data = imgData.data;
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      const nx=x/(w-1), ny=y/(h-1);
+      const idx=(y*w+x)*4;
+      const distA=Math.hypot(nx-ax,ny-ay), distB=Math.hypot(nx-bx,ny-by);
+      const wob = scene.wobble.fbm(nx*2.4+t*0.05, ny*2.4-t*0.04, 2)/FBM_PEAK*WOBBLE_AMOUNT;
+      const shade = scene.shade.fbm(nx*SHADE_SPATIAL_FREQ+t*0.03, ny*SHADE_SPATIAL_FREQ-t*0.025, 2)/FBM_PEAK*SHADE_AMOUNT;
+      scene.field.sampleInto(distA-distB+wob, shade, data, idx);
+    }
+  }
+  ctx.putImageData(imgData,0,0);
+}
+
+const PAIRS = [
+  ["#ff2fb0","#3366aa"], ["#f2a71b","#1b6e6e"], ["#7c3aed","#e0c341"],
+  ["#0fbf6f","#c81e3a"], ["#ffd166","#26547c"], ["#ff5e5b","#00cecb"],
+];
+let pairCursor = 0;
+function nextPair(){ pairCursor=(pairCursor+1)%PAIRS.length; return PAIRS[pairCursor]; }
+
+const DIRECTIONS = ['left','right','up','down'];
+const OFFSET = { left:{x:-100,y:0}, right:{x:100,y:0}, up:{x:0,y:-100}, down:{x:0,y:100} };
+const EASE_MOTION  = 'cubic-bezier(0.23, 1, 0.32, 1)';
+const EASE_OPACITY = 'cubic-bezier(0.55, 0, 0.45, 1)';
+const BLEND_MS = 4200;
+
+function hexToRgb(hex){ return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)]; }
+function hexToHsl(hex){
+  const [r0,g0,b0] = hexToRgb(hex);
+  const r=r0/255,g=g0/255,b=b0/255;
+  const max=Math.max(r,g,b), min=Math.min(r,g,b);
+  let h=0,s=0; const l=(max+min)/2; const d=max-min;
+  if(d!==0){
+    s = d/(1-Math.abs(2*l-1));
+    switch(max){
+      case r: h=((g-b)/d+(g<b?6:0)); break;
+      case g: h=(b-r)/d+2; break;
+      default: h=(r-g)/d+4;
+    }
+    h*=60;
+  }
+  return [h, s*100, l*100];
+}
+function makeWashSources(colors){
+  const base = colors.length ? colors : ['#3a3a3a'];
+  const sources = [];
+  for(let i=0;i<4;i++){
+    const [h,s,l] = hexToHsl(base[i%base.length]);
+    sources.push({ hueBase:h, sat:Math.min(85,s+10), lightBase:Math.min(70,Math.max(30,l)), seed:i*17.3+4.1 });
+  }
+  return sources;
+}
+// Motion boosted hard (owner, live: "the motion and how the two blend/play/
+// dance with each other needs to be higher, much higher"). Position
+// amplitude, orbit speed, and hue/light swing all roughly 2.5-3x the
+// original AlbumCoverBloom values -- this layer is meant to be felt, not a
+// background hum.
+function drawWash(ctx,w,h,t,sources){
+  ctx.clearRect(0,0,w,h);
+  ctx.globalCompositeOperation = 'lighter';
+  for(const src of sources){
+    const cx = (0.5+0.5*Math.sin(t*0.16+src.seed))*w;
+    const cy = (0.5+0.5*Math.sin(t*0.12+src.seed*1.3))*h;
+    const hue = src.hueBase + Math.sin(t*0.09+src.seed)*28;
+    const light = src.lightBase + Math.sin(t*0.065+src.seed*0.7)*18;
+    const r = Math.max(w,h)*0.6;
+    const grad = ctx.createRadialGradient(cx,cy,0,cx,cy,r);
+    grad.addColorStop(0, `hsla(${hue},${src.sat}%,${light}%,0.7)`);
+    grad.addColorStop(1, `hsla(${hue},${src.sat}%,${light}%,0)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0,0,w,h);
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+function makeLayer(){
+  const layer = document.createElement('div');
+  layer.className = 'layer';
+  const inner = document.createElement('div');
+  inner.className = 'layer-inner';
+  const artCanvas = document.createElement('canvas');
+  artCanvas.className = 'art';
+  artCanvas.width = 90; artCanvas.height = 51;
+  artCanvas.style.width = '100%'; artCanvas.style.height = '100%';
+  const washCanvas = document.createElement('canvas');
+  washCanvas.className = 'wash';
+  washCanvas.width = 120; washCanvas.height = 68;
+  washCanvas.style.width = '100%'; washCanvas.style.height = '100%';
+  inner.appendChild(artCanvas); inner.appendChild(washCanvas);
+  layer.appendChild(inner);
+  const artCtx = artCanvas.getContext('2d');
+  return {
+    layer, inner,
+    artCtx, artImg: artCtx.createImageData(90,51), duelScene: null,
+    washCtx: washCanvas.getContext('2d'), washSources: null,
+    rafId: null,
+  };
+}
+
+const stage = document.getElementById('stage');
+const state = { layers: [makeLayer(), makeLayer()], activeIdx: 0, direction: DIRECTIONS[0] };
+state.layers.forEach(l => stage.appendChild(l.layer));
+
+function startMotion(l){
+  function tick(ts){
+    const t = ts/1000;
+    if(l.duelScene) drawDuelField(l.artCtx, l.artImg, 90, 51, l.duelScene, t);
+    if(l.washSources) drawWash(l.washCtx, 120, 68, t, l.washSources);
+    l.rafId = requestAnimationFrame(tick);
+  }
+  l.rafId = requestAnimationFrame(tick);
+}
+state.layers.forEach(startMotion);
+
+// 'burst' is a distinct phase from 'enter' (owner, live: "the entrance is
+// black to the first two colors 'dancing' onto the screen" -- explicitly
+// NOT the same directional off-canvas slide song-change uses). No
+// translate, no direction: the layer sits centered the whole time and only
+// opacity + a scale pop move, so it's the two colors' own orbiting motion
+// (already boosted above) that reads as "arriving," not the frame being
+// dragged in from an edge.
+function applyPhase(l, phase, direction){
+  const off = OFFSET[direction] || OFFSET.left;
+  let transform = 'translate(0%, 0%) scale(1.18)';
+  let opacity = 1;
+  let animate = false;
+  if(phase === 'enter'){ transform = `translate(${-off.x}%, ${-off.y}%) scale(1.18)`; opacity = 0; }
+  if(phase === 'exit'){ transform = `translate(${off.x}%, ${off.y}%) scale(1.22)`; opacity = 0; animate = true; }
+  if(phase === 'burst'){ transform = 'translate(0%, 0%) scale(0.8)'; opacity = 0; }
+  if(phase === 'idle'){ opacity = 0; }
+  if(phase === 'steady') animate = true;
+
+  l.layer.style.opacity = opacity;
+  l.layer.style.transition = `opacity ${BLEND_MS}ms ${EASE_OPACITY}, transform ${BLEND_MS}ms ${EASE_MOTION}`;
+  l.inner.style.transform = transform;
+  l.inner.style.transition = `transform ${BLEND_MS}ms ${EASE_MOTION}`;
+  l.inner.style.animation = animate ? 'coverBloomDrift 18s ease-in-out infinite alternate' : 'none';
+}
+
+function setColors(l, colors){
+  l.duelScene = makeDuelScene(colors[0], colors[1], colors.join('-')+Math.random());
+  l.washSources = makeWashSources(colors);
+}
+
+function triggerEntrance(){
+  const p0 = nextPair();
+  state.direction = DIRECTIONS[Math.floor(Math.random()*DIRECTIONS.length)];
+  state.activeIdx = 0;
+  setColors(state.layers[0], p0);
+  setColors(state.layers[1], p0);
+  applyPhase(state.layers[1], 'idle', state.direction);
+  applyPhase(state.layers[0], 'burst', state.direction);
+  // Force a reflow so the browser registers the starting position before we
+  // animate to 'steady' -- otherwise the two style writes collapse into one
+  // and there's nothing to transition from.
+  void state.layers[0].layer.offsetWidth;
+  requestAnimationFrame(() => applyPhase(state.layers[0], 'steady', state.direction));
+}
+
+function triggerNextSong(){
+  const outIdx = state.activeIdx;
+  const inIdx = 1 - outIdx;
+  const nextColors = nextPair();
+  state.direction = DIRECTIONS[Math.floor(Math.random()*DIRECTIONS.length)];
+  setColors(state.layers[inIdx], nextColors);
+  applyPhase(state.layers[inIdx], 'enter', state.direction);
+  void state.layers[inIdx].layer.offsetWidth;
+  requestAnimationFrame(() => {
+    applyPhase(state.layers[outIdx], 'exit', state.direction);
+    applyPhase(state.layers[inIdx], 'steady', state.direction);
+  });
+  state.activeIdx = inIdx;
+}
+
+triggerEntrance();
+setInterval(triggerNextSong, 6800);
+</script>
+</body>
+</html>

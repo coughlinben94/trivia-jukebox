@@ -27,6 +27,43 @@ function easeInOut(t) {
 
 function lerp(a, b, t) { return a + (b - a) * t }
 
+// Shift an [R,G,B] triple toward white (pct > 0) or black (pct < 0) by pct.
+// Used to give each blob its own light-to-dark sweep across its radius
+// (2026-08-04, owner spec: "10% gradient of each color, both ways, adds
+// depth and dimension") — this shades a color against ITSELF only, never
+// blends toward the other blob's color.
+function shade(rgb, pct) {
+  const target = pct < 0 ? 0 : 255
+  const amount = Math.abs(pct)
+  return rgb.map(c => Math.round(c + (target - c) * amount))
+}
+
+// Center-to-edge stops for one blob's radial gradient: lighter at the
+// center, true color partway out, darker as it fades to transparent at the
+// rim — a soft sphere-like falloff instead of a single flat fill.
+// True while every circle is still the palette-loading placeholder color —
+// usePalette hands back five copies of '#080808' before the real fetch
+// resolves (see usePalette.js FALLBACK_COLORS). AlbumGradient previously drew
+// these as real blobs: screen-blending several near-black circles over a
+// near-black base is NOT a no-op (measured: RGB 8 climbs to ~28 wherever 3
+// overlap), so viewers saw a blotchy "kinda black" pattern for the ~1-2s
+// before real colors arrived, distinct from the pure black base. Skip
+// drawing entirely in this state so loading stays flat black.
+function isAllLoadingSentinel(rgbArr) {
+  return rgbArr.every(([r, g, b]) => r === 8 && g === 8 && b === 8)
+}
+
+function shadedStops(rgb) {
+  const [R, G, B] = rgb
+  const light = shade(rgb, 0.10)
+  const dark  = shade(rgb, -0.10)
+  return [
+    [0,   `rgba(${light[0]},${light[1]},${light[2]},0.9)`],
+    [0.6, `rgba(${R},${G},${B},0.9)`],
+    [1,   `rgba(${dark[0]},${dark[1]},${dark[2]},0)`],
+  ]
+}
+
 // ── Circle layout — seeded per-index so positions are always deterministic ─────
 
 function makeCircleParams() {
@@ -228,19 +265,18 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
         const oy         = s.inOffsetY * offsetFrac * H
 
         if (!blendCacheRef.current || blendCacheRef.current.maxDim !== maxDim) {
-          const buildLayer = (rgbArr) => rgbArr.map(([R, G, B], i) => {
+          const buildLayer = (rgbArr) => rgbArr.map((rgb, i) => {
             const r = circleParams[i].radius * maxDim
             const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r)
-            g.addColorStop(0, `rgba(${R},${G},${B},0.9)`)
-            g.addColorStop(1, `rgba(${R},${G},${B},0)`)
+            for (const [stop, color] of shadedStops(rgb)) g.addColorStop(stop, color)
             return { grad: g, r }
           })
           blendCacheRef.current = { maxDim, out: buildLayer(s.outRgb), in: buildLayer(s.inRgb) }
         }
         const { out: outE, in: inE } = blendCacheRef.current
 
-        // Layer A — outgoing, natural positions
-        if (t < 1) {
+        // Layer A — outgoing, natural positions (skip if it's still the loading placeholder)
+        if (t < 1 && !isAllLoadingSentinel(s.outRgb)) {
           ctx.globalAlpha = 1 - t
           for (let i = 0; i < NUM_CIRCLES; i++) {
             const p  = circleParams[i]
@@ -252,8 +288,8 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
           }
         }
 
-        // Layer B — incoming, sweeps in from edge
-        if (t > 0) {
+        // Layer B — incoming, sweeps in from edge (skip if it's still the loading placeholder)
+        if (t > 0 && !isAllLoadingSentinel(s.inRgb)) {
           ctx.globalAlpha = t
           for (let i = 0; i < NUM_CIRCLES; i++) {
             const p  = circleParams[i]
@@ -282,17 +318,16 @@ export default function AlbumGradient({ colors = [], nextColors = [], active = t
         if (!gradCacheRef.current || gradCacheRef.current.maxDim !== maxDim) {
           gradCacheRef.current = {
             maxDim,
-            entries: s.steadyRgb.map(([R, G, B], i) => {
+            entries: s.steadyRgb.map((rgb, i) => {
               const r    = circleParams[i].radius * maxDim
               const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, r)
-              grad.addColorStop(0, `rgba(${R},${G},${B},0.9)`)
-              grad.addColorStop(1, `rgba(${R},${G},${B},0)`)
+              for (const [stop, color] of shadedStops(rgb)) grad.addColorStop(stop, color)
               return { grad, r }
             }),
           }
         }
         const { entries } = gradCacheRef.current
-        for (let i = 0; i < NUM_CIRCLES; i++) {
+        for (let i = 0; i < NUM_CIRCLES && !isAllLoadingSentinel(s.steadyRgb); i++) {
           const p            = circleParams[i]
           const { grad, r }  = entries[i]
           const cx = (p.baseX + p.xAmp * Math.sin(tSec * p.xFreq * Math.PI * 2 + p.xPhase)) * W

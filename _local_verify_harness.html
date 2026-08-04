@@ -1,0 +1,124 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>local verify — final</title>
+<style>
+  body { background:#111; margin:0; padding:20px; font-family:monospace; color:#eee; }
+  .row { display:flex; gap:16px; flex-wrap:wrap; }
+  canvas { width:360px; height:220px; background:#000; border:1px solid #333; }
+  .cell { display:flex; flex-direction:column; gap:4px; }
+</style>
+</head>
+<body>
+  <div id="out">loading...</div>
+  <div class="row" id="canvases"></div>
+<script type="module">
+  import { prepareTwoPoolField } from './src/lib/twoLightBlend.js';
+  import { makeFlowNoise2D } from './src/lib/flowNoise.js';
+  import { seamWidth, wobbleAmount, shadeAmount, anchorAmplitude, motionSpeed } from './src/lib/gradientTuning.js';
+
+  const FBM_PEAK = 0.53;
+  const MIN_ANCHOR_SEPARATION = 0.35;
+  const MAX_ANGLE_STEP_DEG_PER_SEC = 240;
+  function squashToward(v, c, l) { return c + l * Math.tanh((v - c) / l); }
+  function computeAnchorPositions(lights, t, wobbleNoise, opts) {
+    const { wobbleAmt = 0, prevAngle = null, prevT = null } = opts || {};
+    const [a, b] = lights;
+    const driftFor = l => ({
+      dx: wobbleNoise.fbm(t*0.025 + l.driftPhaseX, t*0.017 + 0.31, 2) / FBM_PEAK * l.ampX * 0.8,
+      dy: wobbleNoise.fbm(t*0.021 + l.driftPhaseY, t*0.014 + 0.77, 2) / FBM_PEAK * l.ampY * 0.8,
+    });
+    const dA = driftFor(a), dB = driftFor(b);
+    const speedMod = 1 + (wobbleNoise.fbm(t*0.016 + 271.3, t*0.012 + 613.7, 2) / FBM_PEAK) * 0.15;
+    let ax = a.baseX + Math.sin(t*a.freqX*speedMod + a.phaseX)*a.ampX + dA.dx;
+    let ay = a.baseY + Math.sin(t*a.freqY*speedMod + a.phaseY)*a.ampY + dA.dy;
+    let bx = b.baseX + Math.sin(t*b.freqX*speedMod + b.phaseX)*b.ampX + dB.dx;
+    let by = b.baseY + Math.sin(t*b.freqY*speedMod + b.phaseY)*b.ampY + dB.dy;
+    const rawMidX = (ax+bx)/2, rawMidY = (ay+by)/2;
+    const midX = squashToward(rawMidX, 0.5, 0.30), midY = squashToward(rawMidY, 0.5, 0.30);
+    const shiftX = midX-rawMidX, shiftY = midY-rawMidY;
+    ax += shiftX; bx += shiftX; ay += shiftY; by += shiftY;
+    const dx = bx-ax, dy = by-ay;
+    const sep = Math.hypot(dx, dy);
+    const minSep = Math.max(MIN_ANCHOR_SEPARATION, wobbleAmt*2);
+    const rawAngle = sep > 1e-6 ? Math.atan2(dy, dx) : (prevAngle ?? 0);
+    let angle;
+    if (prevAngle === null || prevT === null) { angle = rawAngle; }
+    else {
+      const dt = Math.max(0, t-prevT);
+      const maxStep = MAX_ANGLE_STEP_DEG_PER_SEC * Math.min(dt, 0.5) * (Math.PI/180);
+      let diff = rawAngle - prevAngle;
+      diff -= Math.round(diff/(2*Math.PI))*2*Math.PI;
+      const step = Math.max(-maxStep, Math.min(maxStep, diff));
+      angle = prevAngle + step;
+    }
+    if (sep < minSep) {
+      const ux = Math.cos(angle), uy = Math.sin(angle);
+      const mx = (ax+bx)/2, my = (ay+by)/2;
+      const half = minSep/2;
+      ax = mx - ux*half; ay = my - uy*half;
+      bx = mx + ux*half; by = my + uy*half;
+    }
+    return { ax, ay, bx, by, speedMod, angle };
+  }
+
+  document.getElementById('out').textContent =
+    'real shipped code (collision + flash/whip + purity fixes, all committed) — seamWidth=' + seamWidth().toFixed(3) +
+    ' wobbleAmount=' + wobbleAmount().toFixed(3) +
+    ' shadeAmount=' + shadeAmount().toFixed(3) +
+    ' anchorAmplitude=' + anchorAmplitude().toFixed(3);
+
+  const CASES = [
+    { label: '60/40 Free-Ride-style', a: '#c99a3f', b: '#7a4fae', weightA: 0.6, weightB: 0.4 },
+    { label: '85/15 Fast-Car-style', a: '#d72a1b', b: '#397f85', weightA: 0.85, weightB: 0.15 },
+    { label: '50/50 red/blue', a: '#ff0000', b: '#0000ff', weightA: 0.5, weightB: 0.5 },
+  ];
+
+  const TINY = 56;
+  const container = document.getElementById('canvases');
+  const motion = motionSpeed();
+
+  CASES.forEach((c, ci) => {
+    const cell = document.createElement('div'); cell.className = 'cell';
+    const label = document.createElement('div'); label.textContent = c.label;
+    const canvas = document.createElement('canvas'); canvas.width = 720; canvas.height = 440;
+    cell.appendChild(label); cell.appendChild(canvas); container.appendChild(cell);
+    const ctx = canvas.getContext('2d');
+    const small = document.createElement('canvas'); small.width = TINY; small.height = TINY;
+    const smallCtx = small.getContext('2d');
+
+    const field = prepareTwoPoolField(c.a, c.b, { seamWidth: seamWidth(), weightA: c.weightA, weightB: c.weightB });
+    const wobble = makeFlowNoise2D(1000 + ci);
+    const shadeNoise = makeFlowNoise2D(5000 + ci);
+    const amp = anchorAmplitude();
+    const anchors = [
+      { baseX: 0.36, baseY: 0.46, ampX: amp, ampY: amp*0.9, freqX: 0.4*motion, freqY: 0.34*motion, phaseX: 0.4, phaseY: 2.7, driftPhaseX: 12, driftPhaseY: 340 },
+      { baseX: 0.64, baseY: 0.54, ampX: amp*0.95, ampY: amp*1.05, freqX: 0.37*motion, freqY: 0.38*motion, phaseX: 3.1, phaseY: 0.9, driftPhaseX: 710, driftPhaseY: 88 },
+    ];
+
+    let prevAngle = null, prevT = null;
+    function draw(now) {
+      const t = now / 1000;
+      const wobbleAmt = wobbleAmount();
+      const res = computeAnchorPositions(anchors, t, wobble, { wobbleAmt, prevAngle, prevT });
+      prevAngle = res.angle; prevT = t;
+      const { ax, ay, bx, by } = res;
+      const img = smallCtx.createImageData(TINY, TINY);
+      for (let y=0;y<TINY;y++) for (let x=0;x<TINY;x++) {
+        const nx = x/(TINY-1), ny = y/(TINY-1);
+        const distA = Math.hypot(nx-ax, ny-ay);
+        const distB = Math.hypot(nx-bx, ny-by);
+        const w = wobble.fbm(nx*2.4 + t*0.05, ny*2.4 - t*0.04, 2) / FBM_PEAK * wobbleAmt;
+        const shade = shadeNoise.fbm(nx*1.3 + t*0.03, ny*1.3 - t*0.025, 2) / FBM_PEAK * shadeAmount();
+        const idx = (y*TINY+x)*4;
+        field.sampleInto(distA - distB + w, shade, img.data, idx);
+      }
+      smallCtx.putImageData(img, 0, 0);
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.filter = 'blur(10px)';
+      ctx.drawImage(small, -canvas.width*0.03, -canvas.height*0.03, canvas.width*1.06, canvas.height*1.06);
+      ctx.filter = 'none';
+      requestAnimationFrame(draw);
+    }
+    requestAnimationFrame(draw);
+  });
+</script>
+</body></html>

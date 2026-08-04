@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Jukebox Background — 4 Concepts</title>
+<style>
+  :root{
+    --bg:#0a0a0c; --panel:#141416; --line:#26262a; --text:#eee; --dim:#8a8a92;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+    padding:24px;
+  }
+  h1{font-size:18px; font-weight:600; margin:0 0 4px;}
+  .sub{color:var(--dim); font-size:13px; margin:0 0 20px; max-width:640px; line-height:1.5;}
+  .tabs{display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap;}
+  .tab{
+    padding:8px 14px; border:1px solid var(--line); border-radius:8px;
+    background:var(--panel); color:var(--dim); font-size:13px; cursor:pointer;
+    user-select:none;
+  }
+  .tab.active{color:#fff; border-color:#555; background:#1c1c1f;}
+  .concept{display:none;}
+  .concept.active{display:block;}
+  .layout{display:flex; gap:20px; align-items:flex-start; flex-wrap:wrap;}
+  .stage-wrap{flex:0 0 auto;}
+  canvas{
+    width:480px; height:270px; border-radius:10px; display:block;
+    background:#000; box-shadow:0 0 0 1px var(--line);
+  }
+  .meta{max-width:340px;}
+  .meta h2{font-size:15px; margin:0 0 6px;}
+  .meta p{font-size:13px; color:var(--dim); line-height:1.55; margin:0 0 10px;}
+  .controls{display:flex; gap:8px; margin-top:14px; flex-wrap:wrap;}
+  button{
+    padding:7px 12px; border-radius:7px; border:1px solid var(--line);
+    background:#1c1c1f; color:var(--text); font-size:12px; cursor:pointer;
+  }
+  button:hover{border-color:#555;}
+  .swatches{display:flex; gap:6px; margin-top:10px;}
+  .sw{width:20px; height:20px; border-radius:5px; border:1px solid #333;}
+  .tag{
+    display:inline-block; font-size:11px; color:#555; border:1px solid var(--line);
+    border-radius:4px; padding:2px 6px; margin-top:10px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Jukebox live-screen background — 4 motion concepts</h1>
+<p class="sub">Each stage is a real animation, not a still. Record + title/artist text sit on top with a scrim, same as the live app, so you can judge legibility. "Next Song" swaps the two source colors and runs the crossfade transition. "Replay Entrance" resets to black and runs the first-song arrival.</p>
+
+<div class="tabs">
+  <div class="tab active" data-c="0">1 — Tide</div>
+  <div class="tab" data-c="1">2 — Duel</div>
+  <div class="tab" data-c="2">3 — Ecosystem</div>
+  <div class="tab" data-c="3">4 — Aurora</div>
+</div>
+
+<!-- CONCEPT 1 -->
+<div class="concept active" id="c0">
+  <div class="layout">
+    <div class="stage-wrap">
+      <canvas id="cv0" width="480" height="270"></canvas>
+      <div class="controls">
+        <button onclick="nextSong(0)">Next Song</button>
+        <button onclick="replayEntrance(0)">Replay Entrance</button>
+      </div>
+    </div>
+    <div class="meta">
+      <h2>Tide</h2>
+      <p>A single fluid boundary between the two colors, warped by slow domain noise so it never reads as a circle or a straight line. The boundary itself creeps forward and pulls back over the course of the song — like a tide line, not a wobble in place.</p>
+      <p>Entrance: color floods in from a random point on the edge of the screen and spreads across, like water spilled and finding the corners — no reveal mask, the liquid itself is the wipe.</p>
+      <p>Transition: outgoing frame freezes as a single image, new field fades up underneath it and takes over.</p>
+      <span class="tag">closest to current renderer, but boundary now travels + entrance is literal liquid spread</span>
+    </div>
+  </div>
+</div>
+
+<!-- CONCEPT 2 -->
+<div class="concept" id="c1">
+  <div class="layout">
+    <div class="stage-wrap">
+      <canvas id="cv1" width="480" height="270"></canvas>
+      <div class="controls">
+        <button onclick="nextSong(1)">Next Song</button>
+        <button onclick="replayEntrance(1)">Replay Entrance</button>
+      </div>
+    </div>
+    <div class="meta">
+      <h2>Duel</h2>
+      <p>Two independent color fields, each with its own slow-random "confidence" level. When one color's confidence rises it visibly pushes across the midline into the other's territory; when it falls it retreats. Both levels drift independently and never repeat in sync — reads as two things pushing and yielding, not one boundary wobbling.</p>
+      <p>Entrance: both fields start collapsed to zero at opposite edges and grow inward, meeting in the middle for the first time as the song starts.</p>
+      <p>Transition: same freeze-then-fade crossfade as concept 1.</p>
+      <span class="tag">most literal read on "battling / dancing"</span>
+    </div>
+  </div>
+</div>
+
+<!-- CONCEPT 3 -->
+<div class="concept" id="c2">
+  <div class="layout">
+    <div class="stage-wrap">
+      <canvas id="cv2" width="480" height="270"></canvas>
+      <div class="controls">
+        <button onclick="nextSong(2)">Next Song</button>
+        <button onclick="replayEntrance(2)">Replay Entrance</button>
+      </div>
+    </div>
+    <div class="meta">
+      <h2>Ecosystem</h2>
+      <p>No single boundary at all — a field of soft drifting motes in both colors, moved by a shared slow flow field so they clump and disperse like plankton in water. The population balance between the two colors drifts slowly over the song (60/40 one minute, 30/70 the next) so the overall cast of the screen visibly shifts, not just the texture.</p>
+      <p>Entrance: motes spawn from one edge and drift in, density ramping from empty to full.</p>
+      <p>Transition: existing motes recolor gradually toward the new pair while old motes fade and new ones spawn — a population turnover rather than a hard cut.</p>
+      <span class="tag">most literal read on "it's an ecosystem"</span>
+    </div>
+  </div>
+</div>
+
+<!-- CONCEPT 4 -->
+<div class="concept" id="c3">
+  <div class="layout">
+    <div class="stage-wrap">
+      <canvas id="cv3" width="480" height="270"></canvas>
+      <div class="controls">
+        <button onclick="nextSong(3)">Next Song</button>
+        <button onclick="replayEntrance(3)">Replay Entrance</button>
+      </div>
+    </div>
+    <div class="meta">
+      <h2>Aurora</h2>
+      <p>Soft diagonal ribbons of the two colors drift across the frame at slightly different speeds and widths, crossing and overlapping rather than meeting at one edge. Where they overlap you get a third blended tone that shifts as the ribbons slide past each other. Motion has a clear direction (diagonal drift) rather than a stationary pulse, which reads as more "alive" than a fixed boundary.</p>
+      <p>Entrance: ribbons stream in from one corner, like the screen is being painted on.</p>
+      <p>Transition: freeze-then-fade, same as the others.</p>
+      <span class="tag">most structurally different from the current renderer</span>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ---------- shared: value noise / fbm ---------- */
+function hash(x,y){
+  let n = Math.sin(x*127.1 + y*311.7) * 43758.5453123;
+  return n - Math.floor(n);
+}
+function smooth(t){ return t*t*(3-2*t); }
+function noise2(x,y){
+  const x0=Math.floor(x), y0=Math.floor(y);
+  const xf=x-x0, yf=y-y0;
+  const tl=hash(x0,y0), tr=hash(x0+1,y0), bl=hash(x0,y0+1), br=hash(x0+1,y0+1);
+  const u=smooth(xf), v=smooth(yf);
+  return (tl*(1-u)+tr*u)*(1-v) + (bl*(1-u)+br*u)*v;
+}
+function fbm(x,y,oct){
+  let val=0, amp=0.5, freq=1;
+  for(let i=0;i<oct;i++){ val += amp*noise2(x*freq,y*freq); amp*=0.5; freq*=2; }
+  return val;
+}
+function hexToRgb(hex){
+  const v = parseInt(hex.slice(1),16);
+  return [(v>>16)&255, (v>>8)&255, v&255];
+}
+function lerp(a,b,t){ return a+(b-a)*t; }
+function lerpColor(c1,c2,t){
+  return [lerp(c1[0],c2[0],t), lerp(c1[1],c2[1],t), lerp(c1[2],c2[2],t)];
+}
+
+/* album color pairs to cycle through on "Next Song" */
+const PAIRS = [
+  ["#ff2fb0","#3366aa"],
+  ["#f2a71b","#1b6e6e"],
+  ["#7c3aed","#e6e6e6"],
+  ["#0fbf6f","#c81e3a"],
+  ["#ffd166","#26547c"],
+];
+let pairIdx = [0,1,2,3];
+
+/* ---------- overlay: record + text + scrim, drawn on top of every concept ---------- */
+function drawOverlay(ctx, w, h){
+  // dark scrim gradient bottom for text
+  const g = ctx.createLinearGradient(0,h*0.55,0,h);
+  g.addColorStop(0,"rgba(0,0,0,0)");
+  g.addColorStop(1,"rgba(0,0,0,0.55)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0,h*0.55,w,h*0.45);
+
+  // record circle, left side
+  const cx = w*0.16, cy = h*0.45, r = h*0.30;
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+  ctx.fillStyle = "rgba(10,10,10,0.9)"; ctx.fill();
+  ctx.beginPath(); ctx.arc(cx,cy,r*0.14,0,Math.PI*2);
+  ctx.fillStyle = "#888"; ctx.fill();
+  ctx.strokeStyle="rgba(255,255,255,0.06)"; ctx.lineWidth=1;
+  for(let i=1;i<=4;i++){ ctx.beginPath(); ctx.arc(cx,cy,r*(0.25+i*0.16),0,Math.PI*2); ctx.stroke(); }
+  ctx.restore();
+
+  // title / artist
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = "#fff";
+  ctx.font = "600 20px -apple-system, Helvetica, Arial, sans-serif";
+  ctx.fillText("Song Title Goes Here", w*0.06, h*0.82);
+  ctx.font = "400 13px -apple-system, Helvetica, Arial, sans-serif";
+  ctx.fillStyle = "rgba(255,255,255,0.75)";
+  ctx.fillText("Artist Name", w*0.06, h*0.90);
+}
+
+/* ================= CONCEPT 1: TIDE (field, single traveling boundary) ================= */
+(function(){
+  const canvas = document.getElementById("cv0");
+  const ctx = canvas.getContext("2d");
+  const W=160, H=90; // low-res field buffer
+  const off = document.createElement("canvas"); off.width=W; off.height=H;
+  const octx = off.getContext("2d");
+  const img = octx.createImageData(W,H);
+
+  let colorsA = hexToRgb(PAIRS[0][0]), colorsB = hexToRgb(PAIRS[0][1]);
+  let t = 0;
+  let boundaryDrift = 0; // slow random walk, moves the tide line forward/back
+  let entrance = { active:true, t:0, dur:2.2, ex:Math.random(), ey:Math.random() };
+  let crossfade = null; // {frozen:Image, t, dur}
+
+  function fieldAt(x,y,time){
+    // domain-warped coordinate
+    const wx = x + fbm(x*1.3+50, y*1.3+time*0.06, 3)*2.2;
+    const wy = y + fbm(x*1.3-50, y*1.3+time*0.06, 3)*2.2;
+    // boundary is a warped sine wave that also drifts slowly left/right
+    const line = Math.sin(wy*2.1 + time*0.12) * 0.9 + boundaryDrift;
+    let d = wx*2 - 2 - line*1.4; // signed distance-ish
+    return d;
+  }
+
+  function render(time){
+    boundaryDrift = Math.sin(time*0.05)*0.6 + fbm(time*0.03,7,2)*0.8;
+
+    let entranceRadius = 999;
+    if(entrance.active){
+      entrance.t += 1/60;
+      const p = Math.min(1, entrance.t/entrance.dur);
+      entranceRadius = smooth(p) * 3.4;
+      if(p>=1) entrance.active=false;
+    }
+
+    for(let yy=0; yy<H; yy++){
+      for(let xx=0; xx<W; xx++){
+        const nx = xx/W*2-1, ny = yy/H*2-1;
+        let d = fieldAt(nx*1.6, ny*1.6, time);
+        const mix = 1/(1+Math.exp(-d*3.2)); // sigmoid, narrow blend
+        let m = mix;
+        if(entrance.active || entrance.t < entrance.dur+0.1){
+          const dist = Math.hypot(nx-(entrance.ex*2-1), ny-(entrance.ey*2-1));
+          const spread = smooth(Math.min(1, Math.max(0, (entranceRadius-dist))));
+          m = mix; // color choice still from field
+          // gate visibility: outside spread radius -> black
+          const idx = (yy*W+xx)*4;
+          const col = lerpColor(colorsA, colorsB, m);
+          img.data[idx]   = col[0]*spread;
+          img.data[idx+1] = col[1]*spread;
+          img.data[idx+2] = col[2]*spread;
+          img.data[idx+3] = 255;
+          continue;
+        }
+        const idx = (yy*W+xx)*4;
+        const col = lerpColor(colorsA, colorsB, m);
+        img.data[idx]=col[0]; img.data[idx+1]=col[1]; img.data[idx+2]=col[2]; img.data[idx+3]=255;
+      }
+    }
+    octx.putImageData(img,0,0);
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(off,0,0,canvas.width,canvas.height);
+
+    if(crossfade){
+      crossfade.t += 1/60;
+      const p = Math.min(1, crossfade.t/crossfade.dur);
+      ctx.globalAlpha = 1;
+      ctx.drawImage(crossfade.frozen,0,0);
+      ctx.globalAlpha = p;
+      ctx.drawImage(off,0,0,canvas.width,canvas.height);
+      ctx.globalAlpha = 1;
+      if(p>=1) crossfade=null;
+    }
+
+    drawOverlay(ctx, canvas.width, canvas.height);
+    t += 1/60;
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+
+  window.__c0_next = function(){
+    // freeze current frame
+    const snap = document.createElement("canvas");
+    snap.width=canvas.width; snap.height=canvas.height;
+    snap.getContext("2d").drawImage(canvas,0,0);
+    crossfade = { frozen:snap, t:0, dur:1.6 };
+    pairIdx[0] = (pairIdx[0]+1)%PAIRS.length;
+    const p = PAIRS[pairIdx[0]];
+    colorsA = hexToRgb(p[0]); colorsB = hexToRgb(p[1]);
+  };
+  window.__c0_entrance = function(){
+    entrance = { active:true, t:0, dur:2.2, ex:Math.random(), ey:Math.random() };
+    crossfade = null;
+  };
+})();
+
+/* ================= CONCEPT 2: DUEL (two confidence-driven fields) ================= */
+(function(){
+  const canvas = document.getElementById("cv1");
+  const ctx = canvas.getContext("2d");
+  const W=160, H=90;
+  const off = document.createElement("canvas"); off.width=W; off.height=H;
+  const octx = off.getContext("2d");
+  const img = octx.createImageData(W,H);
+
+  let colorsA = hexToRgb(PAIRS[1][0]), colorsB = hexToRgb(PAIRS[1][1]);
+  let t=0;
+  let confA=0.5; // independent slow random walk 0..1
+  let seedA = Math.random()*1000, seedB = Math.random()*1000;
+  let entrance = { active:true, t:0, dur:2.4 };
+  let crossfade = null;
+
+  function render(time){
+    // two independent low-freq oscillators, out of phase / different periods -> never syncs
+    const a = 0.5 + fbm(time*0.045+seedA, 3, 3)*0.7;
+    const b = 0.5 + fbm(time*0.037+seedB, 9, 3)*0.7;
+    confA = a/(a+b); // normalized push of color A across the midline
+
+    let entranceP = 1;
+    if(entrance.active){
+      entrance.t += 1/60;
+      entranceP = smooth(Math.min(1, entrance.t/entrance.dur));
+      if(entrance.t/entrance.dur>=1) entrance.active=false;
+    }
+
+    for(let yy=0; yy<H; yy++){
+      for(let xx=0; xx<W; xx++){
+        const nx=xx/W*2-1, ny=yy/H*2-1;
+        const wx = nx + fbm(nx*1.6+20, ny*1.6+time*0.05, 3)*1.6;
+        // midline shifts left/right based on confA (encroach/recede)
+        const midline = (confA-0.5)*2.4;
+        let d = wx - midline;
+        const mix = 1/(1+Math.exp(-d*3.6));
+
+        // entrance: A grows from left edge, B grows from right edge
+        let visA = 1, visB = 1;
+        if(entrance.active || entrance.t < entrance.dur+0.1){
+          visA = smooth(Math.min(1, Math.max(0, entranceP*2.2 - (1-nx))));
+          visB = smooth(Math.min(1, Math.max(0, entranceP*2.2 - (1+nx))));
+        }
+        const vis = lerp(visA, visB, mix);
+
+        const col = lerpColor(colorsA, colorsB, mix);
+        const idx=(yy*W+xx)*4;
+        img.data[idx]=col[0]*vis; img.data[idx+1]=col[1]*vis; img.data[idx+2]=col[2]*vis; img.data[idx+3]=255;
+      }
+    }
+    octx.putImageData(img,0,0);
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(off,0,0,canvas.width,canvas.height);
+
+    if(crossfade){
+      crossfade.t += 1/60;
+      const p = Math.min(1, crossfade.t/crossfade.dur);
+      ctx.drawImage(crossfade.frozen,0,0);
+      ctx.globalAlpha = p;
+      ctx.drawImage(off,0,0,canvas.width,canvas.height);
+      ctx.globalAlpha = 1;
+      if(p>=1) crossfade=null;
+    }
+
+    drawOverlay(ctx, canvas.width, canvas.height);
+    t+=1/60;
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+
+  window.__c1_next = function(){
+    const snap = document.createElement("canvas");
+    snap.width=canvas.width; snap.height=canvas.height;
+    snap.getContext("2d").drawImage(canvas,0,0);
+    crossfade = { frozen:snap, t:0, dur:1.6 };
+    pairIdx[1]=(pairIdx[1]+1)%PAIRS.length;
+    const p=PAIRS[pairIdx[1]];
+    colorsA=hexToRgb(p[0]); colorsB=hexToRgb(p[1]);
+  };
+  window.__c1_entrance = function(){
+    entrance = { active:true, t:0, dur:2.4 };
+    seedA = Math.random()*1000; seedB = Math.random()*1000;
+    crossfade = null;
+  };
+})();
+
+/* ================= CONCEPT 3: ECOSYSTEM (particle field) ================= */
+(function(){
+  const canvas = document.getElementById("cv2");
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  let colorsA = hexToRgb(PAIRS[2][0]), colorsB = hexToRgb(PAIRS[2][1]);
+  let nextA = null, nextB = null;
+  let crossfadeT = 0, crossfading = false;
+
+  const N = 90;
+  let motes = [];
+  function spawnMote(fromEdge){
+    let x,y;
+    if(fromEdge){ x = -20; y = Math.random()*H; }
+    else { x = Math.random()*W; y = Math.random()*H; }
+    return {
+      x, y,
+      vx: 0, vy: 0,
+      r: 18 + Math.random()*46,
+      isA: Math.random() < 0.5,
+      seed: Math.random()*1000,
+      alpha: fromEdge ? 0 : 0.9,
+      targetAlpha: 0.55 + Math.random()*0.35,
+      life: 0,
+    };
+  }
+  for(let i=0;i<N;i++) motes.push(spawnMote(false));
+
+  let entranceActive = true, entranceT = 0;
+  let balanceSeed = Math.random()*1000;
+
+  function render(time){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle = "#050506";
+    ctx.fillRect(0,0,W,H);
+
+    if(entranceActive){
+      entranceT += 1/60;
+      if(entranceT > 3) entranceActive = false;
+    }
+
+    // slow population balance drift: fraction that should be color A
+    const targetFracA = 0.5 + fbm(time*0.02+balanceSeed, 4, 3)*0.4;
+
+    ctx.globalCompositeOperation = "lighter";
+    for(const m of motes){
+      m.life += 1/60;
+      const flowAngle = fbm(m.x*0.01+time*0.03, m.y*0.01+m.seed, 3) * Math.PI*4;
+      m.vx = lerp(m.vx, Math.cos(flowAngle)*0.35, 0.05);
+      m.vy = lerp(m.vy, Math.sin(flowAngle)*0.35 + 0.06, 0.05);
+      m.x += m.vx; m.y += m.vy;
+      if(m.x > W+30){ m.x = -30; m.y = Math.random()*H; }
+      if(m.y > H+30) m.y = -30;
+      if(m.y < -30) m.y = H+30;
+
+      m.alpha = lerp(m.alpha, m.targetAlpha, 0.03);
+
+      // occasionally re-poll whether this mote should flip color to nudge toward targetFracA
+      if(Math.random() < 0.002){
+        m.isA = Math.random() < targetFracA;
+      }
+
+      const baseA = crossfading ? colorsA : colorsA;
+      const cA = colorsA, cB = colorsB;
+      let col = m.isA ? cA : cB;
+      if(crossfading){
+        const na = m.isA ? nextA : nextB;
+        col = lerpColor(col, na, crossfadeT);
+      }
+
+      const grad = ctx.createRadialGradient(m.x,m.y,0,m.x,m.y,m.r);
+      grad.addColorStop(0, `rgba(${col[0]|0},${col[1]|0},${col[2]|0},${m.alpha})`);
+      grad.addColorStop(1, `rgba(${col[0]|0},${col[1]|0},${col[2]|0},0)`);
+      ctx.fillStyle = grad;
+      ctx.beginPath(); ctx.arc(m.x,m.y,m.r,0,Math.PI*2); ctx.fill();
+    }
+    ctx.globalCompositeOperation = "source-over";
+
+    if(crossfading){
+      crossfadeT += 1/120;
+      if(crossfadeT >= 1){
+        colorsA = nextA; colorsB = nextB;
+        crossfading = false; crossfadeT = 0;
+      }
+    }
+
+    drawOverlay(ctx, W, H);
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+
+  window.__c2_next = function(){
+    pairIdx[2] = (pairIdx[2]+1)%PAIRS.length;
+    const p = PAIRS[pairIdx[2]];
+    nextA = hexToRgb(p[0]); nextB = hexToRgb(p[1]);
+    crossfading = true; crossfadeT = 0;
+    // turnover: spawn a handful of fresh motes to feel alive during the swap
+    for(let i=0;i<12;i++) motes.push(spawnMote(true));
+    if(motes.length > N+30) motes.splice(0, motes.length-(N+30));
+  };
+  window.__c2_entrance = function(){
+    motes = [];
+    for(let i=0;i<N;i++) motes.push(spawnMote(true));
+    entranceActive = true; entranceT = 0;
+    balanceSeed = Math.random()*1000;
+  };
+})();
+
+/* ================= CONCEPT 4: AURORA (drifting ribbons) ================= */
+(function(){
+  const canvas = document.getElementById("cv3");
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width, H = canvas.height;
+  let colorsA = hexToRgb(PAIRS[3][0]), colorsB = hexToRgb(PAIRS[3][1]);
+  let t = 0;
+  let entrance = { active:true, t:0, dur:2.6 };
+  let crossfade = null;
+
+  const RIBBONS = 5;
+  const ribbonSeeds = Array.from({length:RIBBONS}, ()=>Math.random()*1000);
+
+  function draw(time){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle="#050506"; ctx.fillRect(0,0,W,H);
+
+    let reveal = 1;
+    if(entrance.active){
+      entrance.t += 1/60;
+      reveal = smooth(Math.min(1, entrance.t/entrance.dur));
+      if(reveal>=1) entrance.active=false;
+    }
+
+    ctx.save();
+    if(entrance.active || entrance.t < entrance.dur+0.1){
+      // diagonal wipe: clip to a growing region from top-left corner
+      ctx.beginPath();
+      const diag = reveal * (W+H) * 1.3;
+      ctx.moveTo(0,0);
+      ctx.lineTo(diag,0);
+      ctx.lineTo(0,diag);
+      ctx.closePath();
+      ctx.clip();
+    }
+
+    ctx.globalCompositeOperation = "lighter";
+    for(let i=0;i<RIBBONS;i++){
+      const seed = ribbonSeeds[i];
+      const speed = 0.02 + i*0.006;
+      const isA = i % 2 === 0;
+      const col = isA ? colorsA : colorsB;
+      const width = 30 + i*8;
+      ctx.beginPath();
+      for(let x=-20; x<=W+20; x+=8){
+        const yBase = (i/RIBBONS)*H*1.4 - H*0.2;
+        const y = yBase + Math.sin(x*0.012 + time*speed*4 + seed) * 40
+                 + fbm(x*0.01+seed, time*speed, 3)*60
+                 + time*speed*30 % H*0 ; // drift folded into sin phase above
+        if(x===-20) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      }
+      ctx.strokeStyle = `rgba(${col[0]},${col[1]},${col[2]},0.5)`;
+      ctx.lineWidth = width;
+      ctx.lineCap = "round";
+      ctx.stroke();
+    }
+    ctx.globalCompositeOperation = "source-over";
+    ctx.restore();
+
+    if(crossfade){
+      crossfade.t += 1/60;
+      const p = Math.min(1, crossfade.t/crossfade.dur);
+      const snapCanvas = crossfade.frozen;
+      ctx.save();
+      const tmp = document.createElement("canvas");
+      tmp.width=W; tmp.height=H;
+      const tctx = tmp.getContext("2d");
+      tctx.drawImage(canvas,0,0);
+      ctx.clearRect(0,0,W,H);
+      ctx.drawImage(snapCanvas,0,0);
+      ctx.globalAlpha = p;
+      ctx.drawImage(tmp,0,0);
+      ctx.globalAlpha = 1;
+      ctx.restore();
+      if(p>=1) crossfade=null;
+    }
+
+    drawOverlay(ctx, W, H);
+    t+=1/60;
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+
+  window.__c3_next = function(){
+    const snap = document.createElement("canvas");
+    snap.width=W; snap.height=H;
+    snap.getContext("2d").drawImage(canvas,0,0);
+    crossfade = { frozen:snap, t:0, dur:1.6 };
+    pairIdx[3]=(pairIdx[3]+1)%PAIRS.length;
+    const p=PAIRS[pairIdx[3]];
+    colorsA=hexToRgb(p[0]); colorsB=hexToRgb(p[1]);
+  };
+  window.__c3_entrance = function(){
+    entrance = { active:true, t:0, dur:2.6 };
+    crossfade = null;
+  };
+})();
+
+/* ---------- wiring: tabs + buttons ---------- */
+function nextSong(i){ window["__c"+i+"_next"](); }
+function replayEntrance(i){ window["__c"+i+"_entrance"](); }
+
+document.querySelectorAll(".tab").forEach(tab=>{
+  tab.addEventListener("click", ()=>{
+    document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
+    document.querySelectorAll(".concept").forEach(c=>c.classList.remove("active"));
+    tab.classList.add("active");
+    document.getElementById("c"+tab.dataset.c).classList.add("active");
+  });
+});
+</script>
+</body>
+</html>

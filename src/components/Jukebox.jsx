@@ -445,7 +445,7 @@ const [newSetName, setNewSetName] = useState('')
       for (const [id, set] of Object.entries(prev.items)) {
         items[id] = {
           ...set,
-          songs: (set.songs ?? []).map(s => ({ ...slimTrack(s), startMs: s.startMs, stopMs: s.stopMs, gradientOverride: s.gradientOverride })),
+          songs: (set.songs ?? []).map(s => ({ ...slimTrack(s), startMs: s.startMs, stopMs: s.stopMs, gradientOverride: s.gradientOverride, gradientOverride1: s.gradientOverride1 })),
         }
       }
       return { ...prev, items }
@@ -694,13 +694,17 @@ const [newSetName, setNewSetName] = useState('')
     setLibrary(prev => prev.map(t => t.id === id ? { ...t, startMs, stopMs } : t))
   }, [setLibrary])
 
-  // Manual gradient-color override (2026-08-03, thinktank round 3): a
-  // per-song hex the owner picked in SongDetailModal to replace the
-  // auto-extracted second gradient color. Manual choices are stored exactly
-  // as selected; the renderer handles the resulting two-pool blend.
-  // hex === null clears the override, falling back to auto-pick.
-  const updateGradientOverride = useCallback((id, hex) => {
-    setLibrary(prev => prev.map(t => t.id === id ? { ...t, gradientOverride: hex } : t))
+  // Manual gradient-color override (2026-08-03, thinktank round 3; extended
+  // 2026-08-04 to color 1 too): a per-song hex the owner picked in
+  // SongDetailModal to replace an auto-extracted gradient color. `slot` is
+  // 1 or 2 — slot 1 writes `gradientOverride1`, slot 2 writes the original
+  // `gradientOverride` field (kept unrenamed for backward compat with
+  // already-saved songs). Manual choices are stored exactly as selected;
+  // the renderer handles the resulting two-pool blend. hex === null clears
+  // the override at that slot, falling back to auto-pick.
+  const updateGradientOverride = useCallback((id, slot, hex) => {
+    const field = slot === 1 ? 'gradientOverride1' : 'gradientOverride'
+    setLibrary(prev => prev.map(t => t.id === id ? { ...t, [field]: hex } : t))
   }, [setLibrary])
 
   const moveOrCopySong = useCallback((songId, destSetId, mode) => {
@@ -714,7 +718,7 @@ const [newSetName, setNewSetName] = useState('')
         ...prev.items,
         [destSetId]: {
           ...prev.items[destSetId],
-          songs: [{ ...slimTrack(song), startMs: song.startMs, stopMs: song.stopMs, gradientOverride: song.gradientOverride }, ...destSongs],
+          songs: [{ ...slimTrack(song), startMs: song.startMs, stopMs: song.stopMs, gradientOverride: song.gradientOverride, gradientOverride1: song.gradientOverride1 }, ...destSongs],
         },
       }
       if (mode === 'move') {
