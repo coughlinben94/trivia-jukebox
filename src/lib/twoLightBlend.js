@@ -234,7 +234,12 @@ export function prepareTwoPoolField(hexA, hexB, options = {}) {
   const La = Math.max(0, Math.min(1, La0 + brightnessAdjustment))
   const Lb = Math.max(0, Math.min(1, Lb0 + brightnessAdjustment))
   const seamWidth = Math.max(0.02, options.seamWidth ?? 0.22)
-  const glowDeltaL = options.glowDeltaL ?? 0.16
+  // 0.16 -> 0.08 (2026-08-04): owner, live -- "make the white seam smaller.
+  // its not the star of the show." Paired with gradientTuning.js's seamWidth
+  // range halving: that made the BAND narrower, this makes it quieter within
+  // that band, so the seam reads as a soft meeting point rather than a bright
+  // highlight competing with the two chosen colors.
+  const glowDeltaL = options.glowDeltaL ?? 0.08
   // Weight nudges which side the boundary sits on (a 60/40 song reads as A's
   // pool taking slightly more of the frame) without collapsing either pool --
   // scaled down (0.5x) so even a 90/10 input can't push the boundary so far
