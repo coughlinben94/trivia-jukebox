@@ -105,17 +105,62 @@ export function makeLightParams({ shuffleKey = 0, artUrl = '', colors = [] }) {
 // membership in a single 60fps frame, in roughly a third of simulated
 // songs. A rescued distance with an unrescued direction just moved the bug
 // from "mushy" to "flashing."
+//
+// FIRST ATTEMPT at fixing the direction (2026-08-04, reverted same day): a
+// hysteresis flip -- keep the raw axis, but negate it whenever it points
+// >90 degrees from last frame's chosen axis, so the push axis tracks
+// whichever orientation is closer to continuous. This had a real bug: the
+// incremental push formula (`a -= u*push; b += u*push`) assumes u always
+// points from A toward B. Negating u for continuity, without separately
+// correcting the push's sign, pushes the anchors TOGETHER instead of apart
+// whenever the flip is active -- caught by re-running the separation
+// invariant after implementing it (min separation collapsed to ~0.00001,
+// should never go below 0.35). Worse, once the sign is corrected
+// algebraically, the result reduces to being mathematically identical to
+// always using the raw direction directly -- a fixed-separation "mid +-
+// axis*half" reconstruction has no continuous solution that also tracks
+// the true instantaneous relative position, because the anchors' actual
+// crossing IS the discontinuity; hysteresis-on-a-linear-push cannot smooth
+// over a singularity in what it's built from.
+//
+// SECOND ATTEMPT (also reverted same day): blend the push angle toward a
+// slow, independent noise-driven reference angle, weighted by sep/minSep so
+// the reference fully takes over as separation approaches zero. Fully
+// stateless, no sign ambiguity -- but re-running the frame-to-frame angle
+// test against it still found jumps up to ~180 degrees, EVEN on frames
+// where the clamp was active on both sides. Root cause: raw angular
+// velocity isn't only high right at sep=0 -- two anchors can swing past
+// each other at high angular speed while staying at a small-but-nonzero
+// separation the whole time (an orbit, not a crossing), and at that
+// separation the blend weight (sep/minSep) is still large enough (~0.4-0.5)
+// to let most of that raw angular velocity through. A weight tied to
+// distance-from-collision doesn't bound angular VELOCITY at all.
+//
+// ACTUAL FIX: rate-limit the OUTPUT angle directly, in angle-space, capped
+// at MAX_ANGLE_STEP_DEG_PER_SEC of real elapsed time regardless of how fast
+// the raw relative position is spinning. This is a genuine low-pass filter
+// on a scalar (with correct shortest-arc wraparound), not a sign-selection
+// heuristic -- it has no equivalent-to-raw reduction the way the hysteresis
+// attempt did, because it bounds a RATE, not a binary choice. Time-based
+// (not a fixed step per call) so the cap is consistent regardless of the
+// display's actual refresh rate -- everything else in this function is
+// already a pure function of `t`, this is the one piece that would
+// otherwise be frame-count-dependent. Requires persisting the filtered
+// angle AND the timestamp it was computed at across frames (drawScene
+// threads both via scene.prevAngle/scene.prevAngleT, same memoization
+// pattern as scene.field/wobbleNoise); on the very first frame (no prior
+// state) there's nothing to rate-limit against yet, so it snaps directly
+// to the raw angle once.
 const MIN_ANCHOR_SEPARATION = 0.35
+const MAX_ANGLE_STEP_DEG_PER_SEC = 240
 
 // Pure and exported so this is a regression test, not unverified inline
-// math baked into drawScene -- see GradientBackground.test.js. `prevDirection`
-// (the previous frame's push-axis unit vector, or null on the first call)
-// and `wobbleAmt` (current wobbleAmount(), or 0) are threaded in explicitly
-// rather than read from module/React state, so the function stays a pure,
-// independently-testable function of its arguments -- drawScene owns
-// persisting `direction` across frames via scene.prevAnchorDir, the same
-// per-scene memoization pattern already used for scene.field/wobbleNoise.
-export function computeAnchorPositions(lights, t, wobbleNoise, { prevDirection = null, wobbleAmt = 0 } = {}) {
+// math baked into drawScene -- see GradientBackground.test.js. `wobbleAmt`
+// (current wobbleAmount(), or 0), `prevAngle`/`prevT` (last call's returned
+// `angle` and the `t` it was computed at, or null on the first call) are
+// threaded in explicitly rather than read from module/React state, so the
+// function stays a pure, independently-testable function of its arguments.
+export function computeAnchorPositions(lights, t, wobbleNoise, { wobbleAmt = 0, prevAngle = null, prevT = null } = {}) {
   const [a, b] = lights
   // Both noise-space axes move with time (not one fixed, one time-varying)
   // -- a 1D slice through a 2D field only explores a straight line, which
@@ -156,40 +201,74 @@ export function computeAnchorPositions(lights, t, wobbleNoise, { prevDirection =
   let bx = b.baseX + Math.sin(t * b.freqX * speedMod + b.phaseX) * b.ampX + driftB.dx
   let by = b.baseY + Math.sin(t * b.freqY * speedMod + b.phaseY) * b.ampY + driftB.dy
 
-  // Minimum-separation clamp, direction-stabilized (2026-08-04 follow-up
-  // fix). The push AXIS is (ux,uy) or its exact negation -- both represent
-  // the identical line through the two anchors, so whichever orientation
-  // stays closer to last frame's is the one that keeps the push continuous.
-  // Choosing it via a dot-product sign flip (instead of always taking the
-  // raw instantaneous direction) is what stops the anchors' true crossing
-  // from rendering as an instant full-contrast reversal: the push axis now
-  // glides through the crossing event instead of snapping across it.
-  // Coincident anchors (sep ~ 0, no defined raw direction) fall back to the
-  // previous direction if there is one, else a fixed axis, so this is
-  // always well-defined on the very first frame too.
+  // Recenter the PAIR (2026-08-04, residual from the collision-fix review):
+  // even with the two anchors always kept apart from EACH OTHER, their
+  // shared midpoint can still wander toward a screen corner -- and since
+  // the split is an unweighted perpendicular bisector, a midpoint near a
+  // corner can put almost the entire visible frame on one side of it,
+  // dropping the minority pool under 5% of screen (measured in ~2.3% of
+  // simulated songs). Fixed as a smooth compression of the midpoint toward
+  // canvas center, not a hard clamp -- tanh saturates gracefully (behaves
+  // as identity for small offsets, only compresses large ones), no
+  // discontinuity. Both anchors are translated by the same delta (their
+  // separation/direction to each other is exactly preserved), so this
+  // can't interact with the angle-blended clamp below at all -- it only
+  // ever moves the pair as a whole, before the clamp even runs.
+  const rawMidX = (ax + bx) / 2, rawMidY = (ay + by) / 2
+  const squashToward = (v, center, limit) => center + limit * Math.tanh((v - center) / limit)
+  const midX = squashToward(rawMidX, 0.5, 0.30)
+  const midY = squashToward(rawMidY, 0.5, 0.30)
+  const shiftX = midX - rawMidX, shiftY = midY - rawMidY
+  ax += shiftX; bx += shiftX; ay += shiftY; by += shiftY
+
+  // Minimum-separation clamp, angle-blended (2026-08-04, see the long
+  // comment above computeAnchorPositions for why this replaced a hysteresis
+  // attempt that turned out to be either buggy or a no-op). Dynamic floor,
+  // not just the base constant: at DEPTH=100 the boundary-wobble amount
+  // (already correctly normalized above) could otherwise approach or
+  // exceed a FIXED separation floor, reopening the exact "noise dominates
+  // the base field" failure this clamp exists to prevent -- a second
+  // adversarial review caught this margin wasn't structurally guaranteed.
+  // Keeping the floor at least 2x the current wobble amount (in addition
+  // to the 0.35 base) means a future dial/constant change can't silently
+  // reintroduce the original bug.
   const dx = bx - ax, dy = by - ay
   const sep = Math.hypot(dx, dy)
-  let ux = sep > 1e-6 ? dx / sep : (prevDirection?.ux ?? 1)
-  let uy = sep > 1e-6 ? dy / sep : (prevDirection?.uy ?? 0)
-  if (prevDirection && (ux * prevDirection.ux + uy * prevDirection.uy) < 0) {
-    ux = -ux; uy = -uy
-  }
-  // Dynamic floor, not just the base constant: at DEPTH=100 the boundary-
-  // wobble amount (already correctly normalized above) could otherwise
-  // approach or exceed a FIXED separation floor, reopening the exact
-  // "noise dominates the base field" failure this clamp exists to prevent
-  // -- a second adversarial review caught this margin wasn't structurally
-  // guaranteed. Keeping the floor at least 2x the current wobble amount
-  // (in addition to the 0.35 base) means a future dial/constant change
-  // can't silently reintroduce the original bug.
   const minSeparation = Math.max(MIN_ANCHOR_SEPARATION, wobbleAmt * 2)
-  if (sep < minSeparation) {
-    const push = (minSeparation - sep) / 2
-    ax -= ux * push; ay -= uy * push
-    bx += ux * push; by += uy * push
+
+  // Rate-limited angle, computed every call (not just while clamped) so the
+  // filter state stays continuous across the clamped/unclamped boundary
+  // too. Harmless when unclamped: at comfortably large separation the raw
+  // angular velocity is already naturally small (angular rate ~ tangential
+  // speed / separation), so the cap rarely binds there -- instability only
+  // concentrates where separation is small, which is exactly the regime
+  // this feeds into the clamp below.
+  const rawAngle = sep > 1e-6 ? Math.atan2(dy, dx) : (prevAngle ?? 0)
+  let angle
+  if (prevAngle === null || prevT === null) {
+    angle = rawAngle
+  } else {
+    const dt = Math.max(0, t - prevT)
+    // Cap the elapsed-time window itself -- a long pause (backgrounded tab,
+    // etc.) shouldn't force a correspondingly huge allowed step; beyond
+    // ~0.5s there's no motion continuity worth preserving anyway, so just
+    // let it catch up fully rather than crawl back over many frames.
+    const maxStep = MAX_ANGLE_STEP_DEG_PER_SEC * Math.min(dt, 0.5) * (Math.PI / 180)
+    let diff = rawAngle - prevAngle
+    diff -= Math.round(diff / (2 * Math.PI)) * 2 * Math.PI // shortest arc, (-PI, PI]
+    const step = Math.max(-maxStep, Math.min(maxStep, diff))
+    angle = prevAngle + step
   }
 
-  return { ax, ay, bx, by, speedMod, direction: { ux, uy } }
+  if (sep < minSeparation) {
+    const ux = Math.cos(angle), uy = Math.sin(angle)
+    const mx = (ax + bx) / 2, my = (ay + by) / 2
+    const half = minSeparation / 2
+    ax = mx - ux * half; ay = my - uy * half
+    bx = mx + ux * half; by = my + uy * half
+  }
+
+  return { ax, ay, bx, by, speedMod, angle }
 }
 
 // "the 10% either way gradients need to be more apparent" (owner, live) --
@@ -315,16 +394,17 @@ function drawScene(ctx, smallCtx, scene, timestamp, width, height) {
   const shadeAmt = shadeAmount()
 
   // Anchor position: deterministic sine path + slow noise drift + speed
-  // breathing + the direction-stabilized minimum-separation clamp, all in
-  // one pure, independently-tested function -- see computeAnchorPositions
-  // above. `direction` is memoized onto the scene (same pattern as
-  // scene.field/wobbleNoise) so next frame's hysteresis check has last
-  // frame's push axis to compare against -- without this persisting across
-  // frames, the whole point of the direction fix is lost.
-  const { ax, ay, bx, by, direction } = computeAnchorPositions(
-    [a, b], t, wobble, { prevDirection: scene.prevAnchorDir, wobbleAmt },
+  // breathing + midpoint recentering + the rate-limited-angle minimum-
+  // separation clamp, all in one pure, independently-tested function -- see
+  // computeAnchorPositions above. `angle`/`t` are memoized onto the scene
+  // (same pattern as scene.field/wobbleNoise) so next frame's rate limiter
+  // has real elapsed time and a prior angle to filter against -- without
+  // this persisting across frames, the whole point of the fix is lost.
+  const { ax, ay, bx, by, angle } = computeAnchorPositions(
+    [a, b], t, wobble, { wobbleAmt, prevAngle: scene.prevAngle, prevT: scene.prevAngleT },
   )
-  scene.prevAnchorDir = direction
+  scene.prevAngle = angle
+  scene.prevAngleT = t
 
   for (let y = 0; y < TINY_SIZE; y += 1) {
     for (let x = 0; x < TINY_SIZE; x += 1) {

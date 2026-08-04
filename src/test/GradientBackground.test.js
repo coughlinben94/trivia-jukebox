@@ -235,22 +235,23 @@ describe('computeAnchorPositions', () => {
     expect(minSepSeen).toBeGreaterThanOrEqual(0.35 - 1e-9)
   })
 
-  it('never lets the push-axis direction flip more than 90 degrees frame-to-frame when prevDirection is threaded through (the flash/whip fix)', () => {
-    // Two independent adversarial reviews caught the same follow-on bug in
-    // the first version of this clamp: rescaling DISTANCE while inheriting
-    // the raw, unstable DIRECTION unchanged meant a true anchor-crossing
-    // event rendered as an instant ~180 degree reversal at full contrast --
-    // up to ~92% of the frame flipping pool membership in a single 60fps
-    // frame, in ~1/3 of simulated songs. The dot-product hysteresis check
-    // guarantees the chosen direction is always within 90 degrees of the
-    // previous frame's by construction; this test proves that guarantee
-    // actually holds when prevDirection is threaded frame-to-frame the way
-    // drawScene does it (scene.prevAnchorDir), not just that the formula
-    // looks right on paper.
-    const angleBetween = (u1, v1, u2, v2) => {
-      const dot = Math.max(-1, Math.min(1, u1 * u2 + v1 * v2))
-      return Math.acos(dot) * (180 / Math.PI)
-    }
+  it('keeps the boundary angle changing smoothly frame-to-frame, even through anchor-collision events (the flash/whip fix)', () => {
+    // Two prior fix attempts for this were tried and reverted the same day:
+    // (1) a hysteresis flip on the push axis -- had a real sign bug (caught
+    // by re-running the separation-invariant test above: min separation
+    // collapsed to ~0.00001) and, once corrected, reduced to being
+    // mathematically identical to the unstable raw direction anyway; (2) a
+    // stateless blend of the push angle toward an independent reference,
+    // weighted by sep/minSeparation -- still produced jumps up to ~180
+    // degrees EVEN on frames where the clamp was active on both sides,
+    // because raw angular velocity isn't only high right at a literal
+    // crossing (two anchors can orbit each other at high angular speed
+    // while staying at a small-but-nonzero separation the whole time, and a
+    // distance-based weight doesn't bound velocity). The actual fix rate-
+    // limits the OUTPUT angle directly (MAX_ANGLE_STEP_DEG_PER_SEC), which
+    // requires real state (scene.prevAngle/prevAngleT) -- this test threads
+    // that state through exactly the way drawScene does, not just checking
+    // the formula looks right in isolation.
     let maxJump = 0
     const jumps = []
     for (let song = 0; song < 40; song++) {
@@ -258,33 +259,38 @@ describe('computeAnchorPositions', () => {
         shuffleKey: song, artUrl: `whip-${song}.jpg`, colors: ['#ff2222', '#2222ff'],
       })
       const wobble = makeFlowNoise2D(song * 4111 + 71)
-      let prevDirection = null
-      let prev = null
+      let prevAngle = null, prevT = null
       // 60fps over 30s -- fine enough to catch the exact frame-to-frame
       // spikes the original audits measured.
       for (let frame = 0; frame <= 1800; frame++) {
         const tSec = frame / 60
         const result = computeAnchorPositions(lights, tSec, wobble, {
-          prevDirection, wobbleAmt: 0.106,
+          wobbleAmt: 0.106, prevAngle, prevT,
         })
-        prevDirection = result.direction
-        if (prev) {
-          const jump = angleBetween(prev.ux, prev.uy, result.direction.ux, result.direction.uy)
+        if (prevAngle !== null) {
+          let d = result.angle - prevAngle
+          d -= Math.round(d / (2 * Math.PI)) * 2 * Math.PI
+          const jump = Math.abs(d) * (180 / Math.PI)
           if (jump > maxJump) maxJump = jump
           jumps.push(jump)
         }
-        prev = result.direction
+        prevAngle = result.angle
+        prevT = tSec
       }
     }
-    // Hard guarantee from the hysteresis construction itself.
-    expect(maxJump).toBeLessThanOrEqual(90 + 1e-6)
+    // The two reverted attempts produced spikes up to ~180 degrees in a
+    // single frame during a true crossing/close pass; this must clear that
+    // by a wide margin. MAX_ANGLE_STEP_DEG_PER_SEC=240 at 60fps allows at
+    // most 4deg/frame, so the hard ceiling here is generous headroom above
+    // that, not a loophole.
+    expect(maxJump).toBeLessThan(10)
     // And empirically it's not just bounded, it's actually smooth in the
-    // typical case -- median frame-to-frame push-axis change stays small,
-    // proving this reads as organic motion rather than "never quite 180
-    // but still visibly snapping."
+    // typical case -- median frame-to-frame boundary-angle change stays
+    // small, proving this reads as organic motion rather than "capped but
+    // still visibly snapping."
     const sorted = [...jumps].sort((a, b) => a - b)
     const median = sorted[Math.floor(sorted.length / 2)]
-    expect(median).toBeLessThan(5)
+    expect(median).toBeLessThan(2)
   })
 
   it('keeps speedMod reaching a materially wider range than the pre-fix ~0.964-1.025 (a real ~3x improvement, not a per-song guarantee)', () => {
