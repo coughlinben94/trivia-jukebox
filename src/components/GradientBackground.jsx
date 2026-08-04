@@ -83,12 +83,11 @@ export function makeLightParams({ shuffleKey = 0, artUrl = '', colors = [] }) {
   const baseSep = 0.45 + rng() * 0.25
   const baseAngle = rng() * Math.PI * 2
   const bases = [
-    { x: baseAX, y: baseAY },
-    { x: baseAX + Math.cos(baseAngle) * baseSep, y: baseAY + Math.sin(baseAngle) * baseSep },
+    { baseX: baseAX, baseY: baseAY },
+    { baseX: baseAX + Math.cos(baseAngle) * baseSep, baseY: baseAY + Math.sin(baseAngle) * baseSep },
   ]
-  return bases.map(({ x, y }) => ({
-    baseX: x,
-    baseY: y,
+  return bases.map(base => ({
+    ...base,
     ampX: amp + (rng() - 0.5) * amp * 0.4,
     ampY: amp + (rng() - 0.5) * amp * 0.4,
     freqX: (0.35 + rng() * 0.2) * motionSpeed(),
@@ -576,6 +575,15 @@ export default function GradientBackground({
     resize()
     window.addEventListener('resize', resize)
 
+    // Frozen-outgoing-frame cache (2026-08-04, simplify pass): `back` is a
+    // stable object reference for a whole blend (see startTransition), and
+    // with `state.blendStart` now fixed (below) drawScene's output for it
+    // is identical on every one of the ~450 frames in a blend. Skip the
+    // redraw once it's already on canvas 0 -- the canvas keeps whatever was
+    // last painted into it, so simply not calling drawScene again leaves
+    // the frozen frame in place for free.
+    let frozenBack = null
+
     const draw = timestamp => {
       let state = transitionRef.current
       if (state.snapshotRequest) {
@@ -627,8 +635,15 @@ export default function GradientBackground({
         // No pixel snapshot needed for this (unlike the interruption path
         // above): drawScene's output is a pure function of `t` given the
         // scene's already-memoized field/noise, so a fixed t reproduces the
-        // exact same frame every call for free.
-        drawScene(contexts[0], small[0], back, state.blendStart, canvases[0].width, canvases[0].height)
+        // exact same frame every call for free -- so it only needs painting
+        // once per (scene, canvas size), not every rAF tick; frozenBack
+        // caches that identity and the redraw is skipped once it matches.
+        if (frozenBack?.scene !== back || frozenBack.width !== canvases[0].width || frozenBack.height !== canvases[0].height) {
+          drawScene(contexts[0], small[0], back, state.blendStart, canvases[0].width, canvases[0].height)
+          frozenBack = { scene: back, width: canvases[0].width, height: canvases[0].height }
+        }
+      } else {
+        frozenBack = null
       }
       drawScene(contexts[1], small[1], front, timestamp, canvases[1].width, canvases[1].height)
       const opacity = crossfadeOpacities(progress)
@@ -685,7 +700,10 @@ export default function GradientBackground({
     position: 'absolute', inset: 0, width: '100%', height: '100%',
     filter: `brightness(${entranceActive ? 0 : 1})`,
     clipPath: `circle(${entranceActive ? '0%' : '150%'} at ${originX}% ${originY}%)`,
-    transition: 'filter 3400ms cubic-bezier(0.22, 0.61, 0.36, 1), clip-path 3400ms cubic-bezier(0.22, 0.61, 0.36, 1)',
+    // filter and clip-path share the same duration/easing -- `all` covers
+    // both without repeating it (position/inset/width/height never change
+    // after mount, so nothing else is affected by the broader property list).
+    transition: 'all 3400ms cubic-bezier(0.22, 0.61, 0.36, 1)',
   }
   return (
     <div style={{ position: 'absolute', inset: 0, zIndex: 0, overflow: 'hidden', background: '#000' }}>
