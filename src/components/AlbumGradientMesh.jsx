@@ -234,7 +234,6 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
   const isFirst             = useRef(true)
   const isFirstNext         = useRef(true)
   const isFirstKey          = useRef(true)
-  const pendingFromNextRef  = useRef(false)
   const entranceActiveRef  = useRef(entranceActive)
   const pendingBlendRef    = useRef(null)
   const colorSeeds         = useMemo(makeColorSeeds, [])
@@ -289,7 +288,6 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     if (isFirstKey.current) { isFirstKey.current = false; return }
     const s = st.current
     s.blendStart = -1
-    pendingFromNextRef.current = false
   }, [shuffleKey])
 
   useEffect(() => {
@@ -297,26 +295,32 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     if (!nextColors.length) return
     if (nextColors.every(c => c === '#080808')) return
     if (entranceActiveRef.current) {
-      pendingFromNextRef.current = true
       pendingBlendRef.current = nextColors
       return
     }
     startBlendTo(nextColors)
-    pendingFromNextRef.current = true
   }, [nextColors])
 
+  // Un-animated hard-swap branch removed (2026-08-04, Ben live: "literally
+  // just snapped from 2 colors to 2 diff colors"). This used to trust that
+  // pendingFromNextRef meant a blend toward these exact colors had already
+  // run via the nextColors effect below, and would just directly overwrite
+  // inRgb/steadyRgb with no animation at all -- correct ONLY if that earlier
+  // blend actually started and had time to run its course before this fired.
+  // Any timing skew (a quick skip, a retry, the entrance's own deferred
+  // pendingBlendRef path clearing pendingBlendRef but not this flag) could
+  // leave pendingFromNextRef true with no real blend behind it, producing a
+  // raw, instant color assignment. startBlendTo is always safe to call
+  // unconditionally here -- its own re-trigger snapshot logic (see its
+  // header comment) already anchors from wherever the CURRENT visual state
+  // actually is, so if a nextColors pre-blend already got most of the way
+  // there this just continues smoothly instead of restarting from scratch;
+  // it can never produce a hard jump.
   useEffect(() => {
     if (isFirst.current) { isFirst.current = false; return }
-    if (pendingFromNextRef.current) {
-      pendingFromNextRef.current = false
-      pendingBlendRef.current = null
-      const s = st.current
-      s.inRgb     = parseColors(colors, NUM_ANCHORS)
-      s.steadyRgb = parseColors(colors, NUM_ANCHORS)
-    } else {
-      if (entranceActiveRef.current) { pendingBlendRef.current = colors; return }
-      startBlendTo(colors)
-    }
+    pendingBlendRef.current = null
+    if (entranceActiveRef.current) { pendingBlendRef.current = colors; return }
+    startBlendTo(colors)
   }, [colors])
 
   useEffect(() => {

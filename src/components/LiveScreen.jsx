@@ -89,6 +89,22 @@ export function applyGradientOverride(autoPicked, rawColors, overrideHex1, overr
   return { colors: [color1, color2], weights: [0.5, 0.5] }
 }
 
+// Waits for the page's webfonts (Boogaloo/DM Sans, loaded via a Google Fonts
+// <link> in index.html with font-display: swap) to finish loading, so the
+// entrance's title/artist reveal doesn't show the fallback system font for
+// a beat before swapping to the real one (2026-08-04, Ben: "the font went
+// from wrong to right" on the first song of a session — only ever visible
+// once, since every subsequent song's text renders after the fonts are
+// already cached). Same 800ms safety-timeout pattern as preloadImage below,
+// so a slow/failed font load can't hang the entrance.
+function preloadFonts() {
+  if (!document.fonts?.ready) return Promise.resolve()
+  return Promise.race([
+    document.fonts.ready,
+    new Promise(resolve => setTimeout(resolve, 800)),
+  ])
+}
+
 function preloadImage(url) {
   return new Promise(resolve => {
     const img = new Image()
@@ -286,7 +302,10 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         // runTransition already does this for every subsequent song; the
         // entrance was the gap (2bd5194 only covered the gradient, not the art).
         const entranceArt = shown?.album?.images?.[0]?.url
-        if (entranceArt) await preloadImage(entranceArt)
+        await Promise.all([
+          entranceArt ? preloadImage(entranceArt) : Promise.resolve(),
+          preloadFonts(),
+        ])
 
         flyCtrl.start({
           y: 0, opacity: 1, scale: 1,
@@ -492,7 +511,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         const newArtUrl = target?.album?.images?.[0]?.url
         const preloadPromise = newArtUrl ? preloadImage(newArtUrl) : Promise.resolve()
         setPrev(prevTrack)
-        await sleep(400)   // arm fully lifted
+        await sleep(700)   // arm fully lifted (400 -> 700, 2026-08-04: Ben wanted the arm clear of the record 300ms earlier relative to the record's own fly-up)
 
         // Step 2 — record flies up once arm is clear
         flyCtrl.start({ y: -500, transition: { type: 'spring', stiffness: 220, damping: 22 } })
@@ -762,7 +781,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                     wrapping to 3 italic lines on this audience-facing screen,
                     which read as clutter rather than information. Just the
                     two main artists, no "& others" suffix — simplest read. */}
-                {shown.artists?.slice(0, 2).map(a => a.name).join(', ')}
+                {shown.artists?.slice(0, 2).map(a => a.name).join(' & ')}
               </p>
             </motion.div>
           </>
