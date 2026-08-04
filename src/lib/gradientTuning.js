@@ -187,16 +187,14 @@ export function anchorAmplitude()      { return lerp(0.08, 0.22, T('SIZE') / 100
 // intentional richness, not noise. Only wobble needed rolling back.
 export function wobbleAmount()         { return lerp(0.0265, 0.1855, T('DEPTH') / 100) }     // 50 → 0.106
 export function shadeAmount()          { return lerp(0.03, 0.18, T('DEPTH') / 100) }         // 50 → 0.105
-// 0.10-0.40 (50 -> 0.25, 2026-08-04) made the seam the biggest single
-// feature on screen at default -- owner, live: "make the white seam
-// smaller. its not the star of the show." Emil Kowalski's design-engineering
-// principle applies directly here: a transition should read as connective
-// tissue between the two colors the cover actually picked, not as its own
-// competing element -- restraint on a supporting detail, not the leading
-// one. Halved the range so the band itself takes up less of the frame;
-// see also prepareTwoPoolField's glowDeltaL default (twoLightBlend.js),
-// lowered the same day so the seam is quieter as well as narrower.
-export function seamWidth()            { return lerp(0.05, 0.20, T('BLEND') / 100) }         // 50 → 0.125
+// 0.02-0.08 (50 -> 0.05, 2026-08-04 second pass) -- owner, live, dragging
+// the board: "it's closer to what i want when i tune blend to 0." Scaled
+// the whole 0.05-0.20 range down by the same 0.4x factor (0.05/0.125) so
+// the DEFAULT now lands exactly where the owner's approved BLEND=0 used
+// to sit, rather than just moving the floor -- the dial keeps working
+// proportionally above and below that point instead of being clamped at
+// its old minimum.
+export function seamWidth()            { return lerp(0.02, 0.08, T('BLEND') / 100) }         // 50 → 0.05
 
 // VARIETY resolves through the SAME curve as the server (paletteDefaults.js)
 // — used client-side only for the board's own readout; the actual palette

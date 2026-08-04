@@ -52,6 +52,22 @@ function hashString(value) {
 // used for the boundary wobble, sampled along time at a distinct offset per
 // anchor/axis via these phases) -- noise never repeats, so the two anchors'
 // relative motion stops being a fixed dance and reads as actually drifting.
+// Owner, live (2026-08-04, follow-up to the crossing/dancing ask): the
+// crossing fix above barely changed anything on measurement -- pinned-at-
+// MIN_ANCHOR_SEPARATION time stayed ~60% regardless of drift amplitude
+// (swept 0.9x-1.7x, all landed 58-63%). Root cause traced to base position
+// generation, not motion: each anchor's baseX/baseY was independently
+// uniform over the same 0.25-0.75 box, so two random points in a 0.5x0.5
+// square land under the 0.35 floor ~half the time from BIRTH, before any
+// sine/drift runs -- the clamp was pinning the pair into a fixed-radius
+// orbit (only the rate-limited angle free to move) for the majority of a
+// typical song, which reads as mechanical no matter how large the wander
+// amplitude is. Fix at the source: anchor B's base is now placed at a
+// guaranteed 0.45-0.70 separation from anchor A, random angle -- the clamp
+// goes back to being the rare safety net it was designed as, so real
+// noise-driven wandering (and the crossing/retreat it produces) actually
+// gets to run instead of being swallowed by the collision guard almost
+// all the time.
 export function makeLightParams({ shuffleKey = 0, artUrl = '', colors = [] }) {
   let seed = hashString(`${shuffleKey}|${artUrl}|${colors.join('|')}`)
   const rng = () => {
@@ -62,9 +78,17 @@ export function makeLightParams({ shuffleKey = 0, artUrl = '', colors = [] }) {
     return ((value ^ (value >>> 14)) >>> 0) / 4294967296
   }
   const amp = anchorAmplitude()
-  return [0, 1].map(() => ({
-    baseX: 0.25 + rng() * 0.5,
-    baseY: 0.25 + rng() * 0.5,
+  const baseAX = 0.25 + rng() * 0.5
+  const baseAY = 0.25 + rng() * 0.5
+  const baseSep = 0.45 + rng() * 0.25
+  const baseAngle = rng() * Math.PI * 2
+  const bases = [
+    { x: baseAX, y: baseAY },
+    { x: baseAX + Math.cos(baseAngle) * baseSep, y: baseAY + Math.sin(baseAngle) * baseSep },
+  ]
+  return bases.map(({ x, y }) => ({
+    baseX: x,
+    baseY: y,
     ampX: amp + (rng() - 0.5) * amp * 0.4,
     ampY: amp + (rng() - 0.5) * amp * 0.4,
     freqX: (0.35 + rng() * 0.2) * motionSpeed(),
@@ -174,17 +198,24 @@ export function computeAnchorPositions(lights, t, wobbleNoise, { wobbleAmt = 0, 
   // other, truly random" (owner, live, 2026-08-04 follow-up) -- the sine term
   // above is a fixed Lissajous path no matter how it's phase-offset, so it's
   // the noise term that has to carry "truly random" and "cross into the
-  // other's territory, then retreat." Reach bumped from 0.8x to 1.7x ampX/Y
-  // (partial crossover, not a full takeover -- owner explicitly asked for
-  // partial) and each anchor's noise now runs at its own per-instance
-  // frequency (driftFreqMult, 0.7-1.3x) instead of a shared rate, so the two
-  // anchors' excursions decorrelate in timing as well as phase -- no fixed
-  // cycle length, which is what "truly random" rules out.
+  // other's territory, then retreat." First attempt bumped reach 0.8x ->
+  // 1.7x but measurement showed the real ceiling wasn't drift strength at
+  // all -- it was the base-position generator putting anchors within the
+  // MIN_ANCHOR_SEPARATION floor from birth ~60% of the time (fixed in
+  // makeLightParams above). With that headroom actually available, 2.8x
+  // was the sweet spot from re-measuring the sweep (1.7/2.2/2.8/3.5x):
+  // clamp-pinned time stays low (~10%, an occasional close-pass/hand-off
+  // moment, not a chronic lock) while crossing depth reaches materially
+  // further (~0.40 past the midline) without the excursions reading as a
+  // full takeover. Each anchor's noise also runs at its own per-instance
+  // frequency (driftFreqMult, 0.7-1.3x) instead of a shared rate, so the
+  // two anchors' excursions decorrelate in timing as well as phase -- no
+  // fixed cycle length, which is what "truly random" rules out.
   const driftFor = light => {
     const freqMult = light.driftFreqMult ?? 1
     return {
-      dx: wobbleNoise.fbm(t * 0.025 * freqMult + light.driftPhaseX, t * 0.017 * freqMult + 0.31, 2) / FBM_PEAK * light.ampX * 1.7,
-      dy: wobbleNoise.fbm(t * 0.021 * freqMult + light.driftPhaseY, t * 0.014 * freqMult + 0.77, 2) / FBM_PEAK * light.ampY * 1.7,
+      dx: wobbleNoise.fbm(t * 0.025 * freqMult + light.driftPhaseX, t * 0.017 * freqMult + 0.31, 2) / FBM_PEAK * light.ampX * 2.8,
+      dy: wobbleNoise.fbm(t * 0.021 * freqMult + light.driftPhaseY, t * 0.014 * freqMult + 0.77, 2) / FBM_PEAK * light.ampY * 2.8,
     }
   }
   const driftA = driftFor(a), driftB = driftFor(b)

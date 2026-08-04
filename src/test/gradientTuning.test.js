@@ -12,7 +12,7 @@ describe('single-renderer gradient tuning', () => {
     expect(brightnessAdjustment()).toBe(0)
     expect(motionSpeed()).toBeCloseTo(1.2, 10)
     expect(anchorAmplitude()).toBeCloseTo(0.15, 10)
-    expect(seamWidth()).toBeCloseTo(0.125, 10)
+    expect(seamWidth()).toBeCloseTo(0.05, 10)
     expect(wobbleAmount()).toBeCloseTo(0.106, 10)
     expect(shadeAmount()).toBeCloseTo(0.105, 10)
     expect(blendDurationMs()).toBe(7500)
