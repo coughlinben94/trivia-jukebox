@@ -27,7 +27,7 @@ export const DIALS = [
   { id: 'MOTION',     label: 'MOTION',     commit: 'release', remount: true },
   { id: 'SIZE',       label: 'SIZE',       commit: 'release', remount: true },
   { id: 'BLEND',      label: 'BLEND',      commit: 'release', remount: true },
-  // DEPTH is baked into the prepared two-light field.
+  // DEPTH is baked into the prepared two-pool field (wobbleAmount/shadeAmount).
   { id: 'DEPTH',      label: 'DEPTH',      commit: 'release', remount: true },
   { id: 'VARIETY',    label: 'VARIETY',    commit: 'release', server: true },
   { id: 'CROSSFADE',  label: 'CROSSFADE',  commit: 'live' },
@@ -157,7 +157,16 @@ export function motionSpeed()          { return lerp(0.50, 1.50, T('MOTION') / 1
 // as the actual cause of a follow-up "not two distinct beings" regression.
 // None of that geometry survived the move to prepareTwoPoolField.
 export function anchorAmplitude()      { return lerp(0.08, 0.22, T('SIZE') / 100) }          // 50 → 0.15
+// DEPTH now drives two related things off one dial (2026-08-04) rather than
+// adding an 8th fader: how much the boundary itself wobbles, and how much
+// each pool's own lightness varies internally (the owner's "+-10% shade"
+// ask, added the same day). Both are "how much organic depth/richness" in
+// the same sense the old point-light era's haloDepth()/DEPTH hint already
+// described ("how far each color fans into darker and lighter shades") --
+// that hint just pointed at the wrong mechanism after the pool rewrite; this
+// reunites the dial with a mechanism the hint actually describes again.
 export function wobbleAmount()         { return lerp(0.05, 0.35, T('DEPTH') / 100) }         // 50 → 0.20
+export function shadeAmount()          { return lerp(0.03, 0.18, T('DEPTH') / 100) }         // 50 → 0.105
 // 0.10-0.40 (50 -> 0.25, 2026-08-04) made the seam the biggest single
 // feature on screen at default -- owner, live: "make the white seam
 // smaller. its not the star of the show." Emil Kowalski's design-engineering
@@ -203,6 +212,7 @@ export function exportSnippet() {
   }
   if (isOverridden('DEPTH')) {
     lines.push('', '// gradientTuning.js — replace wobbleAmount():', `export function wobbleAmount() { return ${fmt(wobbleAmount())} }`)
+    lines.push('', '// gradientTuning.js — replace shadeAmount():', `export function shadeAmount() { return ${fmt(shadeAmount())} }`)
   }
   if (isOverridden('VARIETY')) {
     const cfg = varietyConfig()

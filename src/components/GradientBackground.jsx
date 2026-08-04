@@ -2,7 +2,7 @@
 import { useEffect, useRef } from 'react'
 import {
   blendDurationMs, brightnessAdjustment, motionSpeed,
-  anchorAmplitude, wobbleAmount, seamWidth,
+  anchorAmplitude, wobbleAmount, seamWidth, shadeAmount,
 } from '../lib/gradientTuning.js'
 import { prepareTwoPoolField } from '../lib/twoLightBlend.js'
 import { makeFlowNoise2D } from '../lib/flowNoise.js'
@@ -70,8 +70,9 @@ export function makeLightParams({ shuffleKey = 0, artUrl = '', colors = [] }) {
 // spec, shipped flat first (so the SEAM would read as the only gradient)
 // and needed to come back once that landed. A soft, low-frequency field --
 // not per-pixel texture -- so it reads as tonal depth within a pool, not
-// noise/grain.
-const SHADE_AMOUNT = 0.10
+// noise/grain. Amount now comes from gradientTuning.js's shadeAmount()
+// (the DEPTH dial, shared with wobbleAmount()) instead of a fixed constant
+// -- see that file for why DEPTH drives both.
 const SHADE_SPATIAL_FREQ = 1.3
 
 function isNearBlack(hex) {
@@ -184,6 +185,7 @@ function drawScene(ctx, smallCtx, scene, timestamp, width, height) {
   const shadeNoise = scene.shadeNoise || (scene.shadeNoise = makeFlowNoise2D(hashString(`shade|${scene.identity}`)))
   const image = scene.imageData || (scene.imageData = smallCtx.createImageData(TINY_SIZE, TINY_SIZE))
   const wobbleAmt = wobbleAmount()
+  const shadeAmt = shadeAmount()
 
   // Anchor position blends the deterministic sine path with a slow noise-
   // driven drift sampled from `wobble` along time (each anchor/axis reads a
@@ -210,7 +212,7 @@ function drawScene(ctx, smallCtx, scene, timestamp, width, height) {
       // Low-octave on purpose (2 octaves) -- a finer field breaks the
       // boundary into many small islands instead of one flowing line.
       const w = wobble.fbm(nx * 2.4 + t * 0.05, ny * 2.4 - t * 0.04, 2) * wobbleAmt
-      const shade = shadeNoise.fbm(nx * SHADE_SPATIAL_FREQ + t * 0.03, ny * SHADE_SPATIAL_FREQ - t * 0.025, 2) * SHADE_AMOUNT
+      const shade = shadeNoise.fbm(nx * SHADE_SPATIAL_FREQ + t * 0.03, ny * SHADE_SPATIAL_FREQ - t * 0.025, 2) * shadeAmt
       field.sampleInto(distA - distB + w, shade, image.data, index)
     }
   }

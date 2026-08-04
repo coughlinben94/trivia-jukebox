@@ -125,10 +125,10 @@ function Fader({ id, label, hint }) {
 // mechanics (commit timing lives in the code comments, not here).
 const HINTS = {
   BRIGHTNESS: 'How bright and bold the colors look.',
-  MOTION:     'How fast the two color lights move.',
-  SIZE:       'How large each color light is.',
-  BLEND:      'Sharp color shapes vs. soft blending.',
-  DEPTH:      'How far each color fans into darker and lighter shades.',
+  MOTION:     'How fast the two color pools move.',
+  SIZE:       'How far each color pool wanders around.',
+  BLEND:      'Sharp pool edges vs. a soft, wide gradient where they meet.',
+  DEPTH:      'How much the edge between pools flows, and how much each color shades within itself.',
   VARIETY:    'How many different colors show up.',
   CROSSFADE:  'How fast the background fades to the next song.',
 }

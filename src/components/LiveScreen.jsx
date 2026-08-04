@@ -4,7 +4,7 @@ import GradientBackground from './GradientBackground'
 import { usePalette } from '../hooks/usePalette'
 import { displayName } from '../lib/track'
 
-// One palette-driven two-light Canvas renderer owns the live background.
+// One palette-driven two-pool Canvas renderer owns the live background.
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 

@@ -697,7 +697,7 @@ const [newSetName, setNewSetName] = useState('')
   // Manual gradient-color override (2026-08-03, thinktank round 3): a
   // per-song hex the owner picked in SongDetailModal to replace the
   // auto-extracted second gradient color. Manual choices are stored exactly
-  // as selected; the renderer handles the resulting two-light blend.
+  // as selected; the renderer handles the resulting two-pool blend.
   // hex === null clears the override, falling back to auto-pick.
   const updateGradientOverride = useCallback((id, hex) => {
     setLibrary(prev => prev.map(t => t.id === id ? { ...t, gradientOverride: hex } : t))

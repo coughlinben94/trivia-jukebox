@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   brightnessAdjustment, motionSpeed, anchorAmplitude, seamWidth,
-  wobbleAmount, blendDurationMs, clearDials, setDial,
+  wobbleAmount, shadeAmount, blendDurationMs, clearDials, setDial,
   exportSnippet,
 } from '../lib/gradientTuning.js'
 
@@ -14,6 +14,7 @@ describe('single-renderer gradient tuning', () => {
     expect(anchorAmplitude()).toBeCloseTo(0.15, 10)
     expect(seamWidth()).toBeCloseTo(0.125, 10)
     expect(wobbleAmount()).toBeCloseTo(0.20, 10)
+    expect(shadeAmount()).toBeCloseTo(0.105, 10)
     expect(blendDurationMs()).toBe(7500)
   })
 
@@ -24,6 +25,13 @@ describe('single-renderer gradient tuning', () => {
     expect(wobbleAmount()).toBeCloseTo(0.35, 10)
   })
 
+  it('keeps shade amount (the +-10% pool shading) in lockstep with wobble on the same DEPTH dial', () => {
+    setDial('DEPTH', 0)
+    expect(shadeAmount()).toBeCloseTo(0.03, 10)
+    setDial('DEPTH', 100)
+    expect(shadeAmount()).toBeCloseTo(0.18, 10)
+  })
+
   it('exports paste-ready declarations for real derived functions', () => {
     for (const id of ['BRIGHTNESS', 'MOTION', 'SIZE', 'BLEND', 'DEPTH', 'VARIETY', 'CROSSFADE']) {
       setDial(id, 60)
@@ -32,7 +40,7 @@ describe('single-renderer gradient tuning', () => {
 
     for (const name of [
       'brightnessAdjustment', 'motionSpeed', 'anchorAmplitude',
-      'seamWidth', 'wobbleAmount', 'blendDurationMs',
+      'seamWidth', 'wobbleAmount', 'shadeAmount', 'blendDurationMs',
     ]) expect(snippet).toContain(`export function ${name}()`)
     expect(snippet).toContain('export function varietyToConfig()')
     expect(snippet).toContain('// paletteDefaults.js')
