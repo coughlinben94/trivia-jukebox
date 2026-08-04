@@ -334,10 +334,21 @@ export default function GradientBackground({
   // uncovered. LiveScreen still holds an instant (non-animated) black cover
   // for the first paint frame before this mounts; this is what performs the
   // actual reveal once entranceActive releases.
+  // transition is a CONSTANT, not conditional on entranceActive (fixed
+  // 2026-08-03): flipping which transition applies and changing the filter
+  // VALUE in the same render gives the browser no committed "before" state
+  // with the real transition already active to animate from, so it just
+  // snapped straight to full brightness with no visible ramp -- confirmed
+  // live (screenshot sequence showed full-intensity color within ~1s of the
+  // black cover lifting, not a 3400ms bloom). entranceActive starts true
+  // (mount paints brightness(0) directly -- nothing to transition from on
+  // insertion, so no unwanted fade-from-nothing) and flips false exactly
+  // once, ~2s later, on its own render -- since the transition property
+  // itself never changes, THAT render's filter change animates correctly.
   const canvasStyle = {
     position: 'absolute', inset: 0, width: '100%', height: '100%',
     filter: `brightness(${entranceActive ? 0 : 1})`,
-    transition: entranceActive ? 'none' : 'filter 3400ms cubic-bezier(0.22, 0.61, 0.36, 1)',
+    transition: 'filter 3400ms cubic-bezier(0.22, 0.61, 0.36, 1)',
   }
   return (
     <div style={{ position: 'absolute', inset: 0, zIndex: 0, overflow: 'hidden', background: '#000' }}>
