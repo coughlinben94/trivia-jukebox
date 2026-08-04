@@ -56,7 +56,7 @@ const NUM_ANCHORS = 2
 // FLOW_SPEED_at() below) instead of sitting at one constant tempo forever —
 // 2026-08-04, per Fable's critique: a fixed speed reads as a metronome
 // after a couple hours of a bar shift.
-const FLOW_SPEED = 0.79
+const FLOW_SPEED = 0.55  // 0.79 -> 0.55 (2026-08-04, Ben: noise flow read too fast live)
 // colors[0]/colors[1] slowly trade dominance back and forth across the frame.
 const ANCHOR_PERIOD_S   = 11.4  // primary divider sweep period (see anchorDivider() — now 3 incommensurate sines, not 1)
 // 0.30 -> 0.65 (2026-08-04, Fable's critique): at 0.30 the divider sweep was
@@ -124,7 +124,50 @@ function easeInOut(t) {
 }
 
 function lerp(a, b, t) { return a + (b - a) * t }
-function lerpOklab(a, b, t) { return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)] }
+
+// Polar OKLab lerp (2026-08-04, fixes the muddy-gray-band bug) — replaces
+// lerpOklab everywhere colors actually blend. lerpOklab above is a straight
+// Cartesian lerp of (a,b): two near-complementary hues (e.g. orange/blue)
+// point roughly opposite directions in the a/b plane, so their vector sum
+// cancels toward the origin at the midpoint -- chroma collapses near 0 (gray)
+// even though L and each endpoint's own chroma are both fine. This project
+// hit and fixed the identical bug once before in an earlier, more complex
+// mesh build (git a5dc1cc) via hue/chroma blending instead of vector
+// averaging; this is that fix adapted to the current 2-anchor lerp model.
+//
+// L lerps linearly (unaffected by the bug). Chroma lerps as a scalar
+// magnitude (can't cancel -- averaging two positive numbers never produces
+// something smaller than both). Hue lerps via shortest angular path, but
+// with the *blend fraction* itself weighted by each endpoint's own chroma
+// (Fable review, 2026-08-04): a near-achromatic endpoint (e.g. the B&W-cover
+// offwhite fallback, chroma ~0.01) has an arbitrary atan2 hue, and a plain
+// t-weighted hue lerp would swing the mid-fade through that arbitrary hue at
+// rising chroma -- a faint wrong-colored tint where the result should read
+// neutral. Chroma-weighting means a near-zero-chroma color barely votes on
+// hue at all. Endpoint hues are fixed for the life of one call (h1/h2 come
+// from the two OKLab colors passed in, not from any per-frame state), so
+// there's no frame-to-frame "which way around the circle" instability within
+// a single crossfade -- the direction is only decided once, at each call's
+// own fixed inputs.
+function lerpOklabPolar(a, b, t) {
+  const [L1, a1, b1] = a
+  const [L2, a2, b2] = b
+  const C1 = Math.hypot(a1, b1)
+  const C2 = Math.hypot(a2, b2)
+  const L = lerp(L1, L2, t)
+  const C = lerp(C1, C2, t)
+
+  const denom = C1 * (1 - t) + C2 * t
+  const th = denom > 1e-4 ? (C2 * t) / denom : t
+  const h1 = Math.atan2(b1, a1)
+  const h2 = Math.atan2(b2, a2)
+  let dh = h2 - h1
+  while (dh > Math.PI) dh -= Math.PI * 2
+  while (dh < -Math.PI) dh += Math.PI * 2
+  const h = h1 + dh * th
+
+  return [L, C * Math.cos(h), C * Math.sin(h)]
+}
 
 // ── OKLab conversion — standard Bjorn Ottosson formulas.
 
@@ -213,7 +256,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
       // reintroduce an RGB step.
       const t = easeInOut(Math.min((now - s.blendStart) / BLEND_DURATION_MS, 1))
       s.outRgb = s.outRgb.map((c, i) =>
-        oklabToRgb(lerpOklab(rgbToOklab(c), rgbToOklab(s.inRgb[i]), t))
+        oklabToRgb(lerpOklabPolar(rgbToOklab(c), rgbToOklab(s.inRgb[i]), t))
       )
     } else {
       s.outRgb = s.steadyRgb.map(c => [...c])
@@ -310,7 +353,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     const inOklab  = s.inRgb.map(rgbToOklab)
     if (s.blendStart >= 0) {
       const t = easeInOut(Math.min((ts - s.blendStart) / BLEND_DURATION_MS, 1))
-      ;[anchor0, anchor1] = outOklab.map((c, i) => lerpOklab(c, inOklab[i], t))
+      ;[anchor0, anchor1] = outOklab.map((c, i) => lerpOklabPolar(c, inOklab[i], t))
       if (t >= 1) {
         s.steadyRgb = s.inRgb.map(c => [...c])
         s.blendStart = -1
@@ -355,9 +398,11 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
         const score = (n0 - n1) * ANCHOR_NOISE_CONTRAST + edge * ANCHOR_SWING
         const mix = 0.5 + 0.5 * Math.tanh(score * ANCHOR_MIX_SHARPNESS)  // no floor clamp — see file header
 
-        const L = lerp(anchor1[0], anchor0[0], mix)
-        const a = lerp(anchor1[1], anchor0[1], mix)
-        const b = lerp(anchor1[2], anchor0[2], mix)
+        // Polar blend, not lerp(anchor1, anchor0, mix) on each L/a/b channel
+        // separately — see lerpOklabPolar's header comment. Cartesian a/b
+        // lerp is exactly what produced the muddy gray band on near-
+        // complementary anchor pairs.
+        const [L, a, b] = lerpOklabPolar(anchor1, anchor0, mix)
 
         const [r, g, bb] = oklabToRgb([L, a, b])
         const idx = (y * SW + x) * 4
