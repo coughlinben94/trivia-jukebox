@@ -168,7 +168,24 @@ export function anchorAmplitude()      { return lerp(0.08, 0.22, T('SIZE') / 100
 // described ("how far each color fans into darker and lighter shades") --
 // that hint just pointed at the wrong mechanism after the pool rewrite; this
 // reunites the dial with a mechanism the hint actually describes again.
-export function wobbleAmount()         { return lerp(0.05, 0.35, T('DEPTH') / 100) }         // 50 → 0.20
+// wobbleAmount's range x0.53 (2026-08-04, opus-consultant catch): the
+// render side (GradientBackground.jsx's `w = fbm(...)/FBM_PEAK * wobbleAmt`)
+// was fixed the same day to correctly normalize fbm's noise output --
+// before that fix, wobbleAmt's stated value was silently only ~53%
+// delivered, and the owner had already approved how the boundary looked at
+// that (buggy) effective magnitude. Correcting the normalization alone,
+// without also correcting this range, would have made the boundary wobble
+// ~1.9x stronger than what was approved -- measured to reopen the isolated-
+// "circle"-blob artifact (0.2% -> 6.8% of frames at defaults, up to 32.6% at
+// DEPTH=100) and thin the white-text legibility margin further. This range
+// scale restores the same on-screen magnitude under the corrected formula.
+// shadeAmount is deliberately NOT scaled the same way -- unlike wobble, a
+// stronger shade was the owner's actual ask ("the 10% either way gradients
+// need to be more apparent"), and fixing the normalization bug is what
+// finally let shadeAmount deliver the ~10% it always claimed rather than
+// the ~5% it was silently capped at -- confirmed by review to read as
+// intentional richness, not noise. Only wobble needed rolling back.
+export function wobbleAmount()         { return lerp(0.0265, 0.1855, T('DEPTH') / 100) }     // 50 → 0.106
 export function shadeAmount()          { return lerp(0.03, 0.18, T('DEPTH') / 100) }         // 50 → 0.105
 // 0.10-0.40 (50 -> 0.25, 2026-08-04) made the seam the biggest single
 // feature on screen at default -- owner, live: "make the white seam

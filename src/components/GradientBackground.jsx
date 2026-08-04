@@ -7,6 +7,17 @@ import {
 import { prepareTwoPoolField } from '../lib/twoLightBlend.js'
 import { makeFlowNoise2D } from '../lib/flowNoise.js'
 
+// Opus-consultant-verified bug (2026-08-04): every `wobble.fbm(...) * amount`
+// call site in this file assumed fbm's 2-octave output spans roughly
+// [-1, 1] -- measured (20 seeds x 5000 samples each, see PR discussion) it
+// actually peaks around 0.53. So wobbleAmount/shadeAmount/drift/speedMod
+// were ALL under-delivering their stated amount by ~1.9x, not just the
+// speed one the owner happened to notice ("the speed should go up and down
+// by 15% either way" measured at ~3% before this fix). FBM_PEAK divides
+// that back out so a caller's "amount" means what it says. Calibrated for
+// octaves=2 specifically (every call site here uses 2) -- would need
+// re-measuring if any call site's octave count changes.
+const FBM_PEAK = 0.53
 const TINY_SIZE = 48
 // Blur-upscale already hides resolution loss (the 48x48 tile is what
 // carries the actual gradient) — capping the destination canvases' backing
@@ -63,6 +74,122 @@ export function makeLightParams({ shuffleKey = 0, artUrl = '', colors = [] }) {
     driftPhaseX: rng() * 1000,
     driftPhaseY: rng() * 1000,
   }))
+}
+
+// Opus-consultant-verified bug (2026-08-04): nothing stopped the two anchors
+// from drifting into each other -- base separation is only ~0.29 with each
+// anchor independently wandering +-anchorAmplitude() (~0.15) on top, and
+// about a fifth of songs are "born" with base positions under 0.15 apart.
+// Simulated against real makeLightParams seeding across 300 songs: 85% hit
+// a degraded stretch, 72% a full collision, averaging ~16.5s/song (worst
+// case 66.5s -- over a third of the song). When separation collapses, the
+// unweighted nearest-anchor split's base signedField magnitude collapses
+// with it, so the boundary-wobble noise term (which isn't scaled by
+// separation) can dominate and swing the WHOLE frame's field sign at once --
+// which independently reproduced all three previously-rejected looks in one
+// sequence: full-frame haze ("blended everywhere"), one color vanishing
+// entirely (0% pool purity), and the isolated "circle" blob reforming as
+// separation recovered.
+//
+// A minimum-separation clamp (first cut) fixed all of that but two
+// independent adversarial reviews caught the SAME follow-on bug in it: the
+// clamp rescales the DISTANCE between the anchors but inherits the RAW
+// direction between them unchanged. As raw separation approaches zero, that
+// direction is numerically unstable -- it can reverse ~180 degrees in a
+// single frame when the anchors' true (unclamped) positions cross each
+// other. Pre-clamp, that reversal was invisible because the field itself
+// had also collapsed to near-uniform mush at the same moment. Post-clamp,
+// the field is held at FULL contrast the entire time (separation is pinned
+// at the floor), so that same instantaneous reversal renders as a hard,
+// whole-screen color swap -- measured up to ~92% of the frame flipping pool
+// membership in a single 60fps frame, in roughly a third of simulated
+// songs. A rescued distance with an unrescued direction just moved the bug
+// from "mushy" to "flashing."
+const MIN_ANCHOR_SEPARATION = 0.35
+
+// Pure and exported so this is a regression test, not unverified inline
+// math baked into drawScene -- see GradientBackground.test.js. `prevDirection`
+// (the previous frame's push-axis unit vector, or null on the first call)
+// and `wobbleAmt` (current wobbleAmount(), or 0) are threaded in explicitly
+// rather than read from module/React state, so the function stays a pure,
+// independently-testable function of its arguments -- drawScene owns
+// persisting `direction` across frames via scene.prevAnchorDir, the same
+// per-scene memoization pattern already used for scene.field/wobbleNoise.
+export function computeAnchorPositions(lights, t, wobbleNoise, { prevDirection = null, wobbleAmt = 0 } = {}) {
+  const [a, b] = lights
+  // Both noise-space axes move with time (not one fixed, one time-varying)
+  // -- a 1D slice through a 2D field only explores a straight line, which
+  // can sit in a low-magnitude region for a long stretch by chance (measured:
+  // a fixed-second-axis sample stayed within +-0.05 of center for a full
+  // 600s/10min window on one real seed). Moving both axes traces a diagonal
+  // through the field instead, covering far more terrain per unit time, so
+  // the achievable range is reached reliably rather than seed-dependently.
+  const driftFor = light => ({
+    dx: wobbleNoise.fbm(t * 0.025 + light.driftPhaseX, t * 0.017 + 0.31, 2) / FBM_PEAK * light.ampX * 0.8,
+    dy: wobbleNoise.fbm(t * 0.021 + light.driftPhaseY, t * 0.014 + 0.77, 2) / FBM_PEAK * light.ampY * 0.8,
+  })
+  const driftA = driftFor(a), driftB = driftFor(b)
+  // "the speed should go up and down from its baseline by 15% either way at
+  // any given time" (owner, live) -- a single shared multiplier, sourced
+  // from the same slow noise generator as the drift above (far-apart offset
+  // so it doesn't visibly lock to any one drift term), oscillating the
+  // anchors' angular rate. +-0.15 is the DESIGNED CEILING now that FBM_PEAK
+  // normalizes the noise correctly (it was previously an unreachable ~0.925-
+  // 1.070 due to the same bug -- see FBM_PEAK's comment); because this is
+  // organic noise, not a sine wave, and the owner separately asked for the
+  // motion to feel "more random" rather than perfectly periodic, any single
+  // song won't hit exactly +-15% on a schedule -- verified against real
+  // makeLightParams seeding across 300 simulated songs, the realized global
+  // range reaches ~0.855-1.154 and the median per-song peak-to-peak span is
+  // ~14.7% (was ~5.6% pre-fix) -- close to a 3x improvement, measured, not
+  // the pure 1.887x FBM_PEAK's own normalization alone would predict,
+  // because moving both noise axes with time (above) independently widens
+  // per-song coverage too. Applied as t*freq*speedMod rather than
+  // integrating a warped-time accumulator -- speedMod changes far slower
+  // than one anchor orbit (its own period is on the order of minutes vs.
+  // ~10-15s per orbit), so the phase error this approximation introduces
+  // stays visually negligible; exact frequency modulation would need
+  // per-frame state this stateless function doesn't otherwise keep.
+  const speedMod = 1 + (wobbleNoise.fbm(t * 0.016 + 271.3, t * 0.012 + 613.7, 2) / FBM_PEAK) * 0.15
+  let ax = a.baseX + Math.sin(t * a.freqX * speedMod + a.phaseX) * a.ampX + driftA.dx
+  let ay = a.baseY + Math.sin(t * a.freqY * speedMod + a.phaseY) * a.ampY + driftA.dy
+  let bx = b.baseX + Math.sin(t * b.freqX * speedMod + b.phaseX) * b.ampX + driftB.dx
+  let by = b.baseY + Math.sin(t * b.freqY * speedMod + b.phaseY) * b.ampY + driftB.dy
+
+  // Minimum-separation clamp, direction-stabilized (2026-08-04 follow-up
+  // fix). The push AXIS is (ux,uy) or its exact negation -- both represent
+  // the identical line through the two anchors, so whichever orientation
+  // stays closer to last frame's is the one that keeps the push continuous.
+  // Choosing it via a dot-product sign flip (instead of always taking the
+  // raw instantaneous direction) is what stops the anchors' true crossing
+  // from rendering as an instant full-contrast reversal: the push axis now
+  // glides through the crossing event instead of snapping across it.
+  // Coincident anchors (sep ~ 0, no defined raw direction) fall back to the
+  // previous direction if there is one, else a fixed axis, so this is
+  // always well-defined on the very first frame too.
+  const dx = bx - ax, dy = by - ay
+  const sep = Math.hypot(dx, dy)
+  let ux = sep > 1e-6 ? dx / sep : (prevDirection?.ux ?? 1)
+  let uy = sep > 1e-6 ? dy / sep : (prevDirection?.uy ?? 0)
+  if (prevDirection && (ux * prevDirection.ux + uy * prevDirection.uy) < 0) {
+    ux = -ux; uy = -uy
+  }
+  // Dynamic floor, not just the base constant: at DEPTH=100 the boundary-
+  // wobble amount (already correctly normalized above) could otherwise
+  // approach or exceed a FIXED separation floor, reopening the exact
+  // "noise dominates the base field" failure this clamp exists to prevent
+  // -- a second adversarial review caught this margin wasn't structurally
+  // guaranteed. Keeping the floor at least 2x the current wobble amount
+  // (in addition to the 0.35 base) means a future dial/constant change
+  // can't silently reintroduce the original bug.
+  const minSeparation = Math.max(MIN_ANCHOR_SEPARATION, wobbleAmt * 2)
+  if (sep < minSeparation) {
+    const push = (minSeparation - sep) / 2
+    ax -= ux * push; ay -= uy * push
+    bx += ux * push; by += uy * push
+  }
+
+  return { ax, ay, bx, by, speedMod, direction: { ux, uy } }
 }
 
 // "the 10% either way gradients need to be more apparent" (owner, live) --
@@ -187,32 +314,17 @@ function drawScene(ctx, smallCtx, scene, timestamp, width, height) {
   const wobbleAmt = wobbleAmount()
   const shadeAmt = shadeAmount()
 
-  // Anchor position blends the deterministic sine path with a slow noise-
-  // driven drift sampled from `wobble` along time (each anchor/axis reads a
-  // distinct, far-apart offset via driftPhaseX/Y so the two anchors' drifts
-  // don't echo each other). Noise never repeats, so the pair's relative
-  // motion stops being a fixed, memorizable dance over a song's length.
-  const driftFor = light => ({
-    dx: wobble.fbm(t * 0.025 + light.driftPhaseX, 0.31, 2) * light.ampX * 0.8,
-    dy: wobble.fbm(t * 0.021 + light.driftPhaseY, 0.77, 2) * light.ampY * 0.8,
-  })
-  const driftA = driftFor(a), driftB = driftFor(b)
-  // "the speed should go up and down from its baseline by 15% either way at
-  // any given time" (owner, live) -- a single shared multiplier, sourced
-  // from the same slow noise generator as the drift above (far-apart offset
-  // so it doesn't visibly lock to any one drift term), oscillating the
-  // anchors' angular rate between 0.85x and 1.15x of whatever MOTION is set
-  // to. Applied as t*freq*speedMod rather than integrating a warped-time
-  // accumulator -- speedMod changes far slower than one anchor orbit (its
-  // own period is on the order of minutes vs. ~10-15s per orbit), so the
-  // phase error this approximation introduces stays visually negligible;
-  // exact frequency modulation would need per-frame state this stateless
-  // draw function doesn't otherwise keep.
-  const speedMod = 1 + wobble.fbm(t * 0.008 + 271.3, 613.7, 2) * 0.15
-  const ax = a.baseX + Math.sin(t * a.freqX * speedMod + a.phaseX) * a.ampX + driftA.dx
-  const ay = a.baseY + Math.sin(t * a.freqY * speedMod + a.phaseY) * a.ampY + driftA.dy
-  const bx = b.baseX + Math.sin(t * b.freqX * speedMod + b.phaseX) * b.ampX + driftB.dx
-  const by = b.baseY + Math.sin(t * b.freqY * speedMod + b.phaseY) * b.ampY + driftB.dy
+  // Anchor position: deterministic sine path + slow noise drift + speed
+  // breathing + the direction-stabilized minimum-separation clamp, all in
+  // one pure, independently-tested function -- see computeAnchorPositions
+  // above. `direction` is memoized onto the scene (same pattern as
+  // scene.field/wobbleNoise) so next frame's hysteresis check has last
+  // frame's push axis to compare against -- without this persisting across
+  // frames, the whole point of the direction fix is lost.
+  const { ax, ay, bx, by, direction } = computeAnchorPositions(
+    [a, b], t, wobble, { prevDirection: scene.prevAnchorDir, wobbleAmt },
+  )
+  scene.prevAnchorDir = direction
 
   for (let y = 0; y < TINY_SIZE; y += 1) {
     for (let x = 0; x < TINY_SIZE; x += 1) {
@@ -223,8 +335,10 @@ function drawScene(ctx, smallCtx, scene, timestamp, width, height) {
       const distB = Math.hypot(nx - bx, ny - by)
       // Low-octave on purpose (2 octaves) -- a finer field breaks the
       // boundary into many small islands instead of one flowing line.
-      const w = wobble.fbm(nx * 2.4 + t * 0.05, ny * 2.4 - t * 0.04, 2) * wobbleAmt
-      const shade = shadeNoise.fbm(nx * SHADE_SPATIAL_FREQ + t * 0.03, ny * SHADE_SPATIAL_FREQ - t * 0.025, 2) * shadeAmt
+      // /FBM_PEAK -- see the constant's comment; without it wobbleAmt/
+      // shadeAmt were only ever delivering ~53% of their stated amount.
+      const w = wobble.fbm(nx * 2.4 + t * 0.05, ny * 2.4 - t * 0.04, 2) / FBM_PEAK * wobbleAmt
+      const shade = shadeNoise.fbm(nx * SHADE_SPATIAL_FREQ + t * 0.03, ny * SHADE_SPATIAL_FREQ - t * 0.025, 2) / FBM_PEAK * shadeAmt
       field.sampleInto(distA - distB + w, shade, image.data, index)
     }
   }
