@@ -1,6 +1,15 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, memo } from 'react'
 import { motion, useAnimation } from 'framer-motion'
-import GradientBackground from './GradientBackground'
+// TEMP (2026-08-04, owner request): swapped back to the pre-mesh circle-blobs
+// engine as it stood at commit 043b3ed (2026-07-13, last commit before the
+// 5-day gap to 07-18 -- "circa July 15, the build before a long break in
+// deploys"). Scoped intentionally to ONLY this import -- every non-background
+// fix that shipped in the weeks since (playback races, Trivia OS handoff,
+// title display, etc.) stays on current. Goal is to look at this live and
+// chip away at real issues from here, not a permanent revert -- see
+// AlbumGradient.jsx's own file history for why it was replaced in the first
+// place before reintroducing any of its old bugs.
+import GradientBackground from './AlbumGradient'
 import { usePalette } from '../hooks/usePalette'
 import { displayName } from '../lib/track'
 
