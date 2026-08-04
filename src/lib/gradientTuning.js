@@ -131,12 +131,18 @@ export function motionSpeed()          { return lerp(0.50, 1.50, T('MOTION') / 1
 // clamp (see twoLightBlend.js), the reachable edge of a light's circle
 // landed inside the frame on every song, reading as a spotlight/orb
 // floating around rather than a blended field ("the circle floating
-// around has to go... no shapes, mesh" -- owner, live). Widened so a
-// light's radius exceeds the canvas at every dial position: the visible
-// frame only ever samples the smooth INTERIOR of each light's falloff,
-// never reaches a point where it's fully "spent," matching the standard
-// aurora/mesh-gradient technique of sizing blobs past the viewport.
-export function lightRadius()          { return lerp(0.90, 1.50, T('SIZE') / 100) }         // 50 → 1.20
+// around has to go... no shapes, mesh" -- owner, live). First widened to
+// 0.90-1.50 the same day, but the weight-ratio math that decides which
+// light's HUE wins at a given pixel (popA/distA vs popB/distB, in
+// twoLightBlend.js) is scale-invariant to a uniform radius change -- both
+// lights' dist values shrink together, so their RATIO barely moves. The
+// actual cause of that widen's "the two colors aren't two distinct beings"
+// regression was the blur increase below, not this. Settled here at a
+// middling value: enough that a light's radius still reaches past the
+// canvas on most songs (killing the edge) without also flattening each
+// light's own halo/shade gradient (which uses ABSOLUTE dist, not the
+// ratio) across so much area that its personality reads as uniform.
+export function lightRadius()          { return lerp(0.65, 1.05, T('SIZE') / 100) }         // 50 → 0.85
 export function seamBlend()            { return T('BLEND') === 50 ? 0.6 : lerp(0.30, 0.90, T('BLEND') / 100) }
 export function haloDepth()            { return lerp(0.05, 0.15, T('DEPTH') / 100) }        // 50 → exact 0.10
 

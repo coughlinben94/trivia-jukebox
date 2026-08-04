@@ -172,15 +172,18 @@ function drawScene(ctx, smallCtx, scene, timestamp, width, height) {
   smallCtx.putImageData(image, 0, 0)
   ctx.clearRect(0, 0, width, height)
   ctx.imageSmoothingEnabled = true
-  // Blur radius raised ~4x (was width/70, a max-12-16px sliver at the
-  // capped 800px backing size) and the overshoot margin widened to match
-  // (6% -> 12%) so the heavier blur has canvas left to feather into instead
-  // of clipping at the edge. Real aurora/mesh-gradient backgrounds run
-  // blur well into double digits of the canvas's own width, not a couple
-  // percent -- the previous, tighter blur was part of why each light read
-  // as a soft-edged ORB rather than a diffuse wash.
-  ctx.filter = `blur(${Math.max(30, width / 15)}px)`
-  ctx.drawImage(smallCtx.canvas, -width * 0.06, -height * 0.06, width * 1.12, height * 1.12)
+  // Blur raised to width/15 (30px+) the same day as the radius widen above,
+  // on the theory both were needed for an aurora-style wash -- but blur
+  // (unlike a uniform radius change) genuinely averages neighboring hue
+  // regions together at a FIXED pixel scale, and at that strength it was
+  // the actual cause of "the two colors aren't two distinct beings" -- it
+  // smeared the two hues into each other across most of the frame rather
+  // than just softening each one's own edge. Pulled back to roughly
+  // half -- still meaningfully softer than the pre-session width/70
+  // sliver (enough that no small-scale artifact reads as a hard edge),
+  // without homogenizing the two colors into one blended mush.
+  ctx.filter = `blur(${Math.max(16, width / 40)}px)`
+  ctx.drawImage(smallCtx.canvas, -width * 0.04, -height * 0.04, width * 1.08, height * 1.08)
   ctx.filter = 'none'
 }
 

@@ -11,7 +11,7 @@ describe('single-renderer gradient tuning', () => {
   it('keeps the shipped two-light defaults neutral', () => {
     expect(brightnessAdjustment()).toBe(0)
     expect(motionSpeed()).toBe(1)
-    expect(lightRadius()).toBe(1.2)
+    expect(lightRadius()).toBeCloseTo(0.85, 10)
     expect(seamBlend()).toBe(0.6)
     expect(haloDepth()).toBe(0.1)
     expect(blendDurationMs()).toBe(7500)
