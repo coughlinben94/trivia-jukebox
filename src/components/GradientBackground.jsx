@@ -2,9 +2,10 @@
 import { useEffect, useRef } from 'react'
 import {
   blendDurationMs, brightnessAdjustment, motionSpeed,
-  lightRadius, seamBlend, haloDepth,
+  anchorAmplitude, wobbleAmount, seamWidth,
 } from '../lib/gradientTuning.js'
-import { prepareTwoLightField } from '../lib/twoLightBlend.js'
+import { prepareTwoPoolField } from '../lib/twoLightBlend.js'
+import { makeFlowNoise2D } from '../lib/flowNoise.js'
 
 const TINY_SIZE = 48
 // Blur-upscale already hides resolution loss (the 48x48 tile is what
@@ -26,6 +27,10 @@ function hashString(value) {
   return hash >>> 0
 }
 
+// Two pool anchors (was two point-lights, pre-2026-08-04). Each anchor
+// wanders around its own base position; prepareTwoPoolField assigns every
+// pixel to whichever anchor is spatially nearer (unweighted), so these
+// positions are what actually shapes and moves the two pools' boundary.
 export function makeLightParams({ shuffleKey = 0, artUrl = '', colors = [] }) {
   let seed = hashString(`${shuffleKey}|${artUrl}|${colors.join('|')}`)
   const rng = () => {
@@ -35,16 +40,16 @@ export function makeLightParams({ shuffleKey = 0, artUrl = '', colors = [] }) {
     value ^= value + Math.imul(value ^ (value >>> 7), value | 61)
     return ((value ^ (value >>> 14)) >>> 0) / 4294967296
   }
+  const amp = anchorAmplitude()
   return [0, 1].map(() => ({
     baseX: 0.25 + rng() * 0.5,
     baseY: 0.25 + rng() * 0.5,
-    ampX: 0.2 + rng() * 0.12,
-    ampY: 0.2 + rng() * 0.12,
+    ampX: amp + (rng() - 0.5) * amp * 0.4,
+    ampY: amp + (rng() - 0.5) * amp * 0.4,
     freqX: (0.35 + rng() * 0.2) * motionSpeed(),
     freqY: (0.3 + rng() * 0.2) * motionSpeed(),
     phaseX: rng() * Math.PI * 2,
     phaseY: rng() * Math.PI * 2,
-    radius: lightRadius() + (rng() - 0.5) * 0.1,
   }))
 }
 
@@ -147,26 +152,30 @@ function drawScene(ctx, smallCtx, scene, timestamp, width, height) {
   const ay = a.baseY + Math.sin(t * a.freqY + a.phaseY) * a.ampY
   const bx = b.baseX + Math.sin(t * b.freqX + b.phaseX) * b.ampX
   const by = b.baseY + Math.sin(t * b.freqY + b.phaseY) * b.ampY
-  const field = scene.field || (scene.field = prepareTwoLightField(...scene.colors, {
+  const field = scene.field || (scene.field = prepareTwoPoolField(...scene.colors, {
     brightnessAdjustment: brightnessAdjustment(),
-    haloDepth: haloDepth(),
-    seamBlend: seamBlend(),
+    seamWidth: seamWidth(),
     weightA: scene.weights[0],
     weightB: scene.weights[1],
   }))
+  // Seeded once per scene (memoized alongside `field`/`imageData` below) so
+  // the boundary's wobble is stable frame-to-frame and varies song-to-song,
+  // same "seeded per identity" property makeLightParams already has.
+  const wobble = scene.wobbleNoise || (scene.wobbleNoise = makeFlowNoise2D(hashString(`wobble|${scene.identity}`)))
   const image = scene.imageData || (scene.imageData = smallCtx.createImageData(TINY_SIZE, TINY_SIZE))
+  const wobbleAmt = wobbleAmount()
 
   for (let y = 0; y < TINY_SIZE; y += 1) {
     for (let x = 0; x < TINY_SIZE; x += 1) {
       const nx = x / (TINY_SIZE - 1)
       const ny = y / (TINY_SIZE - 1)
       const index = (y * TINY_SIZE + x) * 4
-      field.sampleInto(
-        Math.hypot(nx - ax, ny - ay) / a.radius,
-        Math.hypot(nx - bx, ny - by) / b.radius,
-        image.data,
-        index,
-      )
+      const distA = Math.hypot(nx - ax, ny - ay)
+      const distB = Math.hypot(nx - bx, ny - by)
+      // Low-octave on purpose (2 octaves) -- a finer field breaks the
+      // boundary into many small islands instead of one flowing line.
+      const w = wobble.fbm(nx * 2.4 + t * 0.05, ny * 2.4 - t * 0.04, 2) * wobbleAmt
+      field.sampleInto(distA - distB + w, image.data, index)
     }
   }
   smallCtx.putImageData(image, 0, 0)

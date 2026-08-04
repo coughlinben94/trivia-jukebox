@@ -6,6 +6,7 @@ import {
   oklabToRgb,
   prepareTwoLightBlend,
   prepareTwoLightField,
+  prepareTwoPoolField,
   rgbToOklab,
 } from '../lib/twoLightBlend.js'
 
@@ -170,5 +171,66 @@ describe('prepareTwoLightField', () => {
 
     expect(distance(weighted(0.5, 0.5))).toBeLessThan(distance(equal(0.5, 0.5)))
     expect(distance(weighted(1, 0))).toBeGreaterThan(distance(weighted(0, 1)))
+  })
+})
+
+describe('prepareTwoPoolField', () => {
+  it('reads as exactly color A well outside the seam on A\'s side, and exactly B on B\'s side', () => {
+    const field = prepareTwoPoolField('#ff0000', '#0000ff', { seamWidth: 0.2 })
+    // signedField very negative = deep in A's pool; very positive = deep in B's
+    const deepA = field(-1)
+    const deepB = field(1)
+    expect(deepA).toEqual(hexToRgb('#ff0000'))
+    expect(deepB).toEqual(hexToRgb('#0000ff'))
+  })
+
+  it('gives a real gradient band at the boundary, not a hard cut', () => {
+    const field = prepareTwoPoolField('#ff0000', '#0000ff', { seamWidth: 0.2 })
+    const at = x => rgbToOklab(field(x))
+    // Sample across the band; each step should move continuously (no jump),
+    // and the midpoint should sit clearly between the two base hues.
+    const samples = [-0.2, -0.1, 0, 0.1, 0.2].map(at)
+    for (let i = 1; i < samples.length; i++) {
+      const jump = Math.hypot(...samples[i].map((v, j) => v - samples[i - 1][j]))
+      expect(jump).toBeLessThan(1) // continuous, no discontinuous snap between adjacent samples
+    }
+    const mid = at(0)
+    const red = rgbToOklab(hexToRgb('#ff0000'))
+    const blue = rgbToOklab(hexToRgb('#0000ff'))
+    expect(mid[0]).toBeGreaterThan(Math.min(red[0], blue[0]))
+    expect(mid[0]).toBeLessThan(Math.max(red[0], blue[0]) + 0.3) // glow can push lightness up, bounded
+  })
+
+  it('keeps both pools comparably reachable regardless of population weight -- the point-light regression this replaces', () => {
+    // At 85/15 (the exact split that collapsed prepareTwoLightField's minority
+    // color to an isolated disc), the boundary should nudge but the far side
+    // of B's pool must still read as pure, undiluted B -- not shrunk to
+    // nothing. Test both directions so bias can't silently favor one side.
+    const lopsided = prepareTwoPoolField('#ff0000', '#0000ff', { weightA: 0.85, weightB: 0.15, seamWidth: 0.2 })
+    const flipped = prepareTwoPoolField('#ff0000', '#0000ff', { weightA: 0.15, weightB: 0.85, seamWidth: 0.2 })
+    expect(lopsided(1)).toEqual(hexToRgb('#0000ff'))
+    expect(lopsided(-1)).toEqual(hexToRgb('#ff0000'))
+    expect(flipped(1)).toEqual(hexToRgb('#0000ff'))
+    expect(flipped(-1)).toEqual(hexToRgb('#ff0000'))
+    // Bias should still shift SOMETHING -- the boundary crossing point --
+    // just not far enough to erase a pool. Confirm it moves in the expected
+    // direction: a pixel just past 0 reads more like A when A is the majority.
+    const justPastZero = x => rgbToOklab(x)
+    const distToA = rgb => {
+      const a = rgbToOklab(hexToRgb('#ff0000'))
+      const lab = rgbToOklab(rgb)
+      return Math.hypot(lab[0] - a[0], lab[1] - a[1], lab[2] - a[2])
+    }
+    expect(distToA(lopsided(0.05))).toBeLessThan(distToA(flipped(0.05)))
+  })
+
+  it('throws on a non-finite signed field value', () => {
+    const field = prepareTwoPoolField('#ff0000', '#0000ff')
+    expect(() => field(NaN)).toThrow(TypeError)
+    expect(() => field(Infinity)).toThrow(TypeError)
+  })
+
+  it('rejects malformed hex the same way prepareTwoLightField does', () => {
+    expect(() => prepareTwoPoolField('red', '#0000ff')).toThrow(TypeError)
   })
 })

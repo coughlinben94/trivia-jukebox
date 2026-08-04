@@ -202,3 +202,78 @@ export function blendTwoLights({ hexA, hexB, distA, distB }) {
   // prepareTwoLightBlend(hexA, hexB) instead of calling this per pixel.
   return prepareTwoLightBlend(hexA, hexB)(distA, distB)
 }
+
+// Two pools (2026-08-04, replaces the point-light field as the live renderer's
+// blend source). Owner, live, after 3 rounds of tuning prepareTwoLightField's
+// radius/blur/weight: "2 pools. each one color... they mesh and flow
+// together, and where they meet is gradient."
+//
+// prepareTwoLightField blends by POPULATION-WEIGHTED distance to two points
+// (populationA/distA vs populationB/distB) -- the family of shapes that math
+// can ever produce is nested ovals (Apollonius circles) centered wherever the
+// weight ratio crosses 1, and at any real-world weight split (60/40, 70/30)
+// that circle sits close to the MINORITY color's own point and stays small --
+// a blob on a field, not two comparable pools, no matter how radius/blur/seam
+// are tuned. This function blends by an UNWEIGHTED nearest-anchor split
+// instead: a pixel belongs to whichever of the two moving anchors is
+// spatially closer, full stop -- population plays no part in pool size, so
+// the two pools stay comparably large regardless of the color weight.
+// A low-frequency wobble is added to the signed distance field so the
+// boundary is an organic flowing line, not a straight bisector. Outside a
+// seamWidth-wide band around that boundary the field saturates to fully A or
+// fully B (each pool reads as flat, undiluted color); only the band itself
+// blends, using the same OKLab lerp + seamEased glow prepareTwoLightField
+// already used at its own boundary.
+export function prepareTwoPoolField(hexA, hexB, options = {}) {
+  if (!/^#[0-9a-f]{6}$/i.test(hexA) || !/^#[0-9a-f]{6}$/i.test(hexB)) {
+    throw new TypeError('Two-pool colors must be six-digit hex strings')
+  }
+  const [La0, aA, bA] = rgbToOklab(hexToRgb(hexA))
+  const [Lb0, aB, bB] = rgbToOklab(hexToRgb(hexB))
+  const brightnessAdjustment = options.brightnessAdjustment ?? 0
+  const La = Math.max(0, Math.min(1, La0 + brightnessAdjustment))
+  const Lb = Math.max(0, Math.min(1, Lb0 + brightnessAdjustment))
+  const seamWidth = Math.max(0.02, options.seamWidth ?? 0.22)
+  const glowDeltaL = options.glowDeltaL ?? 0.16
+  // Weight nudges which side the boundary sits on (a 60/40 song reads as A's
+  // pool taking slightly more of the frame) without collapsing either pool --
+  // scaled down (0.5x) so even a 90/10 input can't push the boundary so far
+  // that one pool disappears; that collapse is exactly what prepareTwoLightField
+  // did and this function exists to avoid.
+  const populationA = Number.isFinite(options.weightA) ? options.weightA : 0.5
+  const populationB = Number.isFinite(options.weightB) ? options.weightB : 0.5
+  const totalPop = populationA + populationB
+  const bias = totalPop > 0 ? ((populationA / totalPop) - 0.5) * 0.5 : 0
+
+  // signedField(x, y) -> distance-to-A minus distance-to-B, plus a caller-
+  // supplied wobble term (kept as an argument, not generated here, so this
+  // module stays a pure color/field function with no noise/time dependency
+  // of its own -- the renderer owns anchor motion and wobble).
+  function sampleInto(signedField, target, offset = 0) {
+    if (!Number.isFinite(signedField)) {
+      throw new TypeError('Two-pool signed field value must be a finite number')
+    }
+    const blendT = smoothstep(-seamWidth + bias, seamWidth + bias, signedField)
+    let L = La * (1 - blendT) + Lb * blendT
+    const a = aA * (1 - blendT) + aB * blendT
+    const b = bA * (1 - blendT) + bB * blendT
+    const eased = seamEased(1 - blendT, blendT)
+    L += (Math.min(1, L + glowDeltaL) - L) * eased
+    writeOklabToRgb(L, a, b, target, offset)
+    target[offset + 3] = 255
+    return target
+  }
+
+  const sample = signedField => {
+    const target = new Uint8ClampedArray(4)
+    sampleInto(signedField, target, 0)
+    return [target[0], target[1], target[2]]
+  }
+  sample.sampleInto = sampleInto
+  return sample
+}
+
+function smoothstep(edge0, edge1, x) {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)))
+  return t * t * (3 - 2 * t)
+}

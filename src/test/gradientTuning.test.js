@@ -1,27 +1,27 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  brightnessAdjustment, motionSpeed, lightRadius, seamBlend,
-  haloDepth, blendDurationMs, clearDials, setDial,
+  brightnessAdjustment, motionSpeed, anchorAmplitude, seamWidth,
+  wobbleAmount, blendDurationMs, clearDials, setDial,
   exportSnippet,
 } from '../lib/gradientTuning.js'
 
 describe('single-renderer gradient tuning', () => {
   beforeEach(() => clearDials())
 
-  it('keeps the shipped two-light defaults neutral', () => {
+  it('keeps the shipped two-pool defaults neutral', () => {
     expect(brightnessAdjustment()).toBe(0)
     expect(motionSpeed()).toBe(1)
-    expect(lightRadius()).toBeCloseTo(0.85, 10)
-    expect(seamBlend()).toBe(0.6)
-    expect(haloDepth()).toBe(0.1)
+    expect(anchorAmplitude()).toBeCloseTo(0.15, 10)
+    expect(seamWidth()).toBeCloseTo(0.25, 10)
+    expect(wobbleAmount()).toBeCloseTo(0.20, 10)
     expect(blendDurationMs()).toBe(7500)
   })
 
-  it('keeps halo depth within the useful 5–15% range', () => {
+  it('keeps wobble amount within the useful 5–35% range', () => {
     setDial('DEPTH', 0)
-    expect(haloDepth()).toBe(0.05)
+    expect(wobbleAmount()).toBeCloseTo(0.05, 10)
     setDial('DEPTH', 100)
-    expect(haloDepth()).toBe(0.15)
+    expect(wobbleAmount()).toBeCloseTo(0.35, 10)
   })
 
   it('exports paste-ready declarations for real derived functions', () => {
@@ -31,8 +31,8 @@ describe('single-renderer gradient tuning', () => {
     const snippet = exportSnippet()
 
     for (const name of [
-      'brightnessAdjustment', 'motionSpeed', 'lightRadius',
-      'seamBlend', 'haloDepth', 'blendDurationMs',
+      'brightnessAdjustment', 'motionSpeed', 'anchorAmplitude',
+      'seamWidth', 'wobbleAmount', 'blendDurationMs',
     ]) expect(snippet).toContain(`export function ${name}()`)
     expect(snippet).toContain('export function varietyToConfig()')
     expect(snippet).toContain('// paletteDefaults.js')

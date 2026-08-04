@@ -122,29 +122,43 @@ export function clearDials() {
 // ── Derived values — what the renderers actually call ──────────────────────
 export function blendDurationMs()  { return lerp(12000, 3000, T('CROSSFADE') / 100) }       // 50 → 7500 (was 7500, exact)
 
-// GradientBackground's two-light renderer. Field-building values remount on
-// release so the Canvas hot path retains parsed numbers and allocates nothing.
+// GradientBackground's renderer. Field-building values remount on release so
+// the Canvas hot path retains parsed numbers and allocates nothing.
 export function brightnessAdjustment() { return lerp(-0.10, 0.10, T('BRIGHTNESS') / 100) } // 50 → neutral
 export function motionSpeed()          { return lerp(0.50, 1.50, T('MOTION') / 100) }       // 50 → current speed
+
+// 2026-08-04: the whole point-light field (lightRadius/haloDepth/seamBlend,
+// history below) was replaced by prepareTwoPoolField's unweighted nearest-
+// anchor split after three rounds of tuning still didn't land -- owner,
+// live: "2 pools. each one color... they mesh and flow together, and where
+// they meet is gradient." Point-light math blends by distance to two points,
+// which can only ever produce nested-oval (Apollonius circle) shapes no
+// matter how radius/blur/weight are tuned, and at any real weight split the
+// minority color's oval sits small and close to its own center -- a blob,
+// not a comparable pool. These three dials keep their names/ids (SIZE,
+// DEPTH, BLEND) so the board and exportSnippet don't need new wiring, but
+// now drive the pool renderer instead:
+//
+// SIZE -> anchorAmplitude(): how far each pool's anchor wanders, which is
+// what actually moves the boundary now (there's no per-light radius in a
+// nearest-anchor split).
+// DEPTH -> wobbleAmount(): how much the boundary deviates from a straight
+// line between the two anchors -- the "flow" in "mesh and flow together".
+// BLEND -> seamWidth(): width of the actual gradient band where the two
+// pools meet; outside it each pool is flat, undiluted color.
+//
+// Old history, point-light era (kept for context, no longer load-bearing):
 // 0.45-0.75 (50 -> 0.60, 2026-08-03) let each light's influence stay
 // entirely within the canvas -- combined with the halo's old fixed-radius
-// clamp (see twoLightBlend.js), the reachable edge of a light's circle
-// landed inside the frame on every song, reading as a spotlight/orb
-// floating around rather than a blended field ("the circle floating
-// around has to go... no shapes, mesh" -- owner, live). First widened to
-// 0.90-1.50 the same day, but the weight-ratio math that decides which
-// light's HUE wins at a given pixel (popA/distA vs popB/distB, in
-// twoLightBlend.js) is scale-invariant to a uniform radius change -- both
-// lights' dist values shrink together, so their RATIO barely moves. The
-// actual cause of that widen's "the two colors aren't two distinct beings"
-// regression was the blur increase below, not this. Settled here at a
-// middling value: enough that a light's radius still reaches past the
-// canvas on most songs (killing the edge) without also flattening each
-// light's own halo/shade gradient (which uses ABSOLUTE dist, not the
-// ratio) across so much area that its personality reads as uniform.
-export function lightRadius()          { return lerp(0.65, 1.05, T('SIZE') / 100) }         // 50 → 0.85
-export function seamBlend()            { return T('BLEND') === 50 ? 0.6 : lerp(0.30, 0.90, T('BLEND') / 100) }
-export function haloDepth()            { return lerp(0.05, 0.15, T('DEPTH') / 100) }        // 50 → exact 0.10
+// clamp, the reachable edge of a light's circle landed inside the frame on
+// every song, reading as a spotlight/orb floating around ("the circle
+// floating around has to go... no shapes, mesh" -- owner, live). Widened to
+// 0.90-1.50, pulled back to 0.65-1.05 once blur (not radius) was identified
+// as the actual cause of a follow-up "not two distinct beings" regression.
+// None of that geometry survived the move to prepareTwoPoolField.
+export function anchorAmplitude()      { return lerp(0.08, 0.22, T('SIZE') / 100) }          // 50 → 0.15
+export function wobbleAmount()         { return lerp(0.05, 0.35, T('DEPTH') / 100) }         // 50 → 0.20
+export function seamWidth()            { return lerp(0.10, 0.40, T('BLEND') / 100) }         // 50 → 0.25
 
 // VARIETY resolves through the SAME curve as the server (paletteDefaults.js)
 // — used client-side only for the board's own readout; the actual palette
@@ -173,13 +187,13 @@ export function exportSnippet() {
     lines.push('', '// gradientTuning.js — replace motionSpeed():', `export function motionSpeed() { return ${fmt(motionSpeed())} }`)
   }
   if (isOverridden('SIZE')) {
-    lines.push('', '// gradientTuning.js — replace lightRadius():', `export function lightRadius() { return ${fmt(lightRadius())} }`)
+    lines.push('', '// gradientTuning.js — replace anchorAmplitude():', `export function anchorAmplitude() { return ${fmt(anchorAmplitude())} }`)
   }
   if (isOverridden('BLEND')) {
-    lines.push('', '// gradientTuning.js — replace seamBlend():', `export function seamBlend() { return ${fmt(seamBlend())} }`)
+    lines.push('', '// gradientTuning.js — replace seamWidth():', `export function seamWidth() { return ${fmt(seamWidth())} }`)
   }
   if (isOverridden('DEPTH')) {
-    lines.push('', '// gradientTuning.js — replace haloDepth():', `export function haloDepth() { return ${fmt(haloDepth())} }`)
+    lines.push('', '// gradientTuning.js — replace wobbleAmount():', `export function wobbleAmount() { return ${fmt(wobbleAmount())} }`)
   }
   if (isOverridden('VARIETY')) {
     const cfg = varietyConfig()
