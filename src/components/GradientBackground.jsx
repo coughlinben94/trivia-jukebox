@@ -399,12 +399,23 @@ export function updateTransitionState(state, { current, next, entranceActive, no
   // and seeded incoming motion remain untouched.
   if (state.incoming?.identity === currentScene.identity) {
     state = { ...state, current: state.incoming }
-  } else if (state.current.identity !== currentScene.identity) {
-    if (entranceActive && !state.current.ready) {
-      state = { ...state, current: currentScene }
-    } else {
-      state = startTransition(state, currentScene, now)
-    }
+  } else if (state.current.identity !== currentScene.identity && currentScene.ready) {
+    // Owner, live, second pass on the entrance: "it's basically what each
+    // song-to-song animation should be, but the first one just takes over
+    // a black screen." Used to special-case this (silently swap `current`
+    // with no blend while entranceActive and not-yet-ready) and fake the
+    // reveal separately with CSS (brightness filter + clip-path circle) --
+    // rejected live as looking like "blowing up like a circle in a random
+    // place," not like color arriving and taking over. Removing that
+    // special case means the very first REAL palette (once it's ready,
+    // replacing GradientBackground's hand-seeded all-black initial `current`
+    // -- see the component below) goes through the exact same
+    // startTransition path as every other song change: a real two-canvas
+    // crossfade, same organic per-pixel pool motion, from black to color.
+    // The `currentScene.ready` guard still skips transitioning INTO a
+    // not-yet-resolved (sentinel/loading) scene -- unchanged from before,
+    // just no longer only enforced during entrance.
+    state = startTransition(state, currentScene, now)
   }
 
   if (entranceActive) {
@@ -531,17 +542,22 @@ export default function GradientBackground({
   weights = [], nextWeights = [],
 }) {
   const canvasesRef = useRef([])
-  const transitionRef = useRef(createTransitionState({ colors, weights, artUrl, shuffleKey }))
+  // Hand-built black scene, not createTransitionState({colors, ...}) off the
+  // real (probably-not-ready-yet) props -- normalizeScene's near-black
+  // filter would strip literal black and substitute the FALLBACK pink/
+  // purple pair, which is the wrong seed for an entrance meant to start
+  // from black (see updateTransitionState's entrance comment above for why
+  // this is the seed the real palette then crossfades FROM, same as any
+  // other song-to-song transition).
+  const transitionRef = useRef({
+    current: {
+      artUrl: '', colors: ['#000000', '#000000'], weights: [0.5, 0.5],
+      identity: '__entrance-black__', ready: true, shuffleKey: -1,
+      lights: makeLightParams({ shuffleKey: -1, artUrl: '', colors: ['#000000', '#000000'] }),
+    },
+    outgoing: null, incoming: null, pending: null, blendStart: null, snapshotRequest: null,
+  })
   const rafRef = useRef(null)
-  // Entrance origin (2026-08-04, second pass -- owner, live: "i want a fade
-  // in from a random part of the screen... like water was spilled and
-  // starts taking over the screen"). Picked once per mount, not per render
-  // -- lazy ref init so it's stable for the entrance's whole lifetime
-  // without needing its own effect.
-  const entranceOriginRef = useRef(null)
-  if (entranceOriginRef.current === null) {
-    entranceOriginRef.current = { x: Math.random() * 100, y: Math.random() * 100 }
-  }
 
   useEffect(() => {
     transitionRef.current = updateTransitionState(transitionRef.current, {
@@ -659,52 +675,22 @@ export default function GradientBackground({
     }
   }, [active])
 
-  // Entrance (2026-08-03, replaces the black-DIV alpha-wipe LiveScreen used
-  // to do over this component): fading a covering black layer's opacity to 0
-  // over a static, already-fully-bright scene is mathematically identical
-  // regardless of which element's alpha is animated -- LiveScreen tried that
-  // at 900ms, then 2400ms, and the owner still called it "not fluid enough...
-  // supposed to be two living colors floating in, not instant" even at the
-  // slower speed. The duration was never the problem -- an alpha-composite
-  // reveal of a fixed image reads as a wipe/reveal no matter how slow. What
-  // actually changes the FEEL is animating the colors' own brightness: a CSS
-  // brightness() filter on the canvases ramps the scene from black to its
-  // real intensity, so the colors visibly gain life/light rather than being
-  // uncovered. LiveScreen still holds an instant (non-animated) black cover
-  // for the first paint frame before this mounts; this is what performs the
-  // actual reveal once entranceActive releases.
-  // transition is a CONSTANT, not conditional on entranceActive (fixed
-  // 2026-08-03): flipping which transition applies and changing the filter
-  // VALUE in the same render gives the browser no committed "before" state
-  // with the real transition already active to animate from, so it just
-  // snapped straight to full brightness with no visible ramp -- confirmed
-  // live (screenshot sequence showed full-intensity color within ~1s of the
-  // black cover lifting, not a 3400ms bloom). entranceActive starts true
-  // (mount paints brightness(0) directly -- nothing to transition from on
-  // insertion, so no unwanted fade-from-nothing) and flips false exactly
-  // once, ~2s later, on its own render -- since the transition property
-  // itself never changes, THAT render's filter change animates correctly.
-  //
-  // clip-path circle (2026-08-04, second pass): the brightness ramp above
-  // still uncovers the WHOLE frame at once, just dimly at first -- owner
-  // wanted the reveal itself to spread from a point, "like water was
-  // spilled." A circle() clip-path grown from ~0 to 150% (comfortably past
-  // the farthest corner from any origin, so full coverage is guaranteed
-  // regardless of where the random point landed) at a random per-mount
-  // origin does that: same constant-transition trick as brightness above
-  // (never conditional on entranceActive, so there's always a committed
-  // "before" state to animate from) driving a spatial reveal alongside the
-  // existing brightness bloom rather than replacing it.
-  const { x: originX, y: originY } = entranceOriginRef.current
-  const canvasStyle = {
-    position: 'absolute', inset: 0, width: '100%', height: '100%',
-    filter: `brightness(${entranceActive ? 0 : 1})`,
-    clipPath: `circle(${entranceActive ? '0%' : '150%'} at ${originX}% ${originY}%)`,
-    // filter and clip-path share the same duration/easing -- `all` covers
-    // both without repeating it (position/inset/width/height never change
-    // after mount, so nothing else is affected by the broader property list).
-    transition: 'all 3400ms cubic-bezier(0.22, 0.61, 0.36, 1)',
-  }
+  // Entrance (2026-08-04, third pass): two prior attempts here were CSS
+  // tricks layered on top of an already-fully-formed scene -- a brightness()
+  // ramp (2026-08-03), then a clip-path circle grown from a random point
+  // (same day, second pass) -- and both got rejected live for the same
+  // underlying reason: they're revealing/lighting a static image that's
+  // already fully composed underneath, which reads as a wipe or a
+  // "circle blowing up in a random place," not color arriving. Owner, live:
+  // "it's basically what each song-to-song animation should be, but the
+  // first one just takes over a black screen." So: no CSS animation here at
+  // all anymore -- the entrance IS a real transition now, through the exact
+  // same updateTransitionState/startTransition path every song change uses,
+  // crossfading from the hand-seeded all-black `current` scene above to the
+  // first real palette once it's ready (see that function's comment). Same
+  // organic per-pixel two-pool motion animates it as any other transition,
+  // because it's the same code, not a parallel mechanism to keep in sync.
+  const canvasStyle = { position: 'absolute', inset: 0, width: '100%', height: '100%' }
   return (
     <div style={{ position: 'absolute', inset: 0, zIndex: 0, overflow: 'hidden', background: '#000' }}>
       <canvas ref={node => { canvasesRef.current[0] = node }} style={canvasStyle} />
