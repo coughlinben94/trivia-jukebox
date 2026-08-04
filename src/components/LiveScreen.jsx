@@ -497,7 +497,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         // Step 2 — record flies up once arm is clear
         flyCtrl.start({ y: -500, transition: { type: 'spring', stiffness: 220, damping: 22 } })
         setArtOpacity(0)
-        await Promise.all([preloadPromise, sleep(1200)])   // fly-up completes; preload runs concurrently
+        await Promise.all([preloadPromise, sleep(1700)])   // fly-up completes; preload runs concurrently (1200 -> 1700, 2026-08-04: Ben wanted the A->B jump a half-second longer)
         // Old record is gone — swap track identity
         setShown(target)
 
