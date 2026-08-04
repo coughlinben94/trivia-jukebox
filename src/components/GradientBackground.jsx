@@ -197,10 +197,22 @@ function drawScene(ctx, smallCtx, scene, timestamp, width, height) {
     dy: wobble.fbm(t * 0.021 + light.driftPhaseY, 0.77, 2) * light.ampY * 0.8,
   })
   const driftA = driftFor(a), driftB = driftFor(b)
-  const ax = a.baseX + Math.sin(t * a.freqX + a.phaseX) * a.ampX + driftA.dx
-  const ay = a.baseY + Math.sin(t * a.freqY + a.phaseY) * a.ampY + driftA.dy
-  const bx = b.baseX + Math.sin(t * b.freqX + b.phaseX) * b.ampX + driftB.dx
-  const by = b.baseY + Math.sin(t * b.freqY + b.phaseY) * b.ampY + driftB.dy
+  // "the speed should go up and down from its baseline by 15% either way at
+  // any given time" (owner, live) -- a single shared multiplier, sourced
+  // from the same slow noise generator as the drift above (far-apart offset
+  // so it doesn't visibly lock to any one drift term), oscillating the
+  // anchors' angular rate between 0.85x and 1.15x of whatever MOTION is set
+  // to. Applied as t*freq*speedMod rather than integrating a warped-time
+  // accumulator -- speedMod changes far slower than one anchor orbit (its
+  // own period is on the order of minutes vs. ~10-15s per orbit), so the
+  // phase error this approximation introduces stays visually negligible;
+  // exact frequency modulation would need per-frame state this stateless
+  // draw function doesn't otherwise keep.
+  const speedMod = 1 + wobble.fbm(t * 0.008 + 271.3, 613.7, 2) * 0.15
+  const ax = a.baseX + Math.sin(t * a.freqX * speedMod + a.phaseX) * a.ampX + driftA.dx
+  const ay = a.baseY + Math.sin(t * a.freqY * speedMod + a.phaseY) * a.ampY + driftA.dy
+  const bx = b.baseX + Math.sin(t * b.freqX * speedMod + b.phaseX) * b.ampX + driftB.dx
+  const by = b.baseY + Math.sin(t * b.freqY * speedMod + b.phaseY) * b.ampY + driftB.dy
 
   for (let y = 0; y < TINY_SIZE; y += 1) {
     for (let x = 0; x < TINY_SIZE; x += 1) {

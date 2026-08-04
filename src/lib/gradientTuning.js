@@ -125,7 +125,10 @@ export function blendDurationMs()  { return lerp(12000, 3000, T('CROSSFADE') / 1
 // GradientBackground's renderer. Field-building values remount on release so
 // the Canvas hot path retains parsed numbers and allocates nothing.
 export function brightnessAdjustment() { return lerp(-0.10, 0.10, T('BRIGHTNESS') / 100) } // 50 → neutral
-export function motionSpeed()          { return lerp(0.50, 1.50, T('MOTION') / 100) }       // 50 → current speed
+// 0.50-1.50 -> 0.60-1.80 (owner, live: "increase the motion standard by
+// 20%"). Whole range scaled x1.2 so every dial position moves 20% faster,
+// not just the default.
+export function motionSpeed()          { return lerp(0.60, 1.80, T('MOTION') / 100) }       // 50 → 1.2
 
 // 2026-08-04: the whole point-light field (lightRadius/haloDepth/seamBlend,
 // history below) was replaced by prepareTwoPoolField's unweighted nearest-

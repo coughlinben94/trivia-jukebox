@@ -10,7 +10,7 @@ describe('single-renderer gradient tuning', () => {
 
   it('keeps the shipped two-pool defaults neutral', () => {
     expect(brightnessAdjustment()).toBe(0)
-    expect(motionSpeed()).toBe(1)
+    expect(motionSpeed()).toBeCloseTo(1.2, 10)
     expect(anchorAmplitude()).toBeCloseTo(0.15, 10)
     expect(seamWidth()).toBeCloseTo(0.125, 10)
     expect(wobbleAmount()).toBeCloseTo(0.20, 10)
