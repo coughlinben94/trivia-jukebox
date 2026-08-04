@@ -534,6 +534,15 @@ export default function GradientBackground({
   const canvasesRef = useRef([])
   const transitionRef = useRef(createTransitionState({ colors, weights, artUrl, shuffleKey }))
   const rafRef = useRef(null)
+  // Entrance origin (2026-08-04, second pass -- owner, live: "i want a fade
+  // in from a random part of the screen... like water was spilled and
+  // starts taking over the screen"). Picked once per mount, not per render
+  // -- lazy ref init so it's stable for the entrance's whole lifetime
+  // without needing its own effect.
+  const entranceOriginRef = useRef(null)
+  if (entranceOriginRef.current === null) {
+    entranceOriginRef.current = { x: Math.random() * 100, y: Math.random() * 100 }
+  }
 
   useEffect(() => {
     transitionRef.current = updateTransitionState(transitionRef.current, {
@@ -660,10 +669,23 @@ export default function GradientBackground({
   // insertion, so no unwanted fade-from-nothing) and flips false exactly
   // once, ~2s later, on its own render -- since the transition property
   // itself never changes, THAT render's filter change animates correctly.
+  //
+  // clip-path circle (2026-08-04, second pass): the brightness ramp above
+  // still uncovers the WHOLE frame at once, just dimly at first -- owner
+  // wanted the reveal itself to spread from a point, "like water was
+  // spilled." A circle() clip-path grown from ~0 to 150% (comfortably past
+  // the farthest corner from any origin, so full coverage is guaranteed
+  // regardless of where the random point landed) at a random per-mount
+  // origin does that: same constant-transition trick as brightness above
+  // (never conditional on entranceActive, so there's always a committed
+  // "before" state to animate from) driving a spatial reveal alongside the
+  // existing brightness bloom rather than replacing it.
+  const { x: originX, y: originY } = entranceOriginRef.current
   const canvasStyle = {
     position: 'absolute', inset: 0, width: '100%', height: '100%',
     filter: `brightness(${entranceActive ? 0 : 1})`,
-    transition: 'filter 3400ms cubic-bezier(0.22, 0.61, 0.36, 1)',
+    clipPath: `circle(${entranceActive ? '0%' : '150%'} at ${originX}% ${originY}%)`,
+    transition: 'filter 3400ms cubic-bezier(0.22, 0.61, 0.36, 1), clip-path 3400ms cubic-bezier(0.22, 0.61, 0.36, 1)',
   }
   return (
     <div style={{ position: 'absolute', inset: 0, zIndex: 0, overflow: 'hidden', background: '#000' }}>
