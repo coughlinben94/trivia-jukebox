@@ -605,7 +605,21 @@ export default function GradientBackground({
         contexts[0].clearRect(0, 0, canvases[0].width, canvases[0].height)
         contexts[0].drawImage(snapshotCanvas, 0, 0, canvases[0].width, canvases[0].height)
       } else if (back) {
-        drawScene(contexts[0], small[0], back, timestamp, canvases[0].width, canvases[0].height)
+        // Owner, live: "the transitions from song to song are really not
+        // smooth." Both layers were drawScene'd with the live, growing
+        // `timestamp` for the full ~7.5s blend -- two independently-seeded
+        // fields each doing their own full-strength wander/crossing (more so
+        // now that the drift fix above lets them actually roam), alpha-
+        // composited on top of each other, reads as a busy double-exposure
+        // rather than a clean dissolve. Freezing the OUTGOING scene's time at
+        // the moment its fade started turns it into a static frame that
+        // just fades out in place -- only the incoming scene is still alive
+        // during the blend, same as a standard crossfade over a still frame.
+        // No pixel snapshot needed for this (unlike the interruption path
+        // above): drawScene's output is a pure function of `t` given the
+        // scene's already-memoized field/noise, so a fixed t reproduces the
+        // exact same frame every call for free.
+        drawScene(contexts[0], small[0], back, state.blendStart, canvases[0].width, canvases[0].height)
       }
       drawScene(contexts[1], small[1], front, timestamp, canvases[1].width, canvases[1].height)
       const opacity = crossfadeOpacities(progress)
