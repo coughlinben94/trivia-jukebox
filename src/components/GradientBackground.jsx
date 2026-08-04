@@ -73,6 +73,7 @@ export function makeLightParams({ shuffleKey = 0, artUrl = '', colors = [] }) {
     phaseY: rng() * Math.PI * 2,
     driftPhaseX: rng() * 1000,
     driftPhaseY: rng() * 1000,
+    driftFreqMult: 0.7 + rng() * 0.6,
   }))
 }
 
@@ -169,10 +170,23 @@ export function computeAnchorPositions(lights, t, wobbleNoise, { wobbleAmt = 0, 
   // 600s/10min window on one real seed). Moving both axes traces a diagonal
   // through the field instead, covering far more terrain per unit time, so
   // the achievable range is reached reliably rather than seed-dependently.
-  const driftFor = light => ({
-    dx: wobbleNoise.fbm(t * 0.025 + light.driftPhaseX, t * 0.017 + 0.31, 2) / FBM_PEAK * light.ampX * 0.8,
-    dy: wobbleNoise.fbm(t * 0.021 + light.driftPhaseY, t * 0.014 + 0.77, 2) / FBM_PEAK * light.ampY * 0.8,
-  })
+  // "the motions ... need to feel like they're battling or dancing with each
+  // other, truly random" (owner, live, 2026-08-04 follow-up) -- the sine term
+  // above is a fixed Lissajous path no matter how it's phase-offset, so it's
+  // the noise term that has to carry "truly random" and "cross into the
+  // other's territory, then retreat." Reach bumped from 0.8x to 1.7x ampX/Y
+  // (partial crossover, not a full takeover -- owner explicitly asked for
+  // partial) and each anchor's noise now runs at its own per-instance
+  // frequency (driftFreqMult, 0.7-1.3x) instead of a shared rate, so the two
+  // anchors' excursions decorrelate in timing as well as phase -- no fixed
+  // cycle length, which is what "truly random" rules out.
+  const driftFor = light => {
+    const freqMult = light.driftFreqMult ?? 1
+    return {
+      dx: wobbleNoise.fbm(t * 0.025 * freqMult + light.driftPhaseX, t * 0.017 * freqMult + 0.31, 2) / FBM_PEAK * light.ampX * 1.7,
+      dy: wobbleNoise.fbm(t * 0.021 * freqMult + light.driftPhaseY, t * 0.014 * freqMult + 0.77, 2) / FBM_PEAK * light.ampY * 1.7,
+    }
+  }
   const driftA = driftFor(a), driftB = driftFor(b)
   // "the speed should go up and down from its baseline by 15% either way at
   // any given time" (owner, live) -- a single shared multiplier, sourced
