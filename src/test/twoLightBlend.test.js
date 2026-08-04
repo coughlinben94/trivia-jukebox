@@ -233,4 +233,32 @@ describe('prepareTwoPoolField', () => {
   it('rejects malformed hex the same way prepareTwoLightField does', () => {
     expect(() => prepareTwoPoolField('red', '#0000ff')).toThrow(TypeError)
   })
+
+  it('applies a shade delta to lightness without moving the pool boundary', () => {
+    const field = prepareTwoPoolField('#804020', '#204080')
+    const base = rgbToOklab(field(-1, 0))
+    const lighter = rgbToOklab(field(-1, 0.1))
+    const darker = rgbToOklab(field(-1, -0.1))
+    expect(lighter[0]).toBeGreaterThan(base[0])
+    expect(darker[0]).toBeLessThan(base[0])
+    // Hue/chroma (a, b) shouldn't meaningfully shift -- shade only ever
+    // touches L in the source; the small residual here is 8-bit RGB
+    // round-trip quantization (L changes which integer RGB the OKLab a/b
+    // pair rounds to), not a real coupling between shade and hue.
+    expect(lighter[1]).toBeCloseTo(base[1], 2)
+    expect(lighter[2]).toBeCloseTo(base[2], 2)
+  })
+
+  it('clamps shaded lightness to [0, 1] instead of overflowing', () => {
+    const field = prepareTwoPoolField('#ffffff', '#000000')
+    const blownOut = field(-1, 5) // deep in the white pool, absurdly large shade
+    const crushed = field(-1, -5)
+    expect(blownOut).toEqual([255, 255, 255])
+    expect(crushed).toEqual([0, 0, 0])
+  })
+
+  it('defaults shade to 0 (no change) when omitted, matching prepareTwoLightField-era call sites', () => {
+    const field = prepareTwoPoolField('#804020', '#204080')
+    expect(field(-1)).toEqual(field(-1, 0))
+  })
 })

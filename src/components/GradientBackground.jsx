@@ -31,6 +31,16 @@ function hashString(value) {
 // wanders around its own base position; prepareTwoPoolField assigns every
 // pixel to whichever anchor is spatially nearer (unweighted), so these
 // positions are what actually shapes and moves the two pools' boundary.
+//
+// driftPhase* (2026-08-04): owner, live, after the flat-pool/wobble version
+// landed: "the motions of the two colors interacting with each other needs
+// to feel more random." Pure sine motion is a Lissajous curve -- exactly
+// periodic, and over a 3-4 minute song a repeating path reads as
+// mechanical however organic any single loop looks. drawScene blends this
+// sine path with a slow noise-driven wander (same per-scene noise generator
+// used for the boundary wobble, sampled along time at a distinct offset per
+// anchor/axis via these phases) -- noise never repeats, so the two anchors'
+// relative motion stops being a fixed dance and reads as actually drifting.
 export function makeLightParams({ shuffleKey = 0, artUrl = '', colors = [] }) {
   let seed = hashString(`${shuffleKey}|${artUrl}|${colors.join('|')}`)
   const rng = () => {
@@ -50,8 +60,19 @@ export function makeLightParams({ shuffleKey = 0, artUrl = '', colors = [] }) {
     freqY: (0.3 + rng() * 0.2) * motionSpeed(),
     phaseX: rng() * Math.PI * 2,
     phaseY: rng() * Math.PI * 2,
+    driftPhaseX: rng() * 1000,
+    driftPhaseY: rng() * 1000,
   }))
 }
+
+// "the 10% either way gradients need to be more apparent" (owner, live) --
+// each pool's own internal lightness variation, from the original design
+// spec, shipped flat first (so the SEAM would read as the only gradient)
+// and needed to come back once that landed. A soft, low-frequency field --
+// not per-pixel texture -- so it reads as tonal depth within a pool, not
+// noise/grain.
+const SHADE_AMOUNT = 0.10
+const SHADE_SPATIAL_FREQ = 1.3
 
 function isNearBlack(hex) {
   const r = parseInt(hex.slice(1, 3), 16)
@@ -148,10 +169,6 @@ export function updateTransitionState(state, { current, next, entranceActive, no
 function drawScene(ctx, smallCtx, scene, timestamp, width, height) {
   const t = timestamp / 1000
   const [a, b] = scene.lights
-  const ax = a.baseX + Math.sin(t * a.freqX + a.phaseX) * a.ampX
-  const ay = a.baseY + Math.sin(t * a.freqY + a.phaseY) * a.ampY
-  const bx = b.baseX + Math.sin(t * b.freqX + b.phaseX) * b.ampX
-  const by = b.baseY + Math.sin(t * b.freqY + b.phaseY) * b.ampY
   const field = scene.field || (scene.field = prepareTwoPoolField(...scene.colors, {
     brightnessAdjustment: brightnessAdjustment(),
     seamWidth: seamWidth(),
@@ -159,11 +176,29 @@ function drawScene(ctx, smallCtx, scene, timestamp, width, height) {
     weightB: scene.weights[1],
   }))
   // Seeded once per scene (memoized alongside `field`/`imageData` below) so
-  // the boundary's wobble is stable frame-to-frame and varies song-to-song,
+  // motion/wobble/shade are stable frame-to-frame and vary song-to-song,
   // same "seeded per identity" property makeLightParams already has.
+  // Two independent generators (distinct seeds) so the boundary's wobble
+  // and each pool's internal shade don't visibly lock together.
   const wobble = scene.wobbleNoise || (scene.wobbleNoise = makeFlowNoise2D(hashString(`wobble|${scene.identity}`)))
+  const shadeNoise = scene.shadeNoise || (scene.shadeNoise = makeFlowNoise2D(hashString(`shade|${scene.identity}`)))
   const image = scene.imageData || (scene.imageData = smallCtx.createImageData(TINY_SIZE, TINY_SIZE))
   const wobbleAmt = wobbleAmount()
+
+  // Anchor position blends the deterministic sine path with a slow noise-
+  // driven drift sampled from `wobble` along time (each anchor/axis reads a
+  // distinct, far-apart offset via driftPhaseX/Y so the two anchors' drifts
+  // don't echo each other). Noise never repeats, so the pair's relative
+  // motion stops being a fixed, memorizable dance over a song's length.
+  const driftFor = light => ({
+    dx: wobble.fbm(t * 0.025 + light.driftPhaseX, 0.31, 2) * light.ampX * 0.8,
+    dy: wobble.fbm(t * 0.021 + light.driftPhaseY, 0.77, 2) * light.ampY * 0.8,
+  })
+  const driftA = driftFor(a), driftB = driftFor(b)
+  const ax = a.baseX + Math.sin(t * a.freqX + a.phaseX) * a.ampX + driftA.dx
+  const ay = a.baseY + Math.sin(t * a.freqY + a.phaseY) * a.ampY + driftA.dy
+  const bx = b.baseX + Math.sin(t * b.freqX + b.phaseX) * b.ampX + driftB.dx
+  const by = b.baseY + Math.sin(t * b.freqY + b.phaseY) * b.ampY + driftB.dy
 
   for (let y = 0; y < TINY_SIZE; y += 1) {
     for (let x = 0; x < TINY_SIZE; x += 1) {
@@ -175,7 +210,8 @@ function drawScene(ctx, smallCtx, scene, timestamp, width, height) {
       // Low-octave on purpose (2 octaves) -- a finer field breaks the
       // boundary into many small islands instead of one flowing line.
       const w = wobble.fbm(nx * 2.4 + t * 0.05, ny * 2.4 - t * 0.04, 2) * wobbleAmt
-      field.sampleInto(distA - distB + w, image.data, index)
+      const shade = shadeNoise.fbm(nx * SHADE_SPATIAL_FREQ + t * 0.03, ny * SHADE_SPATIAL_FREQ - t * 0.025, 2) * SHADE_AMOUNT
+      field.sampleInto(distA - distB + w, shade, image.data, index)
     }
   }
   smallCtx.putImageData(image, 0, 0)

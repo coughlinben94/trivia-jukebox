@@ -249,7 +249,17 @@ export function prepareTwoPoolField(hexA, hexB, options = {}) {
   // supplied wobble term (kept as an argument, not generated here, so this
   // module stays a pure color/field function with no noise/time dependency
   // of its own -- the renderer owns anchor motion and wobble).
-  function sampleInto(signedField, target, offset = 0) {
+  //
+  // shade (2026-08-04): the owner's original spec called for each pool to
+  // carry its own +-10% lightness variation ("shade fan"), not read as a
+  // single flat fill -- flat pools shipped first because that's what makes
+  // the SEAM read as the only gradient, but the owner then asked for the
+  // shade itself to be "more apparent." shade is a caller-supplied delta
+  // (typically a slow, low-frequency noise sample, +-shadeAmount) added to
+  // L wherever this function is sampled -- independent of signedField, so
+  // it varies the SAME pool's own lightness without touching which pool a
+  // pixel belongs to or widening the seam.
+  function sampleInto(signedField, shade, target, offset = 0) {
     if (!Number.isFinite(signedField)) {
       throw new TypeError('Two-pool signed field value must be a finite number')
     }
@@ -259,14 +269,15 @@ export function prepareTwoPoolField(hexA, hexB, options = {}) {
     const b = bA * (1 - blendT) + bB * blendT
     const eased = seamEased(1 - blendT, blendT)
     L += (Math.min(1, L + glowDeltaL) - L) * eased
+    L = Math.max(0, Math.min(1, L + (Number.isFinite(shade) ? shade : 0)))
     writeOklabToRgb(L, a, b, target, offset)
     target[offset + 3] = 255
     return target
   }
 
-  const sample = signedField => {
+  const sample = (signedField, shade = 0) => {
     const target = new Uint8ClampedArray(4)
-    sampleInto(signedField, target, 0)
+    sampleInto(signedField, shade, target, 0)
     return [target[0], target[1], target[2]]
   }
   sample.sampleInto = sampleInto
