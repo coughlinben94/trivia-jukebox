@@ -199,7 +199,13 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
         await fadeVolume(maxVol, 0, gen, fadeMs)
         if (genRef.current !== gen) return
         if (!preview) transitioningRef.current = true   // suppress isPaused during advance gap
-        await playerRef.current?.pause()
+        // Guarded (2026-08-04, Opus review of the A->B gap): this was the one
+        // remaining un-timeout'd SDK await in the file -- the exact shape of
+        // hang the header comment above describes, just not yet hit here.
+        // Volume is already ramped to 0 by this point and the next playTrack
+        // call replaces playback outright, so proceeding after a slow ack
+        // risks nothing audible.
+        await withTimeout(playerRef.current?.pause(), 200)
         // A stop can land during the await above — re-check before advancing,
         // and skip setVolume(0) too so a superseding play isn't muted.
         if (genRef.current !== gen) return
@@ -252,12 +258,20 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     // A newer playTrack call already superseded this one while we awaited the
     // token — don't send a now-pointless play command for a stale uri.
     if (genRef.current !== gen) return undefined
+    // position_ms in the /play body itself (2026-08-04, Opus review of the
+    // A->B gap): asks Spotify to start already at the trim's in-point instead
+    // of starting at 0 and seeking after — when it lands close enough (checked
+    // below, after confirm), this skips the 400ms buffer sleep + a whole seek
+    // round trip + the landed-poll entirely. Nothing below this is deleted:
+    // if it DOESN'T land close enough, the existing sleep->seek->poll path
+    // still runs untouched as a fallback, so this can only ever save time,
+    // never remove the safety net.
     const doPlay = (tok) => fetchWithTimeout(
       `https://api.spotify.com/v1/me/player/play?device_id=${deviceId}`,
       {
         method: 'PUT',
         headers: { Authorization: `Bearer ${tok}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uris: [uri] }),
+        body: JSON.stringify(startMs > 0 ? { uris: [uri], position_ms: startMs } : { uris: [uri] }),
       }
     )
     let playRes
@@ -337,7 +351,20 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     const fadeBudget = computeFadeBudget(startMs, stopMs, FADE_MS)
     const fadeInMs = fadeBudget
 
+    // Did the position_ms sent with /play above already land close enough to
+    // skip the seek fallback entirely? Checked via getCurrentState, not the
+    // player_state_changed payload used for `confirmed` above — position
+    // isn't reliably present on that event.
+    let seekNeeded = startMs > 0
     if (startMs > 0) {
+      const s = await player.getCurrentState()
+      if (genRef.current !== gen) return undefined
+      if (s && s.position >= startMs - 300 && s.position <= startMs + 3000) {
+        seekNeeded = false
+      }
+    }
+
+    if (startMs > 0 && seekNeeded) {
       // Give Spotify 400ms to buffer the start of the track before seeking
       await sleep(400)
       if (genRef.current !== gen) return undefined
@@ -362,20 +389,21 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
 
       await doSeek()
 
-      // Poll until position lands at or just past the in-point.
+      // Poll until position lands at or just past the in-point. Checks
+      // immediately (2026-08-04) instead of waiting a full 100ms tick before
+      // the first check, then falls back to the same 100ms interval.
       // Allow up to 300ms before startMs to handle slight Spotify overshoot.
       // Reject if position is still far before startMs — that means seek hasn't landed yet.
       const landed = await new Promise(resolve => {
-        const deadline = setTimeout(() => resolve(false), 3000)
-        const poll = setInterval(async () => {
+        let poll, deadline
+        const settle = (result) => { clearInterval(poll); clearTimeout(deadline); resolve(result) }
+        const check = async () => {
           const s = await player.getCurrentState()
-          if (!s) return
-          if (s.position >= startMs - 300 && s.position <= startMs + 5000) {
-            clearInterval(poll)
-            clearTimeout(deadline)
-            resolve(true)
-          }
-        }, 100)
+          return !!s && s.position >= startMs - 300 && s.position <= startMs + 5000
+        }
+        deadline = setTimeout(() => settle(false), 3000)
+        poll = setInterval(async () => { if (await check()) settle(true) }, 100)
+        check().then(ok => { if (ok) settle(true) })
       })
 
       // If first seek timed out, try once more
@@ -383,9 +411,10 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
         await doSeek()
         await sleep(800)
       }
-    } else {
+    } else if (startMs === 0) {
       await sleep(200)
     }
+    // else: position_ms already landed close enough — go straight to fade-in.
 
     if (genRef.current !== gen) return undefined
 

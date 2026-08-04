@@ -15,7 +15,7 @@ import { displayName } from '../lib/track'
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 const ARM_ON  = { rotate: 8,  y: 0 }   // needle resting on record
-const ARM_OFF = { rotate: -30, y: -5 } // lifted and rotated back
+const ARM_OFF = { rotate: -30, y: -8 } // lifted and rotated back (y -5 -> -8, 2026-08-04: Ben wanted a hair more lift)
 
 // Boogaloo (display) + DM Sans (body) — same pairing Trivia OS ships across all
 // 21 themes (see trivia-os/themes/index.js), loaded via Google Fonts link in
