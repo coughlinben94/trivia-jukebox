@@ -50,6 +50,10 @@ import { useEffect, useRef, useMemo } from 'react'
 // changes needed.
 
 const BLEND_DURATION_MS = 7500
+// The entrance's own first real-palette blend (near-black -> real colors) is
+// much shorter than a normal song-to-song crossfade — see startBlendTo's
+// header comment.
+const ENTRANCE_BLEND_DURATION_MS = 2000
 const NUM_ANCHORS = 2
 // Full noise-flow cycle speed — the "dancing" knob (owner feedback on the
 // original: "still not enough dance" even after +75%). Now breathes (see
@@ -244,25 +248,36 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
       outRgb:     initial.map(c => [...c]),
       inRgb:      initial.map(c => [...c]),
       blendStart: -1,
+      blendDurationMs: BLEND_DURATION_MS,
     }
   }
 
-  function startBlendTo(newHex) {
+  // durationMs: the entrance's own first real-palette blend uses
+  // ENTRANCE_BLEND_DURATION_MS (2026-08-04, owner: the full 7.5s
+  // song-to-song duration was still visibly shifting tint well after the
+  // tonearm had already dropped and the song was audibly playing — by the
+  // time the black curtain lifts (LiveScreen.jsx) the record's already
+  // settled, so a multi-second color creep afterward reads as unfinished,
+  // not as "floating in"). Every other caller keeps the default song-to-song
+  // duration.
+  function startBlendTo(newHex, durationMs = BLEND_DURATION_MS) {
     const s   = st.current
     const now = performance.now()
-    if (s.blendStart >= 0 && (now - s.blendStart) < BLEND_DURATION_MS) {
+    if (s.blendStart >= 0 && (now - s.blendStart) < s.blendDurationMs) {
       // Snapshot the CURRENT OKLab-blended position (not a fresh RGB lerp)
       // as the new outgoing point, so re-triggering mid-blend doesn't
-      // reintroduce an RGB step.
-      const t = easeInOut(Math.min((now - s.blendStart) / BLEND_DURATION_MS, 1))
+      // reintroduce an RGB step. Uses the OUTGOING blend's own duration,
+      // not the new one about to start.
+      const t = easeInOut(Math.min((now - s.blendStart) / s.blendDurationMs, 1))
       s.outRgb = s.outRgb.map((c, i) =>
         oklabToRgb(lerpOklabPolar(rgbToOklab(c), rgbToOklab(s.inRgb[i]), t))
       )
     } else {
       s.outRgb = s.steadyRgb.map(c => [...c])
     }
-    s.inRgb      = parseColors(newHex, NUM_ANCHORS)
-    s.blendStart = performance.now()
+    s.inRgb          = parseColors(newHex, NUM_ANCHORS)
+    s.blendStart      = performance.now()
+    s.blendDurationMs = durationMs
     if (!rafRef.current && mountedRef.current) startLoop()
   }
 
@@ -309,7 +324,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     if (!entranceActive && pendingBlendRef.current) {
       const pending = pendingBlendRef.current
       pendingBlendRef.current = null
-      startBlendTo(pending)
+      startBlendTo(pending, ENTRANCE_BLEND_DURATION_MS)
     }
   }, [entranceActive])
 
@@ -352,7 +367,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     const outOklab = s.outRgb.map(rgbToOklab)
     const inOklab  = s.inRgb.map(rgbToOklab)
     if (s.blendStart >= 0) {
-      const t = easeInOut(Math.min((ts - s.blendStart) / BLEND_DURATION_MS, 1))
+      const t = easeInOut(Math.min((ts - s.blendStart) / s.blendDurationMs, 1))
       ;[anchor0, anchor1] = outOklab.map((c, i) => lerpOklabPolar(c, inOklab[i], t))
       if (t >= 1) {
         s.steadyRgb = s.inRgb.map(c => [...c])
