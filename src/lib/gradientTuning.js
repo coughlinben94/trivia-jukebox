@@ -126,7 +126,17 @@ export function blendDurationMs()  { return lerp(12000, 3000, T('CROSSFADE') / 1
 // release so the Canvas hot path retains parsed numbers and allocates nothing.
 export function brightnessAdjustment() { return lerp(-0.10, 0.10, T('BRIGHTNESS') / 100) } // 50 → neutral
 export function motionSpeed()          { return lerp(0.50, 1.50, T('MOTION') / 100) }       // 50 → current speed
-export function lightRadius()          { return lerp(0.45, 0.75, T('SIZE') / 100) }         // 50 → 0.60
+// 0.45-0.75 (50 -> 0.60, 2026-08-03) let each light's influence stay
+// entirely within the canvas -- combined with the halo's old fixed-radius
+// clamp (see twoLightBlend.js), the reachable edge of a light's circle
+// landed inside the frame on every song, reading as a spotlight/orb
+// floating around rather than a blended field ("the circle floating
+// around has to go... no shapes, mesh" -- owner, live). Widened so a
+// light's radius exceeds the canvas at every dial position: the visible
+// frame only ever samples the smooth INTERIOR of each light's falloff,
+// never reaches a point where it's fully "spent," matching the standard
+// aurora/mesh-gradient technique of sizing blobs past the viewport.
+export function lightRadius()          { return lerp(0.90, 1.50, T('SIZE') / 100) }         // 50 → 1.20
 export function seamBlend()            { return T('BLEND') === 50 ? 0.6 : lerp(0.30, 0.90, T('BLEND') / 100) }
 export function haloDepth()            { return lerp(0.05, 0.15, T('DEPTH') / 100) }        // 50 → exact 0.10
 

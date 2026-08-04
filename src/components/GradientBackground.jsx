@@ -172,8 +172,15 @@ function drawScene(ctx, smallCtx, scene, timestamp, width, height) {
   smallCtx.putImageData(image, 0, 0)
   ctx.clearRect(0, 0, width, height)
   ctx.imageSmoothingEnabled = true
-  ctx.filter = `blur(${Math.max(12, width / 70)}px)`
-  ctx.drawImage(smallCtx.canvas, -width * 0.03, -height * 0.03, width * 1.06, height * 1.06)
+  // Blur radius raised ~4x (was width/70, a max-12-16px sliver at the
+  // capped 800px backing size) and the overshoot margin widened to match
+  // (6% -> 12%) so the heavier blur has canvas left to feather into instead
+  // of clipping at the edge. Real aurora/mesh-gradient backgrounds run
+  // blur well into double digits of the canvas's own width, not a couple
+  // percent -- the previous, tighter blur was part of why each light read
+  // as a soft-edged ORB rather than a diffuse wash.
+  ctx.filter = `blur(${Math.max(30, width / 15)}px)`
+  ctx.drawImage(smallCtx.canvas, -width * 0.06, -height * 0.06, width * 1.12, height * 1.12)
   ctx.filter = 'none'
 }
 
@@ -313,9 +320,27 @@ export default function GradientBackground({
     }
   }, [active])
 
-  const canvasStyle = { position: 'absolute', inset: 0, width: '100%', height: '100%' }
+  // Entrance (2026-08-03, replaces the black-DIV alpha-wipe LiveScreen used
+  // to do over this component): fading a covering black layer's opacity to 0
+  // over a static, already-fully-bright scene is mathematically identical
+  // regardless of which element's alpha is animated -- LiveScreen tried that
+  // at 900ms, then 2400ms, and the owner still called it "not fluid enough...
+  // supposed to be two living colors floating in, not instant" even at the
+  // slower speed. The duration was never the problem -- an alpha-composite
+  // reveal of a fixed image reads as a wipe/reveal no matter how slow. What
+  // actually changes the FEEL is animating the colors' own brightness: a CSS
+  // brightness() filter on the canvases ramps the scene from black to its
+  // real intensity, so the colors visibly gain life/light rather than being
+  // uncovered. LiveScreen still holds an instant (non-animated) black cover
+  // for the first paint frame before this mounts; this is what performs the
+  // actual reveal once entranceActive releases.
+  const canvasStyle = {
+    position: 'absolute', inset: 0, width: '100%', height: '100%',
+    filter: `brightness(${entranceActive ? 0 : 1})`,
+    transition: entranceActive ? 'none' : 'filter 3400ms cubic-bezier(0.22, 0.61, 0.36, 1)',
+  }
   return (
-    <div style={{ position: 'absolute', inset: 0, zIndex: 0, overflow: 'hidden', background: FALLBACK[0] }}>
+    <div style={{ position: 'absolute', inset: 0, zIndex: 0, overflow: 'hidden', background: '#000' }}>
       <canvas ref={node => { canvasesRef.current[0] = node }} style={canvasStyle} />
       <canvas ref={node => { canvasesRef.current[1] = node }} style={canvasStyle} />
     </div>

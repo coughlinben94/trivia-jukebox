@@ -35,7 +35,8 @@ const FALLBACK = { colors: FALLBACK_COLORS, weights: FALLBACK_COLORS.map(() => 0
 // 1, and ACCENT_WEIGHT 0.15 -> 0.30 -- both change this branch's server
 // output, and s-maxage=86400 means an unbumped version can serve the old
 // accent placement/weight for up to 24h post-deploy.
-export const PALETTE_VERSION = 6;
+// v7 (same day): ACCENT_WEIGHT 0.30 -> 0.40 (60/40, owner spec).
+export const PALETTE_VERSION = 7;
 const versionQuery = `&pv=${PALETTE_VERSION}`;
 
 // Cache key includes the version + tuning query so a VARIETY-overridden fetch

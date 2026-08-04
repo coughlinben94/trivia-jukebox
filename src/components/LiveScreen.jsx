@@ -608,30 +608,26 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           at this screen the longest showed a dead frame. */}
       <GradientBackground colors={palette.colors} weights={palette.weights} nextColors={upcomingPalette.colors} nextWeights={upcomingPalette.weights} active={true} shuffleKey={shuffleKey} entranceActive={entranceActive} artUrl={artUrl} nextArtUrl={upcomingArtUrl} />
 
-      {/* Entrance black-out (2026-08-04, owner spec) — reverses the earlier
-          renderer's "no black snap, ever" stance.
-          Those comments were about mid-session song changes (skip to skip) —
-          this is scoped ONLY to entranceActive, which is true exactly once,
-          during the very first song of a shuffle session (LiveScreen mounts
-          fresh per showLive open; entranceActive flips false ~2s later and
-          never flips true again for the rest of this mount, per the runEntrance
-          effect above). The gradient engine is already blending live underneath
-          this the whole time — this just holds a solid black curtain over it
-          until the record/tonearm entrance settles, then lifts, so the first
-          colors of a session read as a deliberate reveal instead of colors
-          already sitting there when the screen appears. Purely visual: no
-          change to the gradient math, blend state, or mid-session transitions. */}
-      {/* 900ms ease-out (first cut) read as an abrupt snap live — owner:
-          "pure black till the first two colors move in... not fluid enough."
-          Slower, symmetric ease so the colors read as drifting in rather
-          than popping in once the curtain lifts. */}
+      {/* Entrance black cover (2026-08-04, owner spec), scoped ONLY to
+          entranceActive (true exactly once, the very first song of a
+          shuffle session — see the runEntrance effect above).
+          2026-08-03 revision: this used to BE the entrance animation (a
+          900ms, then 2400ms, opacity fade over an already-fully-bright
+          GradientBackground underneath) — but alpha-compositing a static
+          black layer over a fixed-brightness scene reads as a wipe/reveal
+          no matter the duration, which is exactly what the owner kept
+          calling "not fluid enough... supposed to be two living colors
+          floating in, not instant" even at 2400ms. The actual "floating
+          in" animation now lives in GradientBackground itself (a CSS
+          brightness() filter on its own canvases, ramping the colors'
+          real intensity up instead of uncovering a static image) — see
+          GradientBackground.jsx. This div now only needs to cover the
+          very first paint frame before that mounts, so it snaps instantly
+          instead of animating; animating two things at once just to reach
+          the same "revealed" endpoint would double-count the reveal. */}
       <div
         className="absolute inset-0 z-[1] pointer-events-none"
-        style={{
-          background: '#000',
-          opacity: entranceActive ? 1 : 0,
-          transition: entranceActive ? 'none' : 'opacity 2400ms cubic-bezier(0.33, 0, 0.2, 1)',
-        }}
+        style={{ background: '#000', opacity: entranceActive ? 1 : 0 }}
       />
 
       {/* Light vignette — kept subtle on purpose. This screen's whole job is

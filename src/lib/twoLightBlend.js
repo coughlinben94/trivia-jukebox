@@ -153,8 +153,17 @@ export function prepareTwoLightField(hexA, hexB, options = {}) {
     }
     distA = Math.max(0, distA)
     distB = Math.max(0, distB)
-    const lightnessA = Math.max(0, Math.min(1, baseAL + brightnessAdjustment + haloDepth * (1 - 2 * Math.min(1, distA))))
-    const lightnessB = Math.max(0, Math.min(1, baseBL + brightnessAdjustment + haloDepth * (1 - 2 * Math.min(1, distB))))
+    // No Math.min(1, dist) clamp here on purpose (removed 2026-08-03): clamping
+    // pinned each light's halo flat past its own radius, so lightness stopped
+    // changing at a fixed distance from the light's center -- a piecewise
+    // linear kink (gradient, then dead flat) that read as a literal bullseye
+    // rim/circle floating around, even blurred. Letting the ramp continue
+    // unclamped removes that fixed-radius edge entirely; the outer Math.max/
+    // Math.min(0,1) below still bounds the final lightness, so distant pixels
+    // don't blow out -- there's just no single distance where the SLOPE
+    // itself discontinuously changes.
+    const lightnessA = Math.max(0, Math.min(1, baseAL + brightnessAdjustment + haloDepth * (1 - 2 * distA)))
+    const lightnessB = Math.max(0, Math.min(1, baseBL + brightnessAdjustment + haloDepth * (1 - 2 * distB)))
     const rawWeightA = populationA / (distA + 0.001)
     const rawWeightB = populationB / (distB + 0.001)
     const weightSum = rawWeightA + rawWeightB
