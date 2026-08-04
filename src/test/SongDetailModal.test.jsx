@@ -55,9 +55,16 @@ function renderModal(trackOverrides = {}, playerOverrides = {}, handlers = {}) {
 }
 
 describe('Gradient color override', () => {
+  // The color picker lives in its own pop-up window (GradientColorPicker),
+  // opened from the "Gradient colors" trigger row in the trim editor.
+  const openColorPicker = () => {
+    fireEvent.click(screen.getByText('Gradient colors'))
+  }
+
   it('saves the exact valid color selected by the user for color 2', () => {
     const onUpdateGradientOverride = vi.fn()
     renderModal({}, {}, { onUpdateGradientOverride })
+    openColorPicker()
 
     fireEvent.change(screen.getByLabelText('Pick a custom color 2'), {
       target: { value: '#abcdef' },
@@ -69,6 +76,7 @@ describe('Gradient color override', () => {
   it('saves the exact valid color selected by the user for color 1', () => {
     const onUpdateGradientOverride = vi.fn()
     renderModal({}, {}, { onUpdateGradientOverride })
+    openColorPicker()
 
     fireEvent.change(screen.getByLabelText('Pick a custom color 1'), {
       target: { value: '#abcdef' },
