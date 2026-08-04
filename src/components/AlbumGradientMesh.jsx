@@ -30,10 +30,14 @@ import { useEffect, useRef, useMemo } from 'react'
 //    "muddy gray seam" problem this engine exists to avoid, just left
 //    unfixed on the transition path. Two opposite-hue picks (e.g. red to
 //    blue) now cross through a real perceptual gradient instead of gray.
-//  - Grain redrawn from a cached pattern instead of 700 fillRect calls
-//    every single frame (the original recomputed random static per frame;
-//    it only needs to look grainy, not be a different random field each of
-//    the ~60 frames per second).
+//  - Grain removed entirely (2026-08-04, Fable's critique) — 700 fillRect
+//    calls a frame for ~0.03% pixel coverage on a TV-sized canvas was pure
+//    cost with no visible payoff; see the note above the old call site.
+//  - Divider motion reworked (2026-08-04, Fable's critique): the single-sine
+//    sweep was outweighed 5:1 by the local noise term, so it barely read as
+//    travel — swing raised, divider is now 3 incommensurate sine periods so
+//    it never exactly repeats, the boundary slowly tilts off-vertical, and
+//    FLOW_SPEED breathes instead of sitting at one constant tempo.
 //
 // Colors are mixed in OKLab (perceptual color space), not composited with
 // 'screen' blend like AlbumGradient.jsx (the circle-blobs engine) — screen-
@@ -48,17 +52,57 @@ import { useEffect, useRef, useMemo } from 'react'
 const BLEND_DURATION_MS = 7500
 const NUM_ANCHORS = 2
 // Full noise-flow cycle speed — the "dancing" knob (owner feedback on the
-// original: "still not enough dance" even after +75%).
+// original: "still not enough dance" even after +75%). Now breathes (see
+// FLOW_SPEED_at() below) instead of sitting at one constant tempo forever —
+// 2026-08-04, per Fable's critique: a fixed speed reads as a metronome
+// after a couple hours of a bar shift.
 const FLOW_SPEED = 0.79
 // colors[0]/colors[1] slowly trade dominance back and forth across the frame.
-const ANCHOR_PERIOD_S   = 11.4  // one full sweep of the divider, edge to edge and back
-const ANCHOR_SWING      = 0.30  // how much the sweeping divider contributes to who's winning, vs. local noise texture
+const ANCHOR_PERIOD_S   = 11.4  // primary divider sweep period (see anchorDivider() — now 3 incommensurate sines, not 1)
+// 0.30 -> 0.65 (2026-08-04, Fable's critique): at 0.30 the divider sweep was
+// outweighed 5:1 by ANCHOR_NOISE_CONTRAST (1.5), so the noise churn WAS the
+// motion and the actual 11.4s travel barely registered — probably why past
+// tuning kept reaching for FLOW_SPEED as the only lever that visibly did
+// anything. Raising this lets the sweep read as real travel.
+const ANCHOR_SWING      = 0.65  // how much the sweeping divider contributes to who's winning, vs. local noise texture
 const ANCHOR_SHARPNESS  = 3.5   // divider position->edge transition — lower = blurrier, higher = crisper
 const ANCHOR_NOISE_CONTRAST = 1.5  // how much local noise texture (vs. the divider sweep) shapes the boundary's wobble
-const ANCHOR_MIX_SHARPNESS  = 2.4  // steepness of the anchor0<->anchor1 transition itself — higher = crisper meeting line
+// 2.4 -> 1.4 (2026-08-04, Fable's critique, second round): owner reported
+// each color's DOMINANT interior (not the seam) reading as one flat heavy
+// block. Math: deep in a stronghold, edge saturates to ~+-1 (ANCHOR_SHARPNESS
+// already does that within ~0.3 screen-widths of the divider), so score sits
+// around +-0.65 from swing alone plus noise wobble. At 2.4, tanh(2.4*0.65)
+// pins mix ~0.96 even at the LOW end of core wobble -- almost the whole
+// stronghold reads as one pinned-near-pure block with only faint texture,
+// and the visible blend band (mix 0.25-0.75) is a thin ribbon by comparison.
+// At 1.4, a typical core (score 0.65) lands at mix ~0.86 -- strong, but
+// breathing, with noise texture visibly modulating it -- while true peaks
+// (score ~1.2) still reach ~0.97, so a hand-picked color still renders
+// essentially full-strength somewhere (preserves the no-ANCHOR_FLOOR fix
+// above). The blend band roughly doubles in width as a side effect.
+const ANCHOR_MIX_SHARPNESS  = 1.4  // steepness of the anchor0<->anchor1 transition itself — higher = crisper meeting line
 // No ANCHOR_FLOOR — see file header. tanh already keeps the transition soft;
 // nothing forces a trace of the "losing" color to survive into its own
 // stronghold anymore.
+
+// Divider position, 2026-08-04: sum of three incommensurate periods instead
+// of one pure sine. A single sine repeats exactly every ANCHOR_PERIOD_S — on
+// an hours-long bar shift the eye eventually clocks the loop. Three periods
+// with no common factor (11.4s / 29.3s / 7.1s) mean the combined waveform
+// doesn't actually repeat on any timescale a viewer would sit through.
+function anchorDivider(tSec) {
+  return 0.5
+    + 0.35 * Math.sin((tSec / 11.4) * Math.PI * 2)
+    + 0.15 * Math.sin((tSec / 29.3) * Math.PI * 2)
+    + 0.10 * Math.sin((tSec / 7.1)  * Math.PI * 2)
+}
+
+// FLOW_SPEED breathes slowly (2026-08-04, Fable's critique) instead of
+// idling at one constant tempo — motion surges and settles on a ~4.5min
+// cycle instead of reading as a metronome.
+function flowSpeedAt(tSec) {
+  return FLOW_SPEED * (1 + 0.25 * Math.sin(tSec / 43))
+}
 
 function hexToRgb(hex) {
   if (!hex || hex.length < 7) return [8, 8, 8]
@@ -137,7 +181,6 @@ function makeColorSeeds() {
 export default function AlbumGradientMesh({ colors = [], nextColors = [], active = true, shuffleKey = 0, entranceActive = false }) {
   const canvasRef          = useRef(null)
   const smallCanvasRef     = useRef(null)
-  const grainCanvasRef     = useRef(null)
   const activeRef          = useRef(active)
   const mountedRef         = useRef(true)
   const rafRef             = useRef(null)
@@ -276,10 +319,10 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
       ;[anchor0, anchor1] = s.steadyRgb.map(rgbToOklab)
     }
 
-    const t    = (ts / 1000) * FLOW_SPEED   // drives noise domain warp/flow
     const tSec = ts / 1000                   // raw seconds — anchor duel timing
                                               // stays on its own clock, independent
                                               // of FLOW_SPEED tuning
+    const t    = tSec * flowSpeedAt(tSec)    // drives noise domain warp/flow
 
     // Two-color LERP between whichever anchor "wins" at a given point — like
     // two liquids meeting, not an N-color average (an average of many colors
@@ -287,7 +330,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     // toward one blended pastel). `mix` blends local noise texture (so the
     // boundary isn't a perfectly straight line) with the sweeping divider
     // position (so the boundary visibly travels).
-    const anchorDivider = 0.5 + 0.5 * Math.sin((tSec / ANCHOR_PERIOD_S) * Math.PI * 2)
+    const divider = anchorDivider(tSec)
 
     const img = sctx.getImageData(0, 0, SW, SH)
     const data = img.data
@@ -299,8 +342,12 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
         const wy = pseudoNoise(u - 6, v + 8, t * 0.6) * 0.6
         // Divider edge — POSITION-based (x/SW, plain 0-1 across the canvas),
         // not the noise-scaled u/v above. tanh gives a soft +-1 transition
-        // centered on the divider instead of a hard cut.
-        const edge = Math.tanh((x / SW - anchorDivider) * ANCHOR_SHARPNESS)
+        // centered on the divider instead of a hard cut. 2026-08-04, Fable's
+        // critique: a slow y-dependent lean so the meeting line doesn't sit
+        // perfectly vertical forever — tilt is a fraction of a screen-width,
+        // its own ~30s period so it doesn't lock to the divider's rhythm.
+        const tilt = 0.15 * Math.sin(tSec / 31) * (y / SH - 0.5)
+        const edge = Math.tanh((x / SW - divider + tilt) * ANCHOR_SHARPNESS)
 
         const n0 = pseudoNoise(u + wx + colorSeeds[0].seedU, v + wy + colorSeeds[0].seedV, t) * 0.5 + 0.5
         const n1 = pseudoNoise(u + wx + colorSeeds[1].seedU, v + wy + colorSeeds[1].seedV, t + 1.3) * 0.5 + 0.5
@@ -327,15 +374,10 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     const pad = Math.max(W, H) * 0.06
     ctx.drawImage(small, -pad, -pad, W + pad * 2, H + pad * 2)
     ctx.filter = 'none'
-
-    // Subtle grain, drawn from a cached pattern instead of 700 fillRect
-    // calls every frame — it only needs to look grainy, not be freshly
-    // randomized 60 times a second (the original recomputed it every frame).
-    if (grainCanvasRef.current) {
-      ctx.globalAlpha = 0.03
-      ctx.drawImage(grainCanvasRef.current, 0, 0, W, H)
-      ctx.globalAlpha = 1
-    }
+    // Grain removed 2026-08-04 (Fable's critique): 700 single-pixel rects at
+    // alpha 0.03 across a full TV-sized canvas is ~0.03% coverage — invisible
+    // from across a bar, and static, so on the rare frame it WAS visible it
+    // read as stuck dust rather than film grain. Pure cost, no payoff.
   }
 
   useEffect(() => {
@@ -344,19 +386,6 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
 
     const small = document.createElement('canvas')
     smallCanvasRef.current = small
-    const grain = document.createElement('canvas')
-    grainCanvasRef.current = grain
-
-    function buildGrain(w, h) {
-      grain.width = w
-      grain.height = h
-      const gctx = grain.getContext('2d')
-      gctx.clearRect(0, 0, w, h)
-      for (let i = 0; i < 700; i++) {
-        gctx.fillStyle = Math.random() > 0.5 ? '#fff' : '#000'
-        gctx.fillRect(Math.random() * w, Math.random() * h, 1, 1)
-      }
-    }
 
     function resize() {
       const p = canvas.parentElement
@@ -372,7 +401,6 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
       tinySizeRef.current = { w: tw, h: th }
       small.width = tw
       small.height = th
-      buildGrain(w, h)
     }
     resize()
     window.addEventListener('resize', resize)

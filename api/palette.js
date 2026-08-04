@@ -397,9 +397,22 @@ export default async function handler(req, res) {
         // all 4 land in this exact branch and, since it's a fixed pair, all
         // 4 shared one identical near-mud background under the old floor)
         // legible without pushing the light end past what 0.75 already caps.
+        // Owner spec (2026-08-04, follow-up): only the FIRST color stays the
+        // vivid neon accent; the second is a slightly-offwhite instead of a
+        // second neon hue — a true B&W cover pairing hot pink with hot
+        // purple read as two competing neons with nothing to breathe
+        // against, and "slightly offwhite" reads as a natural partner for a
+        // genuinely grayscale cover anyway (still not literal white/black
+        // per the "no black in the background" spec above the vivid pick).
+        // Same hue as the accent, at low saturation and high lightness, so
+        // it reads as a warm cream the accent could plausibly melt into
+        // rather than an unrelated color spliced next to it.
         const accentHues = pickMonochromeAccentHues();
-        colors = accentHues.map(h => hslToHex(h, 0.65, Math.min(0.75, Math.max(0.38, avgLuma))));
-        // Nothing real behind either hue here — both synthetic, so
+        const accentHue = accentHues[0];
+        const accent = hslToHex(accentHue, 0.65, Math.min(0.75, Math.max(0.38, avgLuma)));
+        const offwhite = hslToHex(accentHue, 0.10, 0.94);
+        colors = [accent, offwhite];
+        // Nothing real behind either color here — both synthetic, so
         // buildWeights' zero-real-entries branch splits them evenly.
         weights = buildWeights(colors.map(() => ({ population: null })));
       } else {
