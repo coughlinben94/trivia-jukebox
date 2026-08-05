@@ -368,13 +368,20 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         // timer on Jukebox's side in case this never fires for some reason.
         await flyCtrl.start({
           y: 0, opacity: 1, scale: 1,
-          // damping 22, not 28 (2026-07-30) — 28 was meaningfully overdamped
-          // for stiffness 120 (critical damping here is 2*sqrt(120)≈21.9),
-          // meaning the record's own landing spring floated down slowly with
-          // no bounce; 22 sits right at critical, so it lands just as
-          // cleanly but noticeably faster. Same value used in runTransition's
-          // fly-down below — keep them matched, it's the same motion.
-          transition: { type: 'spring', stiffness: 120, damping: 22 },
+          // stiffness 480, damping 44 (2026-08-04) — was 120/22. Audio fires
+          // the instant this spring settles (see comment above), so the
+          // settle time IS the audio-start delay; Ben wants that faster, not
+          // just the arm/text pacing after it. Settle time for a critically
+          // damped spring scales with 1/sqrt(stiffness), so 4x stiffness ≈
+          // half the settle time. Damping kept at critical (2*sqrt(480)≈43.8,
+          // rounded to 44) so it still lands clean with no bounce, just
+          // faster. NOTE: this now diverges from runTransition's fly-down
+          // spring below (still 120/22, matched to the old entrance speed) —
+          // the record will visually drop noticeably snappier on the first
+          // song than on every song-to-song transition. Flag to Ben: if that
+          // mismatch reads as inconsistent live, apply the same 480/44 down
+          // there too.
+          transition: { type: 'spring', stiffness: 480, damping: 44 },
         })
         onEntranceStart?.()
 
