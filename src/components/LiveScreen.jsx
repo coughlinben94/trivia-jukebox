@@ -378,13 +378,13 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         })
         onEntranceStart?.()
 
-        await sleep(500)   // 1200 -> 900 -> 1000 -> 500, 2026-08-04: Ben — intro too long, cut in half
+        await sleep(250)   // 1200 -> 900 -> 1000 -> 500 -> 250, 2026-08-04: Ben — still too long, another 50%
         tonearmCtrl.start({
           ...(isPausedRef.current ? ARM_OFF : ARM_ON),
           transition: { type: 'spring', stiffness: 180, damping: 22 },
         })
 
-        await sleep(100)   // 200 -> 100, 2026-08-04: same halving
+        await sleep(50)   // 200 -> 100 -> 50, 2026-08-04: same halving
         setTextInstant(false)
         setTextVisible(true)
         busyRef.current = false
