@@ -366,23 +366,28 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         // constant). Jukebox.jsx no longer calls playTrackFn on its own
         // independent timer; this is now the one trigger, with a fallback
         // timer on Jukebox's side in case this never fires for some reason.
-        await flyCtrl.start({
-          y: 0, opacity: 1, scale: 1,
-          // stiffness 480, damping 44 (2026-08-04) — was 120/22. Audio fires
-          // the instant this spring settles (see comment above), so the
-          // settle time IS the audio-start delay; Ben wants that faster, not
-          // just the arm/text pacing after it. Settle time for a critically
-          // damped spring scales with 1/sqrt(stiffness), so 4x stiffness ≈
-          // half the settle time. Damping kept at critical (2*sqrt(480)≈43.8,
-          // rounded to 44) so it still lands clean with no bounce, just
-          // faster. NOTE: this now diverges from runTransition's fly-down
-          // spring below (still 120/22, matched to the old entrance speed) —
-          // the record will visually drop noticeably snappier on the first
-          // song than on every song-to-song transition. Flag to Ben: if that
-          // mismatch reads as inconsistent live, apply the same 480/44 down
-          // there too.
-          transition: { type: 'spring', stiffness: 480, damping: 44 },
-        })
+        // REVERTED (2026-08-04) — bumped this spring to 480/44 to make audio
+        // fire sooner, since audio was tied to the promise resolving. Wrong
+        // move: 120/22 is not an arbitrary number, it's what multiple live
+        // 2026-07-30 tuning passes (see damping 22-vs-28 note, and the
+        // matching cap-race pattern in runTransition's fly-down below) landed
+        // on for how the drop should actually LOOK. 480/44 made the visual
+        // itself sped-up and wrong ("wayyyy too fast"), not just the audio.
+        // Fix: keep the tuned spring, race it against a timeout instead — so
+        // the animation keeps playing at its real, correct speed, but the
+        // await (and therefore onEntranceStart→audio below) doesn't wait for
+        // the whole thing to finish. Same race-against-a-cap technique
+        // already used for the identical spring in runTransition, just
+        // applied here for the first time. 350ms is a first guess, not a
+        // measured value — built to be nudged live like everything else in
+        // this file.
+        await Promise.race([
+          flyCtrl.start({
+            y: 0, opacity: 1, scale: 1,
+            transition: { type: 'spring', stiffness: 120, damping: 22 },
+          }),
+          new Promise(r => setTimeout(r, 350)),
+        ])
         onEntranceStart?.()
 
         await sleep(250)   // 1200 -> 900 -> 1000 -> 500 -> 250, 2026-08-04: Ben — still too long, another 50%
@@ -640,7 +645,17 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       // (Opus review — confirmed this ordering specifically, firing any
       // earlier would race that guard).
       audioJustFiredRef.current = true
-      setTimeout(() => { audioJustFiredRef.current = false }, 700)
+      // 700 -> 1800 (2026-08-04, Opus review of the "fishy" wobble report):
+      // this flag is read at the isPausedRef check below, ~820-870ms after
+      // it's set (Promise.race cap up to 550ms + sleep(120) + sleep(200)) —
+      // longer than the 700ms window, so the flag was always already false
+      // by the time it mattered and never actually guarded anything. When
+      // the SDK was slow to confirm playback, isPausedRef read stale
+      // `true`, so the re-sync below started ARM_OFF, then the real
+      // isPaused effect fired ARM_ON moments later and interrupted it
+      // mid-swing with leftover velocity — the overshoot/wobble Ben saw.
+      // 1800ms comfortably covers the read below plus normal SDK confirm lag.
+      setTimeout(() => { audioJustFiredRef.current = false }, 1800)
       onTransitionAudioStart?.(target)
 
       // Await the fly-down spring's OWN completion (controls.start()'s
@@ -671,7 +686,14 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       // is pure extra wait stacked on top of it, and it read as sluggish
       // (2026-07-30). Trimmed to a beat, not a pause.
       await sleep(120)
-      tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 22 } })
+      // damping 22 -> 26 (2026-08-04, Opus review): 180/22 is underdamped
+      // (critical = 2*sqrt(180)≈26.8, ζ≈0.82) and overshoots. 200ms later the
+      // re-sync below starts a SECOND spring to the same ARM_ON target at
+      // 180/26, interrupting this one mid-overshoot with leftover velocity —
+      // a visible double-settle even in the happy path, amplifying the
+      // 700ms-guard bug fixed just above. Matching 180/26 here so both
+      // springs to ARM_ON agree.
+      tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 26 } })
       await sleep(200)
       setTextInstant(false)
       setTransitioning(false)
