@@ -79,6 +79,7 @@ export function usePalette(albumArtUrl) {
   // effect has already moved on, so the state write also needs its own
   // "is this still the current request" check, not just the AbortController.
   const latestKeyRef = useRef(null);
+  const retryTimerRef = useRef(null);
 
   useEffect(() => {
     if (!albumArtUrl) return;
@@ -91,28 +92,49 @@ export function usePalette(albumArtUrl) {
     }
 
     if (abortRef.current) abortRef.current.abort();
+    clearTimeout(retryTimerRef.current);
     const controller = new AbortController();
     abortRef.current = controller;
     setPalette(FALLBACK);
 
-    fetch(`/api/palette?url=${encodeURIComponent(albumArtUrl)}${versionQuery}${paletteQuery()}`, {
-      signal: controller.signal,
-    })
-      .then(r => r.json())
-      .then(data => {
-        if (data.colors?.length >= 2) {
-          const p = normalize(data);
-          cache.set(key, p);
-          if (latestKeyRef.current === key) setPalette(p);
-        }
-      })
-      .catch(err => {
-        if (err.name !== 'AbortError') {
-          console.warn('[usePalette] falling back to defaults:', err.message);
-        }
-      });
+    const url = `/api/palette?url=${encodeURIComponent(albumArtUrl)}${versionQuery}${paletteQuery()}`;
 
-    return () => controller.abort();
+    // One retry on a failed fetch (2026-08-04, Track 3 audit) — this used to
+    // just console.warn and stop, leaving this song's background pinned at
+    // FALLBACK (near-black) for the rest of ITS OWN PLAYBACK — a single
+    // transient failure (a cold serverless start, a dropped request) reads
+    // as "the gradient is broken" for the whole song, not a passing glitch,
+    // since nothing here ever re-fires the fetch on its own. One retry after
+    // a short delay covers the common transient case; a genuinely dead
+    // endpoint still falls back to FALLBACK same as before, just one retry
+    // later instead of immediately.
+    const attempt = (isRetry) => {
+      fetch(url, { signal: controller.signal })
+        .then(r => r.json())
+        .then(data => {
+          if (data.colors?.length >= 2) {
+            const p = normalize(data);
+            cache.set(key, p);
+            if (latestKeyRef.current === key) setPalette(p);
+          }
+        })
+        .catch(err => {
+          if (err.name === 'AbortError') return;
+          if (!isRetry) {
+            retryTimerRef.current = setTimeout(() => {
+              if (latestKeyRef.current === key) attempt(true);
+            }, 1200);
+          } else {
+            console.warn('[usePalette] falling back to defaults:', err.message);
+          }
+        });
+    };
+    attempt(false);
+
+    return () => {
+      controller.abort();
+      clearTimeout(retryTimerRef.current);
+    };
   }, [albumArtUrl, paletteQuery()]);
 
   return palette;

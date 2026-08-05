@@ -725,6 +725,32 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         new Promise(r => setTimeout(r, 550)),
       ])
 
+      // Bail here, before the arm re-sync + text reveal below, if a newer
+      // target already queued (2026-08-04 — Track 1 audit): when Step 3's
+      // playTrackFn call above fails, Jukebox.jsx's advanceToNext retries
+      // with the NEXT song and calls straight back into onRegisterTransition
+      // — but busyRef is still true here, so that retry only gets queued
+      // into pendingRef (same as any other skip-while-busy), and this
+      // function was otherwise going to run all the way to a full text
+      // reveal for a song whose play request never actually succeeded ("its
+      // playing a diff song than what album is actually on the spinner").
+      // The only other pendingRef check before this one is right after Step
+      // 2's setShown (line ~663) — reached BEFORE Step 3 ever fires the play
+      // call, so it can never catch a Step-3 failure. This is the earliest
+      // point after Step 3 where a failure realistically has had time to
+      // resolve and queue a retry; catching it here — instead of only at the
+      // very end, after the arm's already resynced and the name's already
+      // shown — keeps the failed song from visibly settling in as "now
+      // playing" before the retry takes over.
+      if (pendingRef.current && pendingRef.current.uri !== target.uri) {
+        const pending = pendingRef.current
+        pendingRef.current = null
+        setTransitioning(false)
+        busyRef.current = false
+        runTransition(pending, target)
+        return
+      }
+
       // The 500ms grace here used to run concurrently with an un-awaited
       // fly-down (the actual landing happened somewhere during it, timing
       // unverified) — now that we AWAIT the real landing above, this delay
