@@ -381,6 +381,10 @@ const [newSetName, setNewSetName] = useState('')
 
   const shuffleOrderRef = useRef([])
   const shuffleIdxRef = useRef(0)
+  // Pending timers from advanceToNext's 300ms audio-start delay (see below) —
+  // cleared on stop so a delayed play can't fire after the user's already
+  // stopped playback.
+  const advancePlayTimersRef = useRef([])
   // Ids played so far tonight, PER SET — one Set per set id, not one shared
   // Set for the whole app. Consulted by buildSessionOrder/resolveNext so
   // pressing Shuffle-play again never repeats a song until every track in
@@ -588,23 +592,33 @@ const [newSetName, setNewSetName] = useState('')
       // so the fresh session doesn't mount into the outgoing animation state.
       setLiveEnding(false)
       setPlayingId(song.id)
-      playTrackFn.current?.(song)?.then(started => {
-        if (started !== false) return
-        if (!isRetry) {
-          // Single retry — skip the one bad track, don't loop the whole set.
-          tryPlay(true)
-        } else {
-          // Retry also failed — stop lying about playback state, and actually
-          // say so. This used to fail silently: music would just stop with
-          // zero indication why, which is indistinguishable from "the app is
-          // broken" in the moment. addToast is defined earlier in this
-          // component and is a stable useCallback, safe to reference here.
-          setIsPlaying(false)
-          setShowLive(false)
-          setPlayingId(null)
-          addToast('Playback stalled and auto-retry failed — hit Shuffle to restart')
-        }
-      })
+      // 300ms gap before song B's actual audio start (2026-08-04, Ben live:
+      // "song a and b are too close"). Everything above (upcoming-track
+      // preview, playedIds, setPlayingId) stays immediate — only the actual
+      // playTrackFn call, and therefore B's audio, is pushed back. This is
+      // shared by auto-advance (onAdvance, fired from the fade-out timer in
+      // useSpotifyPlayer.js) and the manual skip button — both go through
+      // tryPlay, and both were equally "too close."
+      const t = setTimeout(() => {
+        playTrackFn.current?.(song)?.then(started => {
+          if (started !== false) return
+          if (!isRetry) {
+            // Single retry — skip the one bad track, don't loop the whole set.
+            tryPlay(true)
+          } else {
+            // Retry also failed — stop lying about playback state, and actually
+            // say so. This used to fail silently: music would just stop with
+            // zero indication why, which is indistinguishable from "the app is
+            // broken" in the moment. addToast is defined earlier in this
+            // component and is a stable useCallback, safe to reference here.
+            setIsPlaying(false)
+            setShowLive(false)
+            setPlayingId(null)
+            addToast('Playback stalled and auto-retry failed — hit Shuffle to restart')
+          }
+        })
+      }, 300)
+      advancePlayTimersRef.current.push(t)
     }
     tryPlay(false)
   }, [addToast])
@@ -775,11 +789,13 @@ const [newSetName, setNewSetName] = useState('')
         // (e.g. another tab/device grabbed the Spotify session mid-start).
         addToast('Couldn’t start playback — another session may be controlling Spotify')
       }
-    }, 650)   // 400 -> 650, 2026-08-04: Ben wanted the first song's audio to start 250ms later
+    }, 850)   // 400 -> 650 -> 850, 2026-08-04: Ben wanted the first song's audio delayed another 200ms
   }, [library, addToast])
 
   const handleStop = useCallback(() => {
     clearTimeout(shuffleDebounceRef.current)
+    advancePlayTimersRef.current.forEach(clearTimeout)
+    advancePlayTimersRef.current = []
     const fadeDone = player.fadeAndPause()
     setIsPlaying(false)
     setPlayingId(null)
