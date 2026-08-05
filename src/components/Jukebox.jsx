@@ -84,6 +84,39 @@ export default function Jukebox({ onLogout }) {
   // real LiveScreen with the DJ board attached. Opened only by the TUNE button
   // in the header; no hotkey, deliberately, so nothing can pop it open mid-show.
   const [showTest, setShowTest] = useState(false)
+  // Read by the currentTrack watcher below: while true, a confirmed track
+  // opens the tuning screen INSTEAD of the real Live screen, so `showLive`
+  // stays false for the whole tuning session and the real Live flow (Space
+  // bar, the Live header toggle, the `b` handoff) is left exactly as it was.
+  const tuningRef = useRef(false)
+  // "Gradient dials moved from default" indicator on the Tune button. Twice in
+  // one day (2026-07-30) a stale Tune-board override sat silently in
+  // localStorage overriding the live show's look, discoverable only via
+  // devtools — an amber dot on the button Ben already uses makes it visible.
+  // Reads the module-level store (hasOverrides), not localStorage directly,
+  // because the in-memory store is what the renderers actually obey — they can
+  // disagree if localStorage was cleared externally while a tab stayed open.
+  const [gradientTuned, setGradientTuned] = useState(hasOverrides)
+  useEffect(() => {
+    const onTuningChange = () => setGradientTuned(hasOverrides())
+    window.addEventListener(TUNING_EVENT, onTuningChange)
+    return () => window.removeEventListener(TUNING_EVENT, onTuningChange)
+  }, [])
+  const [modalTrack, setModalTrack] = useState(null)
+const [newSetName, setNewSetName] = useState('')
+  const [addingSet, setAddingSet] = useState(false)
+  const [renamingId, setRenamingId] = useState(null)
+  const [renamingVal, setRenamingVal] = useState('')
+  const [shuffleKey, setShuffleKey] = useState(0)
+  const [toasts, setToasts] = useState([])
+  const [syncDone, setSyncDone] = useState(false)
+
+  const addToast = useCallback((msg) => {
+    const id = uid()
+    setToasts(prev => [...prev, { id, msg }])
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 2500)
+  }, [])
+
   // The chosen song for an entrance session (first song of a fresh shuffle),
   // shown to LiveScreen BEFORE Spotify is ever asked to play it (2026-08-04,
   // Ben live: "shouldnt play till the arm actually comes down" / "the song
@@ -128,38 +161,6 @@ export default function Jukebox({ onLogout }) {
   const onEntranceStart = useCallback(() => {
     firePendingEntrancePlay(entranceSongRef.current)
   }, [firePendingEntrancePlay])
-  // Read by the currentTrack watcher below: while true, a confirmed track
-  // opens the tuning screen INSTEAD of the real Live screen, so `showLive`
-  // stays false for the whole tuning session and the real Live flow (Space
-  // bar, the Live header toggle, the `b` handoff) is left exactly as it was.
-  const tuningRef = useRef(false)
-  // "Gradient dials moved from default" indicator on the Tune button. Twice in
-  // one day (2026-07-30) a stale Tune-board override sat silently in
-  // localStorage overriding the live show's look, discoverable only via
-  // devtools — an amber dot on the button Ben already uses makes it visible.
-  // Reads the module-level store (hasOverrides), not localStorage directly,
-  // because the in-memory store is what the renderers actually obey — they can
-  // disagree if localStorage was cleared externally while a tab stayed open.
-  const [gradientTuned, setGradientTuned] = useState(hasOverrides)
-  useEffect(() => {
-    const onTuningChange = () => setGradientTuned(hasOverrides())
-    window.addEventListener(TUNING_EVENT, onTuningChange)
-    return () => window.removeEventListener(TUNING_EVENT, onTuningChange)
-  }, [])
-  const [modalTrack, setModalTrack] = useState(null)
-const [newSetName, setNewSetName] = useState('')
-  const [addingSet, setAddingSet] = useState(false)
-  const [renamingId, setRenamingId] = useState(null)
-  const [renamingVal, setRenamingVal] = useState('')
-  const [shuffleKey, setShuffleKey] = useState(0)
-  const [toasts, setToasts] = useState([])
-  const [syncDone, setSyncDone] = useState(false)
-
-  const addToast = useCallback((msg) => {
-    const id = uid()
-    setToasts(prev => [...prev, { id, msg }])
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 2500)
-  }, [])
 
   const library = sets.items[sets.activeId]?.songs ?? []
   const activeSetName = sets.items[sets.activeId]?.name ?? 'Library'
