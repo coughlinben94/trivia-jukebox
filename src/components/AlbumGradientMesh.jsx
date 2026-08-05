@@ -163,12 +163,33 @@ function lerpOklabPolar(a, b, t) {
 
   const denom = C1 * (1 - t) + C2 * t
   const th = denom > 1e-4 ? (C2 * t) / denom : t
+
+  // Hue via chroma-weighted blend of the two UNIT hue vectors, not
+  // atan2(h1)/atan2(h2) + shortest-path angle correction (2026-08-04,
+  // Opus review, fourth trace of the recurring color-snap report). The old
+  // version picked a "shortest path" direction from the two endpoint hues
+  // every call. That's stable for one fixed pair of endpoints, but this
+  // function is called every frame during a crossfade with the CURRENT pair
+  // of live-moving anchors (see the per-pixel call in draw() below) — as the
+  // anchors drift, their hue gap can sweep past +-180 deg, flipping which
+  // direction is "shortest" between one frame and the next. That flip
+  // reverses which side of the hue circle the entire blend band takes,
+  // producing a full-width, single-frame color jump mid-crossfade that the
+  // anchor-position snap detector in draw() can't see (the anchors
+  // themselves still moved smoothly — only the per-pixel interpolation
+  // direction flipped). Measured up to ~34% of vivid near-complementary
+  // pairs on a single ordinary transition, no rapid input or jank needed.
+  // Blending unit vectors instead is continuous in the endpoint hues
+  // everywhere except exact antipodality (180.0 deg apart, chroma-magnitude
+  // dependent on where they land) — 179.9 and 180.1 now give near-identical
+  // results instead of opposite ones, and the direction is never decided by
+  // a discrete branch.
   const h1 = Math.atan2(b1, a1)
   const h2 = Math.atan2(b2, a2)
-  let dh = h2 - h1
-  while (dh > Math.PI) dh -= Math.PI * 2
-  while (dh < -Math.PI) dh += Math.PI * 2
-  const h = h1 + dh * th
+  const ux = lerp(Math.cos(h1), Math.cos(h2), th)
+  const uy = lerp(Math.sin(h1), Math.sin(h2), th)
+  const ulen = Math.hypot(ux, uy)
+  const h = ulen > 1e-6 ? Math.atan2(uy, ux) : h1
 
   return [L, C * Math.cos(h), C * Math.sin(h)]
 }
@@ -370,8 +391,14 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     // colors once it did — two back-to-back blends where there should be
     // one, which is where a lot of the "still snapping" reports likely trace
     // back to.
-    pendingBlendRef.current = null
+    // Sentinel check now runs BEFORE clearing pendingBlendRef (2026-08-04,
+    // Opus review) — clearing it first meant a sentinel palette arriving
+    // during entrance discarded a real palette that was already queued for
+    // the curtain lift, even though this update itself has nothing worth
+    // queuing. Only clear the pending slot for updates we're actually about
+    // to act on.
     if (colors.length && colors.every(c => c === '#080808')) return
+    pendingBlendRef.current = null
     if (entranceActiveRef.current) { pendingBlendRef.current = colors; return }
     startBlendTo(colors)
   }, [colors])
@@ -384,6 +411,36 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
       startBlendTo(pending, ENTRANCE_BLEND_DURATION_MS)
     }
   }, [entranceActive])
+
+  // Visibility resume (2026-08-04, Opus review) — the earlier per-site
+  // visibilitychange handler was deleted on the theory that draw()'s own
+  // resume logic already handled a tab going hidden mid-blend correctly.
+  // It doesn't: rAF simply stops firing while hidden, but blendStart is a
+  // wall-clock timestamp (performance.now()), so it keeps "elapsing" the
+  // whole time the tab is backgrounded. The first frame back computes
+  // currentOklab() using the FULL real-world gap as elapsed time, which for
+  // any hide longer than a fraction of the blend duration lands past the
+  // blend's end — a full jump straight to the destination color on refocus.
+  // Fix: on visibility resume, shift blendStart forward by exactly how long
+  // the tab was hidden, so the blend picks back up from wherever it
+  // genuinely was instead of wherever wall-clock time says it should be.
+  useEffect(() => {
+    let hiddenAt = null
+    function onVisibility() {
+      if (document.hidden) {
+        hiddenAt = performance.now()
+        return
+      }
+      if (hiddenAt == null) return
+      const hiddenMs = performance.now() - hiddenAt
+      hiddenAt = null
+      const s = st.current
+      if (s.blendStart >= 0) s.blendStart += hiddenMs
+      if (mountedRef.current && !rafRef.current) startLoop()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [])
 
   useEffect(() => {
     activeRef.current = active
@@ -426,14 +483,18 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
       s.blendStart = -1
     }
 
-    // Snap detector — a 7.5s blend can move at most ~0.002 OKLab units per
-    // 16ms frame, so a jump past this threshold between consecutive frames
-    // is a real render-time snap, not a normal step of the animation.
+    // Snap detector — a 7.5s blend can move at most ~0.04 OKLab units per
+    // 16ms frame at this threshold. The entrance uses a shorter
+    // ENTRANCE_BLEND_DURATION_MS (2000ms), which moves proportionally
+    // faster per frame — scale the threshold by the blend actually running
+    // so the entrance doesn't over-trigger false positives (2026-08-04,
+    // Opus review).
     const hist = anchorHistRef.current
+    const snapThreshold = 0.04 * (BLEND_DURATION_MS / Math.max(s.blendDurationMs, 1))
     if (hist.a0) {
       const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2])
       const d0 = dist(anchor0, hist.a0), d1 = dist(anchor1, hist.a1)
-      if (d0 > 0.04 || d1 > 0.04) {
+      if (d0 > snapThreshold || d1 > snapThreshold) {
         console.warn('[grad] SNAP', {
           d0: +d0.toFixed(3), d1: +d1.toFixed(3),
           dtMs: Math.round(ts - hist.ts),
