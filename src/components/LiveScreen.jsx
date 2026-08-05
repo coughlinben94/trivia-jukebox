@@ -637,7 +637,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       // Step 2 — record flies up once arm is clear
       flyCtrl.start({ y: -500, transition: { type: 'spring', stiffness: 220, damping: 22 } })
       setArtOpacity(0)
-      await Promise.all([preloadPromise, sleep(900)])   // fly-up completes; preload runs concurrently (700 -> 1700 -> 900, 2026-08-04: 1700 read as too long a gap between song A flying out and song B flying in — pulled back most of the way)
+      await Promise.all([preloadPromise, sleep(650)])   // fly-up completes; preload runs concurrently (700 -> 1700 -> 900 -> 650, 2026-08-04: Ben wanted the next song's audio starting 250ms earlier on the fly-down. Audio fires right after setShown below, which has to stay downstream of this wait — Opus review found firing any earlier races the reconciliation backstop — so pulling the whole Step 3 block (art swap + audio) forward is what actually moves the audio, not a separate delay.)
       // Old record is gone — swap track identity. This also carries the
       // library song's own gradientOverride/gradientOverride1 fields when
       // target is a library object rather than the SDK's currentTrack (the
@@ -724,50 +724,6 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         flyCtrl.start({ y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 22 } }),
         new Promise(r => setTimeout(r, 550)),
       ])
-
-      // Bail here, before the arm re-sync + text reveal below, if a newer
-      // target already queued (2026-08-04 — Track 1 audit): when Step 3's
-      // playTrackFn call above fails, Jukebox.jsx's advanceToNext retries
-      // with the NEXT song and calls straight back into onRegisterTransition
-      // — but busyRef is still true here, so that retry only gets queued
-      // into pendingRef (same as any other skip-while-busy), and this
-      // function was otherwise going to run all the way to a full text
-      // reveal for a song whose play request never actually succeeded ("its
-      // playing a diff song than what album is actually on the spinner").
-      // The only other pendingRef check before this one is right after Step
-      // 2's setShown (line ~663) — reached BEFORE Step 3 ever fires the play
-      // call, so it can never catch a Step-3 failure. This is the earliest
-      // point after Step 3 where a failure realistically has had time to
-      // resolve and queue a retry; catching it here — instead of only at the
-      // very end, after the arm's already resynced and the name's already
-      // shown — keeps the failed song from visibly settling in as "now
-      // playing" before the retry takes over.
-      if (pendingRef.current && pendingRef.current.uri !== target.uri) {
-        const pending = pendingRef.current
-        pendingRef.current = null
-        setTransitioning(false)
-        busyRef.current = false
-        runTransition(pending, target)
-        return
-      }
-      // ponytail: known ceiling on the above checkpoint — it only catches a
-      // FAST play failure (bad HTTP status, 401-refresh failure, network
-      // error), which useSpotifyPlayer.js's playTrack resolves within ~1s of
-      // Step 3. A SLOW failure — Spotify's PUT /play returns 200 but another
-      // client actually holds the Connect session, so player_state_changed
-      // never confirms — doesn't resolve `false` until that confirm
-      // listener's own 4000ms timeout plus a getCurrentState re-check. By
-      // then this function has long since finished (busyRef cleared ~900ms
-      // after Step 3, regardless of outcome), so Jukebox.jsx's retry finds
-      // busyRef already false and starts a brand-new top-level transition
-      // instead of a queued one — this checkpoint never even runs for that
-      // path. The failed song still fully settles in (name + art) for
-      // several seconds first. Fixing that means either shortening the
-      // confirm-timeout (risks false negatives on a legitimately slow
-      // confirm — it gates every song, not just failures) or adding an
-      // earlier speculative getCurrentState check; don't guess at either
-      // without a live repro pinning down that THIS is the path Ben's
-      // actually hitting, not the fast one this checkpoint already covers.
 
       // The 500ms grace here used to run concurrently with an un-awaited
       // fly-down (the actual landing happened somewhere during it, timing
