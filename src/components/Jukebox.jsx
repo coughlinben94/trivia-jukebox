@@ -162,6 +162,30 @@ const [newSetName, setNewSetName] = useState('')
     firePendingEntrancePlay(entranceSongRef.current)
   }, [firePendingEntrancePlay])
 
+  // Song-to-song transition-first (2026-08-04) — same pattern as the
+  // entrance block above, extended to advanceToNext (auto-advance + manual
+  // skip). onTransitionRef is how Jukebox reaches into LiveScreen (see
+  // LiveScreen.jsx's onRegisterTransition effect); pendingTransitionFireRef
+  // is how LiveScreen reaches back to actually fire playTrackFn once its
+  // Step 3 (the new record flying down) starts. transitionTokenRef guards
+  // against a superseded attempt's fallback timer firing after a newer skip
+  // has already taken over — see advanceToNext's tryPlay for where each of
+  // these gets set.
+  const onTransitionRef = useRef(null)
+  const registerTransitionHandler = useCallback(({ token, fn }) => {
+    if (fn) {
+      transitionTokenIdRef.current = token
+      onTransitionRef.current = fn
+    } else if (transitionTokenIdRef.current === token) {
+      onTransitionRef.current = null
+    }
+  }, [])
+  const pendingTransitionFireRef = useRef(null)
+  const transitionTokenRef = useRef(0)
+  const onTransitionAudioStart = useCallback(() => {
+    pendingTransitionFireRef.current?.()
+  }, [])
+
   const library = sets.items[sets.activeId]?.songs ?? []
   const activeSetName = sets.items[sets.activeId]?.name ?? 'Library'
   // Recomputed only when the library's songs actually change, not on every
@@ -468,6 +492,15 @@ const [newSetName, setNewSetName] = useState('')
   const handoffHoldRef = useRef(null)
   const playTrackFn = useRef(null)
   const onUpcomingTrackRef = useRef(null)
+  // Tokens for identity-checked unregister (2026-08-04) — LiveScreen can
+  // mount/unmount fast enough (e.g. StrictMode, or a skip landing right as
+  // the old screen tears down) that a stale cleanup's `register(null)` can
+  // race a newer screen's registration and wipe out the handler it just set.
+  // Each register call carries a unique token; the unregister call only
+  // clears the ref if its token still matches the last one stored — a
+  // superseded cleanup silently no-ops instead of clobbering the new one.
+  const upcomingTrackTokenRef = useRef(null)
+  const transitionTokenIdRef = useRef(null)
   const pendingUriRef = useRef(null)
   const dragIdxRef = useRef(null)
   // Set true by startShuffle; consumed by the currentTrack watcher to open the live screen
@@ -637,14 +670,38 @@ const [newSetName, setNewSetName] = useState('')
       // so the fresh session doesn't mount into the outgoing animation state.
       setLiveEnding(false)
       setPlayingId(song.id)
-      // 300ms gap before song B's actual audio start (2026-08-04, Ben live:
-      // "song a and b are too close"). Everything above (upcoming-track
-      // preview, playedIds, setPlayingId) stays immediate — only the actual
-      // playTrackFn call, and therefore B's audio, is pushed back. This is
-      // shared by auto-advance (onAdvance, fired from the fade-out timer in
-      // useSpotifyPlayer.js) and the manual skip button — both go through
-      // tryPlay, and both were equally "too close."
-      const t = setTimeout(() => {
+
+      // Transition-first (2026-08-04, Ben live: "song b is playing almost
+      // immediately after song a is done" on the old fixed-300ms-timer
+      // design — same fix already shipped for the entrance/first song, see
+      // startShuffle above and LiveScreen.jsx's runTransition). Kick off the
+      // visual transition immediately via the imperative handler LiveScreen
+      // registered (onRegisterTransition, see LiveScreen.jsx) — it starts
+      // the arm lift and fly-up using this library song's own art/name, no
+      // Spotify confirmation needed for that half. The real playTrackFn call
+      // is deferred to whenever runTransition's Step 3 calls back through
+      // onTransitionAudioStart, right as the new record starts flying down.
+      const token = ++transitionTokenRef.current
+      // If nothing is registered (LiveScreen unmounted — e.g. the host hit
+      // Escape or the close button to get back to the library mid-show,
+      // which does NOT stop playback), the pre-signal is a silent no-op and
+      // only the fallback below would ever fire the play call — meaning
+      // every song from here on would have a real 2.5s gap of dead air
+      // instead of ~1.3s (2026-08-04, critique review). Skip straight to
+      // firing when there's no one to animate for.
+      const hasScreen = !!onTransitionRef.current
+      onTransitionRef.current?.(song)
+
+      let fired = false
+      let fallbackTimer = null
+      const fire = () => {
+        // token check: a newer tryPlay call (another skip) superseded this
+        // one — LiveScreen's own busy/pending queue already handles that on
+        // the visual side (see runTransition's pendingRef draining), this
+        // just stops a now-stale play call from firing after the fact.
+        if (fired || token !== transitionTokenRef.current) return
+        fired = true
+        clearTimeout(fallbackTimer)
         playTrackFn.current?.(song)?.then(started => {
           if (started !== false) return
           if (!isRetry) {
@@ -662,8 +719,22 @@ const [newSetName, setNewSetName] = useState('')
             addToast('Playback stalled and auto-retry failed — hit Shuffle to restart')
           }
         })
-      }, 300)
-      advancePlayTimersRef.current.push(t)
+      }
+      pendingTransitionFireRef.current = fire
+      if (!hasScreen) {
+        fire()
+      } else {
+        // Backstop, not optional (2026-08-04, Opus review): unlike the
+        // entrance, this path runs every song all night, and LiveScreen can
+        // be torn down mid-flight after this fires but before Step 3 (host
+        // closes it while a transition is already in progress). Without
+        // this, the callback that was supposed to fire the play call never
+        // arrives and auto-advance silently goes dead for the rest of the
+        // night. Token-guarded so it's a no-op if the real callback already
+        // fired or a newer skip superseded this attempt.
+        fallbackTimer = setTimeout(fire, 2500)
+        advancePlayTimersRef.current.push(fallbackTimer)
+      }
     }
     tryPlay(false)
   }, [addToast])
@@ -679,8 +750,13 @@ const [newSetName, setNewSetName] = useState('')
 
   const player = useSpotifyPlayer({ onAdvance: advanceToNext, onFadeStart })
 
-  const registerUpcomingTrackHandler = useCallback(fn => {
-    onUpcomingTrackRef.current = fn
+  const registerUpcomingTrackHandler = useCallback(({ token, fn }) => {
+    if (fn) {
+      upcomingTrackTokenRef.current = token
+      onUpcomingTrackRef.current = fn
+    } else if (upcomingTrackTokenRef.current === token) {
+      onUpcomingTrackRef.current = null
+    }
   }, [])
 
   useEffect(() => {
@@ -846,6 +922,8 @@ const [newSetName, setNewSetName] = useState('')
     clearTimeout(entranceFallbackRef.current)
     entrancePlayedRef.current = true   // stop is itself a reason not to fire a queued entrance play
     setEntranceSong(null)
+    transitionTokenRef.current++   // invalidate any pending transition fire/fallback — stop means stop
+    pendingTransitionFireRef.current = null
     const fadeDone = player.fadeAndPause()
     setIsPlaying(false)
     setPlayingId(null)
@@ -1301,6 +1379,8 @@ const [newSetName, setNewSetName] = useState('')
           onUpcomingTrack={registerUpcomingTrackHandler}
           entranceSong={entranceSong}
           onEntranceStart={onEntranceStart}
+          onRegisterTransition={registerTransitionHandler}
+          onTransitionAudioStart={onTransitionAudioStart}
         />
       )}
 
@@ -1315,6 +1395,8 @@ const [newSetName, setNewSetName] = useState('')
           onUpcomingTrack={registerUpcomingTrackHandler}
           entranceSong={entranceSong}
           onEntranceStart={onEntranceStart}
+          onRegisterTransition={registerTransitionHandler}
+          onTransitionAudioStart={onTransitionAudioStart}
           onClose={closeTuning}
         />
       )}

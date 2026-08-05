@@ -18,7 +18,7 @@ import { TUNING_EVENT } from '../lib/gradientTuning.js'
 // `showLive` never flips true and the real Live path — Space bar, the Live
 // header toggle, the `b` handoff — is untouched. Closing stops playback and
 // hands everything back exactly as handleStop() would from the library view.
-export default function TestScreen({ currentTrack, isPaused, shuffleKey, onUpcomingTrack, onClose, entranceSong, onEntranceStart }) {
+export default function TestScreen({ currentTrack, isPaused, shuffleKey, onUpcomingTrack, onClose, entranceSong, onEntranceStart, onRegisterTransition, onTransitionAudioStart }) {
   // Bumped to remount LiveScreen. Necessary — not belt-and-braces:
   //  · renderer field/motion parameters are prepared once per scene
   //  · VARIETY changes the /api/palette query string, and usePalette only
@@ -54,6 +54,8 @@ export default function TestScreen({ currentTrack, isPaused, shuffleKey, onUpcom
         onUpcomingTrack={onUpcomingTrack}
         entranceSong={entranceSong}
         onEntranceStart={onEntranceStart}
+        onRegisterTransition={onRegisterTransition}
+        onTransitionAudioStart={onTransitionAudioStart}
       />
 
       <div className="fixed top-6 left-6 z-[60] pointer-events-none">

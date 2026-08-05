@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useMemo, memo } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, memo } from 'react'
 import { motion, useAnimation } from 'framer-motion'
 // 2026-08-04, owner request: after looking at the pre-mesh circle-blobs
 // engine live (AlbumGradient.jsx, temp-revert earlier this session), the
@@ -150,7 +150,7 @@ function Tonearm({ controls }) {
 // forcing a re-render of everything under Jukebox. None of this component's props
 // change on that cadence, so memo() keeps it from redoing its render work — title-fit
 // measurement, palette lookups, the whole record/tonearm JSX tree — 3.3x/second for nothing.
-function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpcomingTrack, entranceSong, onEntranceStart }) {
+function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpcomingTrack, entranceSong, onEntranceStart, onRegisterTransition, onTransitionAudioStart }) {
   // entranceSong (2026-08-04): the chosen first song, handed down BEFORE
   // Spotify is asked to play it (see Jukebox.jsx's startShuffle) — falls
   // back to currentTrack for the tuning screen and any other caller that
@@ -268,19 +268,59 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   const pauseSeqRef  = useRef([])
   // Always-current isPaused so async functions don't read a stale closure value
   const isPausedRef = useRef(isPaused)
-  const runTransitionRef = useRef(null)
   const trackChangeDebounceRef = useRef(null)
   useEffect(() => { isPausedRef.current = isPaused }, [isPaused])
+  // Always-current `shown`, read by the hoisted runTransition below instead
+  // of a `prevTrack = shown` default param (2026-08-04, Opus review) — a
+  // default param would re-capture a fresh `shown` closure every render,
+  // which fights runTransition being a single stable function now instead
+  // of being redefined inside an effect on every currentTrack change.
+  const shownRef = useRef(shown)
+  useEffect(() => { shownRef.current = shown }, [shown])
+  // True for a short window right after Step 3 fires the real Spotify play
+  // call for the incoming song (2026-08-04, Opus review) — guards the arm/
+  // spin re-sync just after Step 3 from trusting isPausedRef, which can
+  // still be reporting the PREVIOUS song's paused/ended state for a couple
+  // hundred ms after the new song's play request goes out (the SDK's own
+  // player_state_changed confirmation lags the request). Without this, the
+  // record could stop spinning and the arm lift right as the new song
+  // starts, essentially a coin flip every transition. The entrance never hit
+  // this because its equivalent gap is ~1200ms, comfortably past the SDK's
+  // usual 200-500ms confirm window.
+  const audioJustFiredRef = useRef(false)
 
-  // Register palette-prefetch handler with Jukebox so advanceToNext can notify us
+  // Register palette-prefetch handler with Jukebox so advanceToNext can notify us.
+  // Token-guarded (2026-08-04) — see registerUpcomingTrackHandler in
+  // Jukebox.jsx: on unmount we pass back the same token we registered with,
+  // so a stale cleanup can't null out a newer screen's handler.
   useEffect(() => {
-    onUpcomingTrack?.((song) => {
-      setUpcomingArtUrl(song?.album?.images?.[0]?.url ?? null)
-      setUpcomingGradientOverride(song?.gradientOverride ?? null)
-      setUpcomingGradientOverride1(song?.gradientOverride1 ?? null)
+    const token = {}
+    onUpcomingTrack?.({
+      token,
+      fn: (song) => {
+        setUpcomingArtUrl(song?.album?.images?.[0]?.url ?? null)
+        setUpcomingGradientOverride(song?.gradientOverride ?? null)
+        setUpcomingGradientOverride1(song?.gradientOverride1 ?? null)
+      },
     })
-    return () => onUpcomingTrack?.(null)
+    return () => onUpcomingTrack?.({ token, fn: null })
   }, [onUpcomingTrack])
+
+  // Register the transition trigger with Jukebox (2026-08-04) — same
+  // imperative-handler pattern as onUpcomingTrack just above, not a prop,
+  // so Jukebox can call straight into runTransition without any prop-
+  // identity or effect-ordering hazard. This is what lets advanceToNext
+  // start the visual transition (arm lift, fly-up, fly-down) using the
+  // library song's own art/name BEFORE Spotify is ever asked to play it —
+  // audio now fires from inside runTransition itself, at Step 3, instead of
+  // on an independent timer (see Jukebox.jsx's advanceToNext for the other
+  // half; mirrors the same fix already shipped for the entrance/first song).
+  // Token-guarded (2026-08-04) — same race as onUpcomingTrack above.
+  useEffect(() => {
+    const token = {}
+    onRegisterTransition?.({ token, fn: (song) => runTransition(song) })
+    return () => onRegisterTransition?.({ token, fn: null })
+  }, [onRegisterTransition])
 
   // Arm starts lifted; this runs once on mount before anything else renders
   useEffect(() => {
@@ -317,15 +357,16 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           preloadFonts(),
         ])
 
-        // Fire the actual Spotify play call right as the record starts its
-        // fly-in (2026-08-04, Ben live: "the song can start playing as it
-        // starts flying downward") — not before. Jukebox.jsx no longer calls
-        // playTrackFn on its own independent timer; this is now the one
-        // trigger, with a fallback timer on Jukebox's side in case this
-        // never fires for some reason.
-        onEntranceStart?.()
-
-        flyCtrl.start({
+        // Fire the actual Spotify play call once the record has actually
+        // LANDED, not when it starts flying in (2026-08-04, Ben live: tried
+        // firing at fly-start first — "still is playing too early, not by
+        // much but def is". Awaiting flyCtrl.start()'s own promise below
+        // adds the fly-in spring's real settle time as buffer before Spotify
+        // is even asked, which should close that gap without another guessed
+        // constant). Jukebox.jsx no longer calls playTrackFn on its own
+        // independent timer; this is now the one trigger, with a fallback
+        // timer on Jukebox's side in case this never fires for some reason.
+        await flyCtrl.start({
           y: 0, opacity: 1, scale: 1,
           // damping 22, not 28 (2026-07-30) — 28 was meaningfully overdamped
           // for stiffness 120 (critical damping here is 2*sqrt(120)≈21.9),
@@ -335,6 +376,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           // fly-down below — keep them matched, it's the same motion.
           transition: { type: 'spring', stiffness: 120, damping: 22 },
         })
+        onEntranceStart?.()
 
         await sleep(1000)   // 1200 -> 900 -> 1000, 2026-08-04: Ben wanted 100ms more weight before the arm drops on the first song
         tonearmCtrl.start({
@@ -372,7 +414,14 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           const pending = pendingRef.current
           pendingRef.current = null
           handedOffToTransition = true
-          runTransitionRef.current?.(pending)
+          // Was runTransitionRef.current?.(pending) — that ref was only ever
+          // assigned inside the OLD per-effect runTransition definition,
+          // which didn't exist yet the very first time this could fire (the
+          // effect that assigned it hadn't run yet), silently swallowing
+          // this hand-off via the `?.`. runTransition is a stable, always-
+          // defined function now (2026-08-04, Opus review) — call it
+          // directly, no ref indirection needed.
+          runTransition(pending)
         }
 
         // REVERTED (2026-07-28): the 350ms trim did reproduce the chop live —
@@ -505,132 +554,173 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
     setTextVisible(false)
   }, [currentTrack?.uri])
 
-  // Song change → coordinated transition.
+  // Hoisted to component scope, always defined (2026-08-04, Opus review) —
+  // used to be redefined fresh inside the currentTrack effect below on every
+  // song change, which meant it also didn't exist at all until the first
+  // real SDK-confirmed track landed (see the entrance's dead-ref hand-off
+  // fix above). Now it's the single stable entry point both the entrance
+  // hand-off AND Jukebox.jsx's advanceToNext (via onRegisterTransition, see
+  // the registration effect above) can call directly with a library song
+  // object, BEFORE Spotify has been asked to play anything — the visual
+  // sequence (arm lift, fly-up) starts immediately off that; the real
+  // Spotify play call now fires from INSIDE Step 3 below via
+  // onTransitionAudioStart, not from an independent timer in Jukebox.jsx.
+  const runTransition = useCallback(async (target, prevTrack) => {
+    const from = prevTrack ?? shownRef.current
+    try {
+      if (busyRef.current) {
+        pendingRef.current = target
+        // Belt-and-suspenders with the useLayoutEffect above: that effect
+        // already forces textVisible=false/textInstant=true unconditionally
+        // on every uri change (including this queued-while-busy case), so
+        // this is redundant today — but writing it here too means THIS
+        // function no longer depends on the other effect's existence/order
+        // to stay hidden while a skip sits in pendingRef. One less place a
+        // future edit to either effect could silently reopen the gap.
+        setTextVisible(false)
+        setTextInstant(true)
+        return
+      }
+      pendingRef.current = null
+      busyRef.current = true
+      setTextVisible(false)
+      setTextInstant(true)
+      setTransitioning(true)
+
+      // Step 1 — arm lifts alone; record stays put until arm is fully up
+      tonearmCtrl.start({ ...ARM_OFF, transition: { type: 'spring', stiffness: 220, damping: 30 } })
+      // Kick off preload during the arm lift so it has more time
+      const newArtUrl = target?.album?.images?.[0]?.url
+      const preloadPromise = newArtUrl ? preloadImage(newArtUrl) : Promise.resolve()
+      setPrev(from)
+      await sleep(450)   // arm fully lifted (400 -> 200 -> 50 -> 450, 2026-08-04: 50ms had the record flying before the arm's spring (~350ms settle) even finished lifting — no stall, just clipping. Ben confirmed live: arm off, a real stall, then fly off. 450ms clears the spring's settle with a bit of pause on top.)
+
+      // Step 2 — record flies up once arm is clear
+      flyCtrl.start({ y: -500, transition: { type: 'spring', stiffness: 220, damping: 22 } })
+      setArtOpacity(0)
+      await Promise.all([preloadPromise, sleep(900)])   // fly-up completes; preload runs concurrently (700 -> 1700 -> 900, 2026-08-04: 1700 read as too long a gap between song A flying out and song B flying in — pulled back most of the way)
+      // Old record is gone — swap track identity. This also carries the
+      // library song's own gradientOverride/gradientOverride1 fields when
+      // target is a library object rather than the SDK's currentTrack (the
+      // Spotify object never had those fields — see the palette useMemo
+      // above; manual color overrides silently didn't apply on any but the
+      // NEXT-preview song before this) — 2026-08-04, Opus review.
+      setShown(target)
+
+      // If another skip arrived during this window, bail before flying the new record in
+      if (pendingRef.current && pendingRef.current.uri !== target.uri) {
+        const pending = pendingRef.current
+        pendingRef.current = null
+        setTransitioning(false)
+        busyRef.current = false
+        runTransition(pending, target)
+        return
+      }
+
+      // Step 3 — load art onto record off-screen, then fly it down with art already visible
+      flyCtrl.set({ opacity: 0 })
+      flyCtrl.set({ y: -500, scale: 1 })
+      if (newArtUrl) setArtUrl(newArtUrl)
+      setArtOpacity(1)
+
+      // Fire the real Spotify play call right here (2026-08-04, Ben live:
+      // "song b is playing almost immediately after song a is done" on the
+      // old independent-timer design — see Jukebox.jsx's advanceToNext for
+      // the other half of this). This sits downstream of setShown(target)
+      // above, so by the time Spotify confirms and currentTrack updates,
+      // the reconciliation effect further below sees shown.uri already
+      // matching and no-ops instead of scheduling a second transition
+      // (Opus review — confirmed this ordering specifically, firing any
+      // earlier would race that guard).
+      audioJustFiredRef.current = true
+      setTimeout(() => { audioJustFiredRef.current = false }, 700)
+      onTransitionAudioStart?.(target)
+
+      // Await the fly-down spring's OWN completion (controls.start()'s
+      // promise resolves when the animation actually finishes) instead of
+      // a guessed sleep(500) — ties the arm cue to the record's actual
+      // landing so it can't drop early over an empty or still-descending
+      // turntable (live-observed 2026-07-30). This was ORIGINALLY damping
+      // 28, meaningfully overdamped for stiffness 120 (critical damping
+      // here is 2*sqrt(120)≈21.9) — meaning the awaited promise itself
+      // took a while to resolve, and the arm swing read as sluggish even
+      // after trimming the grace period below (also 2026-07-30). Retuned
+      // to damping 22 (right at critical, same change as the entrance
+      // sequence's identical spring above) — lands just as cleanly, no
+      // bounce, but the await resolves noticeably faster.
+      // Capped at 550ms (2026-08-04, Opus review): the spring visually
+      // settles well before Framer's own "at rest" promise threshold
+      // resolves — the raw await was stacking invisible extra wait on top
+      // of a motion that had already finished playing. Race it against a
+      // cap instead; the arm cue below fires at whichever comes first.
+      await Promise.race([
+        flyCtrl.start({ y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 22 } }),
+        new Promise(r => setTimeout(r, 550)),
+      ])
+
+      // The 500ms grace here used to run concurrently with an un-awaited
+      // fly-down (the actual landing happened somewhere during it, timing
+      // unverified) — now that we AWAIT the real landing above, this delay
+      // is pure extra wait stacked on top of it, and it read as sluggish
+      // (2026-07-30). Trimmed to a beat, not a pause.
+      await sleep(120)
+      tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 22 } })
+      await sleep(200)
+      setTextInstant(false)
+      setTransitioning(false)
+      busyRef.current = false
+      setTextVisible(true)
+
+      // Re-sync arm in case isPaused changed while busy. Settle instantly if
+      // the tab is hidden — see the identical guard in runEntrance above.
+      // audioJustFiredRef guards against isPausedRef still reporting the
+      // PREVIOUS song's state in the narrow window right after Step 3 fired
+      // the new song's play request (see that ref's own comment above).
+      const paused = audioJustFiredRef.current ? false : isPausedRef.current
+      if (document.hidden) {
+        tonearmCtrl.set(paused ? ARM_OFF : ARM_ON)
+      } else {
+        tonearmCtrl.start({
+          ...(paused ? ARM_OFF : ARM_ON),
+          transition: { type: 'spring', stiffness: 180, damping: 26 },
+        })
+      }
+      // Sweep finding (2026-08-04) — same gap as runEntrance's identical
+      // re-sync above: the isPaused effect bails out while busyRef.current
+      // is true and won't naturally re-fire once busy clears, so a
+      // pause/resume during a song-to-song transition could leave the
+      // record's spin animation state stale even after the arm re-syncs.
+      setSpinPaused(paused)
+
+      // Let the re-sync animation start before any recursive call fires ARM_OFF
+      await new Promise(r => setTimeout(r, 50))
+
+      // Drain any skip that arrived mid-transition
+      if (pendingRef.current && pendingRef.current.uri !== target.uri) {
+        const pending = pendingRef.current
+        pendingRef.current = null
+        runTransition(pending, target)
+      }
+    } catch (err) {
+      console.error('[runTransition]', err)
+      busyRef.current = false
+      setTransitioning(false)
+      tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 26 } })
+    }
+  }, [onTransitionAudioStart])
+
+  // Song change → reconciliation backstop, not the primary trigger anymore
+  // (2026-08-04) — the real trigger is Jukebox.jsx's advanceToNext calling
+  // straight into runTransition via onRegisterTransition, above. This effect
+  // stays as a safety net for anything that changes currentTrack WITHOUT
+  // going through that path (a stray SDK event, another client transferring
+  // the device, etc.) and, in the normal case, is a no-op: by the time
+  // Spotify confirms and currentTrack updates, setShown(target) inside
+  // runTransition already ran, so shown.uri === currentTrack.uri and the
+  // guard below returns immediately.
   // Guard: !shown skips the very first track (handled by entrance above).
   useEffect(() => {
     if (!currentTrack || !shown || currentTrack.uri === shown.uri) return
-
-    async function runTransition(target, prevTrack = shown) {
-      try {
-        if (busyRef.current) {
-          pendingRef.current = target
-          // Belt-and-suspenders with the useLayoutEffect above: that effect
-          // already forces textVisible=false/textInstant=true unconditionally
-          // on every uri change (including this queued-while-busy case), so
-          // this is redundant today — but writing it here too means THIS
-          // function no longer depends on the other effect's existence/order
-          // to stay hidden while a skip sits in pendingRef. One less place a
-          // future edit to either effect could silently reopen the gap.
-          setTextVisible(false)
-          setTextInstant(true)
-          return
-        }
-        pendingRef.current = null
-        busyRef.current = true
-        setTextVisible(false)
-        setTextInstant(true)
-        setTransitioning(true)
-
-        // Step 1 — arm lifts alone; record stays put until arm is fully up
-        tonearmCtrl.start({ ...ARM_OFF, transition: { type: 'spring', stiffness: 220, damping: 30 } })
-        // Kick off preload during the arm lift so it has more time
-        const newArtUrl = target?.album?.images?.[0]?.url
-        const preloadPromise = newArtUrl ? preloadImage(newArtUrl) : Promise.resolve()
-        setPrev(prevTrack)
-        await sleep(450)   // arm fully lifted (400 -> 200 -> 50 -> 450, 2026-08-04: 50ms had the record flying before the arm's spring (~350ms settle) even finished lifting — no stall, just clipping. Ben confirmed live: arm off, a real stall, then fly off. 450ms clears the spring's settle with a bit of pause on top.)
-
-        // Step 2 — record flies up once arm is clear
-        flyCtrl.start({ y: -500, transition: { type: 'spring', stiffness: 220, damping: 22 } })
-        setArtOpacity(0)
-        await Promise.all([preloadPromise, sleep(1700)])   // fly-up completes; preload runs concurrently (700 -> 1700, 2026-08-04: Ben wanted the whole A->B gap about a second longer, overall)
-        // Old record is gone — swap track identity
-        setShown(target)
-
-        // If another skip arrived during this window, bail before flying the new record in
-        if (pendingRef.current && pendingRef.current.uri !== target.uri) {
-          const pending = pendingRef.current
-          pendingRef.current = null
-          setTransitioning(false)
-          busyRef.current = false
-          runTransition(pending, target)
-          return
-        }
-
-        // Step 3 — load art onto record off-screen, then fly it down with art already visible
-        flyCtrl.set({ opacity: 0 })
-        flyCtrl.set({ y: -500, scale: 1 })
-        if (newArtUrl) setArtUrl(newArtUrl)
-        setArtOpacity(1)
-        // Await the fly-down spring's OWN completion (controls.start()'s
-        // promise resolves when the animation actually finishes) instead of
-        // a guessed sleep(500) — ties the arm cue to the record's actual
-        // landing so it can't drop early over an empty or still-descending
-        // turntable (live-observed 2026-07-30). This was ORIGINALLY damping
-        // 28, meaningfully overdamped for stiffness 120 (critical damping
-        // here is 2*sqrt(120)≈21.9) — meaning the awaited promise itself
-        // took a while to resolve, and the arm swing read as sluggish even
-        // after trimming the grace period below (also 2026-07-30). Retuned
-        // to damping 22 (right at critical, same change as the entrance
-        // sequence's identical spring above) — lands just as cleanly, no
-        // bounce, but the await resolves noticeably faster.
-        // Capped at 550ms (2026-08-04, Opus review): the spring visually
-        // settles well before Framer's own "at rest" promise threshold
-        // resolves — the raw await was stacking invisible extra wait on top
-        // of a motion that had already finished playing. Race it against a
-        // cap instead; the arm cue below fires at whichever comes first.
-        await Promise.race([
-          flyCtrl.start({ y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 22 } }),
-          new Promise(r => setTimeout(r, 550)),
-        ])
-
-        // The 500ms grace here used to run concurrently with an un-awaited
-        // fly-down (the actual landing happened somewhere during it, timing
-        // unverified) — now that we AWAIT the real landing above, this delay
-        // is pure extra wait stacked on top of it, and it read as sluggish
-        // (2026-07-30). Trimmed to a beat, not a pause.
-        await sleep(120)
-        tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 22 } })
-        await sleep(200)
-        setTextInstant(false)
-        setTransitioning(false)
-        busyRef.current = false
-        setTextVisible(true)
-
-        // Re-sync arm in case isPaused changed while busy. Settle instantly if
-        // the tab is hidden — see the identical guard in runEntrance above.
-        if (document.hidden) {
-          tonearmCtrl.set(isPausedRef.current ? ARM_OFF : ARM_ON)
-        } else {
-          tonearmCtrl.start({
-            ...(isPausedRef.current ? ARM_OFF : ARM_ON),
-            transition: { type: 'spring', stiffness: 180, damping: 26 },
-          })
-        }
-        // Sweep finding (2026-08-04) — same gap as runEntrance's identical
-        // re-sync above: the isPaused effect bails out while busyRef.current
-        // is true and won't naturally re-fire once busy clears, so a
-        // pause/resume during a song-to-song transition could leave the
-        // record's spin animation state stale even after the arm re-syncs.
-        setSpinPaused(isPausedRef.current)
-
-        // Let the re-sync animation start before any recursive call fires ARM_OFF
-        await new Promise(r => setTimeout(r, 50))
-
-        // Drain any skip that arrived mid-transition
-        if (pendingRef.current && pendingRef.current.uri !== target.uri) {
-          const pending = pendingRef.current
-          pendingRef.current = null
-          runTransition(pending, target)
-        }
-      } catch (err) {
-        console.error('[runTransition]', err)
-        busyRef.current = false
-        setTransitioning(false)
-        tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 26 } })
-      }
-    }
-
-    runTransitionRef.current = runTransition
 
     // Debounced, not immediate (2026-08-04, Ben live: switching windows away
     // and back mid-song was replaying the fly-down even though the arm ended
@@ -653,7 +743,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       runTransition(currentTrack)
     }, 220)
     return () => clearTimeout(trackChangeDebounceRef.current)
-  }, [currentTrack?.uri])
+  }, [currentTrack?.uri, runTransition])
 
   // Cleanup prev background after crossfade
   useEffect(() => {
