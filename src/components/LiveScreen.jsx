@@ -519,12 +519,12 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         const newArtUrl = target?.album?.images?.[0]?.url
         const preloadPromise = newArtUrl ? preloadImage(newArtUrl) : Promise.resolve()
         setPrev(prevTrack)
-        await sleep(900)   // arm fully lifted (400 -> 900, 2026-08-04: Ben wanted the arm clear of the record 500ms earlier relative to the record's own fly-up, revised from an initial 300ms)
+        await sleep(400)   // arm fully lifted (reverted 2026-08-04: 900ms tried and rejected live — Opus review found the arm spring visually settles in ~350ms, so 900 just left it frozen fully-lifted for ~550ms of dead air. Back to the value that shipped stable for days.)
 
         // Step 2 — record flies up once arm is clear
         flyCtrl.start({ y: -500, transition: { type: 'spring', stiffness: 220, damping: 22 } })
         setArtOpacity(0)
-        await Promise.all([preloadPromise, sleep(1950)])   // fly-up completes; preload runs concurrently (1200 -> 1950, 2026-08-04: Ben wanted the A->B jump 0.75s longer, revised from an initial 0.5s)
+        await Promise.all([preloadPromise, sleep(1200)])   // fly-up completes; preload runs concurrently (reverted 2026-08-04: 1950ms tried and rejected live — held an empty platter for ~1.6s with nothing left to wait on, read as two separate pauses instead of one motion. Back to the value that shipped stable for days.)
         // Old record is gone — swap track identity
         setShown(target)
 

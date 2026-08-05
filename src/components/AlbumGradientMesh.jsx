@@ -284,11 +284,50 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
   // meant one for a chunk of the 7.5s entrance blend every time. Just clear
   // blend-tracking state; the colors-effect below crossfades straight from
   // whatever's on screen into the new song's palette.
+  //
+  // Bug found live (2026-08-04, Opus review of a repeated color-snap
+  // report): this used to just set blendStart = -1 without touching
+  // steadyRgb — but steadyRgb only ever gets updated by draw()'s own t>=1
+  // completion, which never ran if a blend was still mid-flight when
+  // shuffleKey changed. draw()'s next frame then falls into the
+  // `s.blendStart < 0` branch and renders whatever steadyRgb was frozen at
+  // BEFORE that blend even started — a real, visible hard cut back past
+  // wherever the blend had already progressed to. Snapshot the blend's
+  // current OKLab-interpolated position into steadyRgb first (identical math
+  // to startBlendTo's own re-trigger snapshot above) so clearing blendStart
+  // always leaves steadyRgb consistent with whatever's actually on screen.
   useEffect(() => {
     if (isFirstKey.current) { isFirstKey.current = false; return }
     const s = st.current
+    if (s.blendStart >= 0) {
+      const now = performance.now()
+      const t = easeInOut(Math.min((now - s.blendStart) / s.blendDurationMs, 1))
+      s.steadyRgb = s.outRgb.map((c, i) =>
+        oklabToRgb(lerpOklabPolar(rgbToOklab(c), rgbToOklab(s.inRgb[i]), t))
+      )
+    }
     s.blendStart = -1
   }, [shuffleKey])
+
+  // A backgrounded tab fully suspends requestAnimationFrame — draw() never
+  // runs while hidden, so a mid-flight blend's steadyRgb/blendStart can sit
+  // stale for however long the tab was away (2026-08-04, Opus review). The
+  // math self-corrects on refocus (draw() clamps t to 1 off the real elapsed
+  // time), but that can still land as a single-frame jump straight to the
+  // target with no visible transition. Settle instantly on refocus instead —
+  // same document.hidden guard/rationale LiveScreen.jsx already uses for the
+  // tonearm springs.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) return
+      const s = st.current
+      if (s.blendStart < 0) return
+      s.steadyRgb = s.inRgb.map(c => [...c])
+      s.blendStart = -1
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
+  }, [])
 
   useEffect(() => {
     if (isFirstNext.current) { isFirstNext.current = false; return }
@@ -328,6 +367,15 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
   // it can never produce a hard jump.
   useEffect(() => {
     if (isFirst.current) { isFirst.current = false; return }
+    // Missing loading-sentinel guard (2026-08-04, Opus review): the
+    // nextColors effect above already skips an all-#080808 update; this one
+    // didn't. usePalette hands back the sentinel on every cache miss, so an
+    // uncached cover was starting a full 7.5s blend toward near-black before
+    // the real palette landed, then another full blend back to the real
+    // colors once it did — two back-to-back blends where there should be
+    // one, which is where a lot of the "still snapping" reports likely trace
+    // back to.
+    if (colors.length && colors.every(c => c === '#080808')) return
     pendingBlendRef.current = null
     if (entranceActiveRef.current) { pendingBlendRef.current = colors; return }
     startBlendTo(colors)
