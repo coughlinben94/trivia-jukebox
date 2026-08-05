@@ -160,11 +160,11 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // library object — which, as a side effect, is also what actually lets a
   // song's manual gradient-color overrides apply to the FIRST song, not just
   // the next one (the SDK object never carried those fields to begin with).
-  const [shown, setShown]                 = useState(currentTrack ?? entranceSong)
+  const [shown, setShown]                 = useState(entranceSong ?? currentTrack)
   const [prev,  setPrev]                  = useState(null)
   const [transitioning, setTransitioning] = useState(false)
   const [artOpacity, setArtOpacity]       = useState(1)
-  const [artUrl, setArtUrl]               = useState((currentTrack ?? entranceSong)?.album?.images?.[0]?.url)
+  const [artUrl, setArtUrl]               = useState((entranceSong ?? currentTrack)?.album?.images?.[0]?.url)
   const [textVisible, setTextVisible]     = useState(false)
   const [spinPaused, setSpinPaused]       = useState(false)
   const [upcomingArtUrl, setUpcomingArtUrl] = useState(null)
@@ -378,13 +378,13 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         })
         onEntranceStart?.()
 
-        await sleep(1000)   // 1200 -> 900 -> 1000, 2026-08-04: Ben wanted 100ms more weight before the arm drops on the first song
+        await sleep(500)   // 1200 -> 900 -> 1000 -> 500, 2026-08-04: Ben — intro too long, cut in half
         tonearmCtrl.start({
           ...(isPausedRef.current ? ARM_OFF : ARM_ON),
           transition: { type: 'spring', stiffness: 180, damping: 22 },
         })
 
-        await sleep(200)
+        await sleep(100)   // 200 -> 100, 2026-08-04: same halving
         setTextInstant(false)
         setTextVisible(true)
         busyRef.current = false
