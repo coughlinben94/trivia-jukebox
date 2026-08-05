@@ -84,6 +84,50 @@ export default function Jukebox({ onLogout }) {
   // real LiveScreen with the DJ board attached. Opened only by the TUNE button
   // in the header; no hotkey, deliberately, so nothing can pop it open mid-show.
   const [showTest, setShowTest] = useState(false)
+  // The chosen song for an entrance session (first song of a fresh shuffle),
+  // shown to LiveScreen BEFORE Spotify is ever asked to play it (2026-08-04,
+  // Ben live: "shouldnt play till the arm actually comes down" / "the song
+  // can start playing as it starts flying downward" — audio and the entrance
+  // animation used to be two independently-tuned setTimeout guesses with no
+  // real link between them; see LiveScreen.jsx's runEntrance for the other
+  // half of this). LiveScreen renders the entrance immediately off this
+  // (using the library song's own art/name — it doesn't need Spotify to
+  // confirm anything to draw a record), then calls back via onEntranceStart
+  // at the exact moment it starts the fly-in, which is what actually fires
+  // playTrackFn now instead of a fixed pre-delay.
+  const [entranceSong, setEntranceSong] = useState(null)
+  const entranceSongRef = useRef(null)
+  useEffect(() => { entranceSongRef.current = entranceSong }, [entranceSong])
+  // Guards against firing playTrackFn twice for the same entrance (the
+  // callback and the fallback timer below both call this).
+  const entrancePlayedRef = useRef(false)
+  const entranceFallbackRef = useRef(null)
+  // If the entrance callback never arrives — preload somehow hangs past its
+  // own caps, or LiveScreen fails to mount for some other reason — this is
+  // the backstop that guarantees a chosen song still actually plays. Today's
+  // architecture (audio fires on its own timer, independent of any visual)
+  // is immune to this failure mode; this fallback is what buys that same
+  // guarantee back now that audio depends on the visual firing.
+  const firePendingEntrancePlay = useCallback((song) => {
+    if (!song || entrancePlayedRef.current) return
+    entrancePlayedRef.current = true
+    clearTimeout(entranceFallbackRef.current)
+    playTrackFn.current?.(song)?.then(started => {
+      // started === undefined means a newer play superseded this one — only
+      // a genuine failure (false) should tear the entrance down.
+      if (started === false) {
+        setEntranceSong(null)
+        setIsPlaying(false)
+        setShowLive(false)
+        setShowTest(false)
+        setPlayingId(null)
+        addToast('Couldn’t start playback — another session may be controlling Spotify')
+      }
+    })
+  }, [addToast])
+  const onEntranceStart = useCallback(() => {
+    firePendingEntrancePlay(entranceSongRef.current)
+  }, [firePendingEntrancePlay])
   // Read by the currentTrack watcher below: while true, a confirmed track
   // opens the tuning screen INSTEAD of the real Live screen, so `showLive`
   // stays false for the whole tuning session and the real Live flow (Space
@@ -774,28 +818,33 @@ const [newSetName, setNewSetName] = useState('')
       setLiveEnding(false)
       setPlayingId(song.id)
       setIsPlaying(true)
-      pendingLiveOpenRef.current = true
+      // Entrance-first (2026-08-04): show the record immediately using the
+      // library song's own art/name — LiveScreen doesn't need Spotify to
+      // confirm anything to draw it — and let its entrance animation itself
+      // (via onEntranceStart) decide when to actually fire playTrackFn.
+      // pendingUriRef stays set so the currentTrack watcher below can still
+      // do its OTHER job (matching playingId / prefetching the next song's
+      // palette) once Spotify does confirm, a moment later.
+      entrancePlayedRef.current = false
       pendingUriRef.current = song.uri
-      const started = await playTrackFn.current?.(song)
-      // started === undefined means a newer play superseded this one — only
-      // a genuine failure (false) should reset the UI.
-      if (started === false) {
-        pendingLiveOpenRef.current = false
-        pendingUriRef.current = null
-        setIsPlaying(false)
-        setShowLive(false)
-        setPlayingId(null)
-        // Surface the failure — without this the click is a silent no-op
-        // (e.g. another tab/device grabbed the Spotify session mid-start).
-        addToast('Couldn’t start playback — another session may be controlling Spotify')
-      }
+      setEntranceSong(song)
+      if (tuningRef.current) setShowTest(true)
+      else setShowLive(true)
+      clearTimeout(entranceFallbackRef.current)
+      entranceFallbackRef.current = setTimeout(() => firePendingEntrancePlay(song), 1500)
     }, 850)   // 400 -> 650 -> 850, 2026-08-04: Ben wanted the first song's audio delayed another 200ms
-  }, [library, addToast])
+    // (this now just delays the entrance appearing at all — a real request
+    // to speed that up, separate from the audio-vs-visual ordering, should
+    // touch this number directly)
+  }, [library, addToast, firePendingEntrancePlay])
 
   const handleStop = useCallback(() => {
     clearTimeout(shuffleDebounceRef.current)
     advancePlayTimersRef.current.forEach(clearTimeout)
     advancePlayTimersRef.current = []
+    clearTimeout(entranceFallbackRef.current)
+    entrancePlayedRef.current = true   // stop is itself a reason not to fire a queued entrance play
+    setEntranceSong(null)
     const fadeDone = player.fadeAndPause()
     setIsPlaying(false)
     setPlayingId(null)
@@ -1249,6 +1298,8 @@ const [newSetName, setNewSetName] = useState('')
           onClose={closeLive}
           shuffleKey={shuffleKey}
           onUpcomingTrack={registerUpcomingTrackHandler}
+          entranceSong={entranceSong}
+          onEntranceStart={onEntranceStart}
         />
       )}
 
@@ -1261,6 +1312,8 @@ const [newSetName, setNewSetName] = useState('')
           isPaused={player.isPaused}
           shuffleKey={shuffleKey}
           onUpcomingTrack={registerUpcomingTrackHandler}
+          entranceSong={entranceSong}
+          onEntranceStart={onEntranceStart}
           onClose={closeTuning}
         />
       )}

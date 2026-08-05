@@ -150,12 +150,21 @@ function Tonearm({ controls }) {
 // forcing a re-render of everything under Jukebox. None of this component's props
 // change on that cadence, so memo() keeps it from redoing its render work — title-fit
 // measurement, palette lookups, the whole record/tonearm JSX tree — 3.3x/second for nothing.
-function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpcomingTrack }) {
-  const [shown, setShown]                 = useState(currentTrack)
+function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpcomingTrack, entranceSong, onEntranceStart }) {
+  // entranceSong (2026-08-04): the chosen first song, handed down BEFORE
+  // Spotify is asked to play it (see Jukebox.jsx's startShuffle) — falls
+  // back to currentTrack for the tuning screen and any other caller that
+  // doesn't pass it, so this stays backward compatible. Once the real
+  // currentTrack does arrive, the uri-equality guards in runTransition below
+  // treat it as the same song (no-op), so `shown` just keeps the richer
+  // library object — which, as a side effect, is also what actually lets a
+  // song's manual gradient-color overrides apply to the FIRST song, not just
+  // the next one (the SDK object never carried those fields to begin with).
+  const [shown, setShown]                 = useState(currentTrack ?? entranceSong)
   const [prev,  setPrev]                  = useState(null)
   const [transitioning, setTransitioning] = useState(false)
   const [artOpacity, setArtOpacity]       = useState(1)
-  const [artUrl, setArtUrl]               = useState(currentTrack?.album?.images?.[0]?.url)
+  const [artUrl, setArtUrl]               = useState((currentTrack ?? entranceSong)?.album?.images?.[0]?.url)
   const [textVisible, setTextVisible]     = useState(false)
   const [spinPaused, setSpinPaused]       = useState(false)
   const [upcomingArtUrl, setUpcomingArtUrl] = useState(null)
@@ -307,6 +316,14 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           entranceArt ? preloadImage(entranceArt) : Promise.resolve(),
           preloadFonts(),
         ])
+
+        // Fire the actual Spotify play call right as the record starts its
+        // fly-in (2026-08-04, Ben live: "the song can start playing as it
+        // starts flying downward") — not before. Jukebox.jsx no longer calls
+        // playTrackFn on its own independent timer; this is now the one
+        // trigger, with a fallback timer on Jukebox's side in case this
+        // never fires for some reason.
+        onEntranceStart?.()
 
         flyCtrl.start({
           y: 0, opacity: 1, scale: 1,
