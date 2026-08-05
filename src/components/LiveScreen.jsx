@@ -318,7 +318,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           transition: { type: 'spring', stiffness: 120, damping: 22 },
         })
 
-        await sleep(900)   // 1200 -> 900, 2026-08-04: Ben wanted the arm dropping onto the first song 300ms sooner
+        await sleep(1000)   // 1200 -> 900 -> 1000, 2026-08-04: Ben wanted 100ms more weight before the arm drops on the first song
         tonearmCtrl.start({
           ...(isPausedRef.current ? ARM_OFF : ARM_ON),
           transition: { type: 'spring', stiffness: 180, damping: 22 },
