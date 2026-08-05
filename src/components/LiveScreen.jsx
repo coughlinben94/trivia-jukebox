@@ -185,6 +185,12 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   const [textInstant, setTextInstant]     = useState(false)
   const [closing, setClosing]             = useState(false)
   const [entranceActive, setEntranceActive] = useState(true)
+  // Ref mirror of entranceActive (2026-08-04 — "flew down, went back up,
+  // another one came down" bug) for the reconciliation-backstop effect
+  // further below, which needs to read it inside a setTimeout without
+  // re-subscribing on every entranceActive change.
+  const entranceActiveGuardRef = useRef(true)
+  useEffect(() => { entranceActiveGuardRef.current = entranceActive }, [entranceActive])
 
   const titleRef                          = useRef(null)
   const titleBasePxRef                    = useRef(null)
@@ -796,8 +802,25 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // runTransition already ran, so shown.uri === currentTrack.uri and the
   // guard below returns immediately.
   // Guard: !shown skips the very first track (handled by entrance above).
+  // Guard: entranceActiveGuardRef — real root cause of "hit shuffle, song
+  // flew down, went back up, another one came down, but the FIRST song is
+  // what actually played" (2026-08-04). player.currentTrack (Jukebox.jsx)
+  // doesn't get cleared on stop, so on a fresh shuffle it can still hold the
+  // PREVIOUS session's song right as this component mounts — shown is
+  // correctly seeded from entranceSong (fixed earlier tonight), but this
+  // effect compares raw currentTrack against shown with no awareness that
+  // currentTrack is stale leftover, not a real change. It fired a transition
+  // AWAY from the real new song back toward the stale old one, then fired a
+  // SECOND transition back once Spotify actually confirmed the real song —
+  // two full unrequested fly animations with the audio never actually
+  // leaving the first song the whole time. The entrance already owns
+  // reconciling its own song via its pendingRef hand-off; this backstop
+  // exists for STEADY-STATE anomalies (tab-focus SDK reconnect blips) that
+  // by definition can't happen until well after the entrance settles, so
+  // skip it entirely while the entrance is still active.
   useEffect(() => {
     if (!currentTrack || !shown || currentTrack.uri === shown.uri) return
+    if (entranceActiveGuardRef.current) return
 
     // Debounced, not immediate (2026-08-04, Ben live: switching windows away
     // and back mid-song was replaying the fly-down even though the arm ended
