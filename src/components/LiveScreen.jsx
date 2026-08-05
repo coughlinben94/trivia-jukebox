@@ -519,7 +519,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         const newArtUrl = target?.album?.images?.[0]?.url
         const preloadPromise = newArtUrl ? preloadImage(newArtUrl) : Promise.resolve()
         setPrev(prevTrack)
-        await sleep(50)   // arm fully lifted (400 -> 200 -> 50, 2026-08-04: Ben wanted the arm off the outgoing record sooner still. Well below the arm spring's own ~350ms settle time, so the record starts moving while the arm is still visibly mid-lift — revert toward 400 if that reads as the record clipping through the arm.)
+        await sleep(450)   // arm fully lifted (400 -> 200 -> 50 -> 450, 2026-08-04: 50ms had the record flying before the arm's spring (~350ms settle) even finished lifting — no stall, just clipping. Ben confirmed live: arm off, a real stall, then fly off. 450ms clears the spring's settle with a bit of pause on top.)
 
         // Step 2 — record flies up once arm is clear
         flyCtrl.start({ y: -500, transition: { type: 'spring', stiffness: 220, damping: 22 } })
