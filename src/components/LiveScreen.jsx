@@ -524,7 +524,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         // Step 2 — record flies up once arm is clear
         flyCtrl.start({ y: -500, transition: { type: 'spring', stiffness: 220, damping: 22 } })
         setArtOpacity(0)
-        await Promise.all([preloadPromise, sleep(1200)])   // fly-up completes; preload runs concurrently (reverted 2026-08-04: 1950ms tried and rejected live — held an empty platter for ~1.6s with nothing left to wait on, read as two separate pauses instead of one motion. Back to the value that shipped stable for days.)
+        await Promise.all([preloadPromise, sleep(700)])   // fly-up completes; preload runs concurrently (1200 -> 700, 2026-08-04, Opus review: the audio side got shortened earlier today (position_ms skips the seek round trip) but this visual sequence wasn't retimed to match — the new song was audibly playing ~1.5s before its own record was even back on the platter. The spring itself clears in 250-400ms; the rest was padding tuned for a slower audio side that no longer exists.)
         // Old record is gone — swap track identity
         setShown(target)
 
@@ -555,7 +555,15 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         // to damping 22 (right at critical, same change as the entrance
         // sequence's identical spring above) — lands just as cleanly, no
         // bounce, but the await resolves noticeably faster.
-        await flyCtrl.start({ y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 22 } })
+        // Capped at 550ms (2026-08-04, Opus review): the spring visually
+        // settles well before Framer's own "at rest" promise threshold
+        // resolves — the raw await was stacking invisible extra wait on top
+        // of a motion that had already finished playing. Race it against a
+        // cap instead; the arm cue below fires at whichever comes first.
+        await Promise.race([
+          flyCtrl.start({ y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 22 } }),
+          new Promise(r => setTimeout(r, 550)),
+        ])
 
         // The 500ms grace here used to run concurrently with an un-awaited
         // fly-down (the actual landing happened somewhere during it, timing
