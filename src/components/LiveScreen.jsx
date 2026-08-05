@@ -387,7 +387,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           transition: { type: 'spring', stiffness: 120, damping: 22 },
         })
 
-        await sleep(100)   // 1200 -> 900 -> 1000 -> 500 -> 250 -> 100, 2026-08-04: Ben — arm needs to come down sooner
+        await sleep(0)   // 1200 -> 900 -> 1000 -> 500 -> 250 -> 100 -> 0, 2026-08-04: Ben — arm needs to come down sooner still. Arm now drops the instant the record lands (spring above is already awaited, so this is just the last bit of slack removed, not a race).
 
         // Audio fires when the ARM actually lands, not off the record's
         // fly-in (2026-08-04, Ben live: "the first song is when the arm
