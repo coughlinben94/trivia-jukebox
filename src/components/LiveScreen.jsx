@@ -519,7 +519,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         const newArtUrl = target?.album?.images?.[0]?.url
         const preloadPromise = newArtUrl ? preloadImage(newArtUrl) : Promise.resolve()
         setPrev(prevTrack)
-        await sleep(400)   // arm fully lifted (reverted 2026-08-04: 900ms tried and rejected live — Opus review found the arm spring visually settles in ~350ms, so 900 just left it frozen fully-lifted for ~550ms of dead air. Back to the value that shipped stable for days.)
+        await sleep(200)   // arm fully lifted (400 -> 200, 2026-08-04: Ben wanted the arm off the outgoing record sooner. Below the arm spring's own ~350ms settle time, so the record may start moving while the arm is still mid-lift — revert toward 400 if that reads as the record clipping through the arm.)
 
         // Step 2 — record flies up once arm is clear
         flyCtrl.start({ y: -500, transition: { type: 'spring', stiffness: 220, damping: 22 } })
