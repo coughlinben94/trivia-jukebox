@@ -918,10 +918,7 @@ const [newSetName, setNewSetName] = useState('')
       // makes this a genuine failure backstop again instead of the primary
       // trigger.
       entranceFallbackRef.current = setTimeout(() => firePendingEntrancePlay(song), 4000)
-    }, 850)   // 400 -> 650 -> 850, 2026-08-04: Ben wanted the first song's audio delayed another 200ms
-    // (this now just delays the entrance appearing at all — a real request
-    // to speed that up, separate from the audio-vs-visual ordering, should
-    // touch this number directly)
+    }, 600)   // 400 -> 650 -> 850 -> 600, 2026-08-04: Ben — arm animation and song start after shuffle need to be ~250ms sooner. This debounce gates the whole entrance (arm lift + audio both sit downstream of it), so it's the one number that moves both together, per the note this comment used to end with.
   }, [library, addToast, firePendingEntrancePlay])
 
   const handleStop = useCallback(() => {

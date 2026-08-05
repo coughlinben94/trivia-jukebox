@@ -634,10 +634,13 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       setPrev(from)
       await sleep(450)   // arm fully lifted (400 -> 200 -> 50 -> 450, 2026-08-04: 50ms had the record flying before the arm's spring (~350ms settle) even finished lifting — no stall, just clipping. Ben confirmed live: arm off, a real stall, then fly off. 450ms clears the spring's settle with a bit of pause on top.)
 
-      // Step 2 — record flies up once arm is clear
-      flyCtrl.start({ y: -500, transition: { type: 'spring', stiffness: 220, damping: 22 } })
+      // Step 2 — record flies up once arm is clear. stiffness 220 -> 120
+      // (2026-08-04, Ben — "the two should be the same speed"): matches the
+      // fly-down spring in Step 3 below, so the record leaves and arrives at
+      // the same speed instead of leaving faster than it lands.
+      flyCtrl.start({ y: -500, transition: { type: 'spring', stiffness: 120, damping: 22 } })
       setArtOpacity(0)
-      await Promise.all([preloadPromise, sleep(650)])   // fly-up completes; preload runs concurrently (700 -> 1700 -> 900 -> 650, 2026-08-04: Ben wanted the next song's audio starting 250ms earlier on the fly-down. Audio fires right after setShown below, which has to stay downstream of this wait — Opus review found firing any earlier races the reconciliation backstop — so pulling the whole Step 3 block (art swap + audio) forward is what actually moves the audio, not a separate delay.)
+      await Promise.all([preloadPromise, sleep(900)])   // fly-up completes; preload runs concurrently (700 -> 1700 -> 900 -> 650 -> 900, 2026-08-04: the 650 cut made the A->B fly-down itself read as too fast/rushed — reverted back to the tuned 900. The earlier-audio ask stands as a real request, just needs a different lever than compressing this gap — don't re-cut this number for it.)
       // Old record is gone — swap track identity. This also carries the
       // library song's own gradientOverride/gradientOverride1 fields when
       // target is a library object rather than the SDK's currentTrack (the
