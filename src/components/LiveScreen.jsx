@@ -17,6 +17,14 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 const ARM_ON  = { rotate: 8,  y: 0 }   // needle resting on record
 const ARM_OFF = { rotate: -30, y: -8 } // lifted and rotated back (y -5 -> -8, 2026-08-04: Ben wanted a hair more lift)
 
+// Exit sequence timing (2026-08-04, fable review) — named and exported so
+// Jukebox.jsx's trivia-os handoff (the 'b'-hold handler) can await the same
+// duration instead of a second hardcoded 2250, which previously had nothing
+// keeping it in sync with a retune of the ending effect below.
+export const EXIT_LEAD_IN_MS   = 400   // delay before the exit sequence starts
+export const EXIT_CLOSE_DELAY_MS = 1850 // from lead-in to onClose
+export const EXIT_TOTAL_MS = EXIT_LEAD_IN_MS + EXIT_CLOSE_DELAY_MS
+
 // Boogaloo (display) + DM Sans (body) — same pairing Trivia OS ships across all
 // 21 themes (see trivia-os/themes/index.js), loaded via Google Fonts link in
 // index.html. Matches the jukebox's live screen to the rest of the trivia-night
@@ -251,10 +259,13 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // during the fade-out like the onFadeStart/onUpcomingTrack plumbing
   // already intends. useMemo restores the same stable-unless-really-changed
   // reference usePalette itself provides.
-  const palette = useMemo(
-    () => applyGradientOverride(pickGradientColors(paletteColorsFull, paletteWeightsFull), paletteColorsFull, shown?.gradientOverride1, shown?.gradientOverride),
-    [paletteColorsFull, paletteWeightsFull, shown?.gradientOverride1, shown?.gradientOverride]
-  )
+  const palette = useMemo(() => {
+    const result = applyGradientOverride(pickGradientColors(paletteColorsFull, paletteWeightsFull), paletteColorsFull, shown?.gradientOverride1, shown?.gradientOverride)
+    // TEMP DIAGNOSTIC (2026-08-04) — see matching log in runTransition.
+    // Remove once the color-change report is nailed down or ruled out.
+    console.log('[jukebox:palette]', { shownName: shown?.name, shownUri: shown?.uri, paletteColorsFull, resultColors: result.colors })
+    return result
+  }, [paletteColorsFull, paletteWeightsFull, shown?.gradientOverride1, shown?.gradientOverride])
   const upcomingPalette = useMemo(
     () => applyGradientOverride(pickGradientColors(upcomingPaletteColorsFull, upcomingPaletteWeightsFull), upcomingPaletteColorsFull, upcomingGradientOverride1, upcomingGradientOverride),
     [upcomingPaletteColorsFull, upcomingPaletteWeightsFull, upcomingGradientOverride1, upcomingGradientOverride]
@@ -288,6 +299,14 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // this because its equivalent gap is ~1200ms, comfortably past the SDK's
   // usual 200-500ms confirm window.
   const audioJustFiredRef = useRef(false)
+  // Timer id for the clear-timeout below, shared between the entrance and
+  // transition call sites (2026-08-04, fable review) — previously each site
+  // fired its own uncancelled setTimeout, so if the entrance set the flag and
+  // a queued skip handed off into runTransition before the entrance's own
+  // 1800ms timer fired, that STALE timer would still clear the flag out from
+  // under the transition's fresh window, silently reopening the exact wobble
+  // bug just fixed. Always clear the previous timer before starting a new one.
+  const audioJustFiredClearTimerRef = useRef(null)
 
   // Register palette-prefetch handler with Jukebox so advanceToNext can notify us.
   // Token-guarded (2026-08-04) — see registerUpcomingTrackHandler in
@@ -368,7 +387,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           transition: { type: 'spring', stiffness: 120, damping: 22 },
         })
 
-        await sleep(250)   // 1200 -> 900 -> 1000 -> 500 -> 250, 2026-08-04: Ben — still too long, another 50%
+        await sleep(100)   // 1200 -> 900 -> 1000 -> 500 -> 250 -> 100, 2026-08-04: Ben — arm needs to come down sooner
 
         // Audio fires when the ARM actually lands, not off the record's
         // fly-in (2026-08-04, Ben live: "the first song is when the arm
@@ -378,9 +397,14 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         // there too, per the same live feedback. Await the arm spring's own
         // promise so this stays tied to the real animation, not a guessed
         // delay (same principle as the old record-landing gate this replaces).
+        // damping 22 -> 26 (2026-08-04, fable review) — this was the one
+        // ARM_ON spring in the entrance that never got matched to 180/26
+        // when runTransition's identical spring was fixed; underdamped
+        // (critical = 2*sqrt(180)≈26.8) so it overshot, which also delayed
+        // this await (and therefore audio) resolving.
         await tonearmCtrl.start({
           ...(isPausedRef.current ? ARM_OFF : ARM_ON),
-          transition: { type: 'spring', stiffness: 180, damping: 22 },
+          transition: { type: 'spring', stiffness: 180, damping: 26 },
         })
         onEntranceStart?.()
         // Reuse the same stale-pause guard runTransition uses (2026-08-04,
@@ -389,8 +413,9 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         // the SDK's normal confirm lag — without this it could read stale
         // `true` and flip the arm OFF then back ON a moment later, the same
         // wobble already fixed on the transition path.
+        clearTimeout(audioJustFiredClearTimerRef.current)
         audioJustFiredRef.current = true
-        setTimeout(() => { audioJustFiredRef.current = false }, 1800)
+        audioJustFiredClearTimerRef.current = setTimeout(() => { audioJustFiredRef.current = false }, 1800)
 
         await sleep(50)   // 200 -> 100 -> 50, 2026-08-04: same halving
         setTextInstant(false)
@@ -482,7 +507,10 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       return
     }
 
-    // Pause: 3000ms delay (500ms after 2500ms fade) → arm lifts with shuffle spring → spin stops
+    // Pause: 2600ms delay (just after 2500ms fade) → arm lifts with shuffle spring → spin stops
+    // (comment previously said "3000ms (500ms after...)" — that edit never
+    // actually landed in the setTimeout below, which has stayed 2600ms the
+    // whole time; comment restored to match the real, live-tuned value.)
     const t1 = setTimeout(() => {
       tonearmCtrl.start({
         ...ARM_OFF,
@@ -535,8 +563,8 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         setArtOpacity(0)
       }, 750)
       t3 = setTimeout(() => setClosing(true), 1650)
-      t4 = setTimeout(onClose, 1850)
-    }, 400)
+      t4 = setTimeout(onClose, EXIT_CLOSE_DELAY_MS)
+    }, EXIT_LEAD_IN_MS)
     // Fires either when `ending` flips back to false (Jukebox supersedes an
     // in-flight exit — e.g. song restarted within the close window) or on
     // unmount. Either way, reset the flags this effect set so a superseded
@@ -616,6 +644,19 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       // Spotify object never had those fields — see the palette useMemo
       // above; manual color overrides silently didn't apply on any but the
       // NEXT-preview song before this) — 2026-08-04, Opus review.
+      // TEMP DIAGNOSTIC (2026-08-04) — Ben reported a color-change bug on a
+      // NORMAL song1->song2 transition, symptom unclear/not caught live.
+      // Rather than guess at another fix on top of tonight's changes, log
+      // what runTransition actually hands the palette pipeline so the next
+      // occurrence gives real data instead of speculation. Safe to remove
+      // once this is nailed down or ruled out.
+      console.log('[jukebox:transition]', {
+        name: target?.name,
+        uri: target?.uri,
+        gradientOverride: target?.gradientOverride,
+        gradientOverride1: target?.gradientOverride1,
+        newArtUrl,
+      })
       setShown(target)
 
       // If another skip arrived during this window, bail before flying the new record in
@@ -643,6 +684,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       // matching and no-ops instead of scheduling a second transition
       // (Opus review — confirmed this ordering specifically, firing any
       // earlier would race that guard).
+      clearTimeout(audioJustFiredClearTimerRef.current)
       audioJustFiredRef.current = true
       // 700 -> 1800 (2026-08-04, Opus review of the "fishy" wobble report):
       // this flag is read at the isPausedRef check below, ~820-870ms after
@@ -654,7 +696,11 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       // isPaused effect fired ARM_ON moments later and interrupted it
       // mid-swing with leftover velocity — the overshoot/wobble Ben saw.
       // 1800ms comfortably covers the read below plus normal SDK confirm lag.
-      setTimeout(() => { audioJustFiredRef.current = false }, 1800)
+      // Timer id stored and cleared on each (re-)set (2026-08-04, fable
+      // review) — previously an uncancelled entrance timer could clear this
+      // transition's flag early if a skip queued during the entrance handed
+      // off here, reopening the wobble bug on that specific path.
+      audioJustFiredClearTimerRef.current = setTimeout(() => { audioJustFiredRef.current = false }, 1800)
       onTransitionAudioStart?.(target)
 
       // Await the fly-down spring's OWN completion (controls.start()'s

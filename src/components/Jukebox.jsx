@@ -8,7 +8,7 @@ import { useSpotifyPlayer } from '../hooks/useSpotifyPlayer'
 import { prefetchPalette } from '../hooks/usePalette'
 import { hasOverrides, TUNING_EVENT } from '../lib/gradientTuning'
 import Player from './Player'
-import LiveScreen from './LiveScreen'
+import LiveScreen, { EXIT_TOTAL_MS } from './LiveScreen'
 import TestScreen from './TestScreen'
 import SongDetailModal from './SongDetailModal'
 
@@ -908,7 +908,16 @@ const [newSetName, setNewSetName] = useState('')
       if (tuningRef.current) setShowTest(true)
       else setShowLive(true)
       clearTimeout(entranceFallbackRef.current)
-      entranceFallbackRef.current = setTimeout(() => firePendingEntrancePlay(song), 1500)
+      // 1500 -> 4000 (2026-08-04, fable review): the real trigger moved
+      // tonight — audio now fires when the entrance's arm actually lands
+      // (see LiveScreen.jsx's runEntrance), which is preload + a full fly-in
+      // spring + a sleep + a full arm-drop spring, routinely 1.5-2.5s+ on a
+      // cold cover. At 1500ms this fallback was winning the race almost
+      // every time and silently defeating that whole restructure (the real
+      // callback becomes a no-op once `entrancePlayedRef` is set). 4000ms
+      // makes this a genuine failure backstop again instead of the primary
+      // trigger.
+      entranceFallbackRef.current = setTimeout(() => firePendingEntrancePlay(song), 4000)
     }, 850)   // 400 -> 650 -> 850, 2026-08-04: Ben wanted the first song's audio delayed another 200ms
     // (this now just delays the entrance appearing at all — a real request
     // to speed that up, separate from the audio-vs-visual ordering, should
@@ -1054,10 +1063,12 @@ const [newSetName, setNewSetName] = useState('')
           if (isPlaying || showLive) {
             // Play the same stop-and-animate exit spacebar uses (fade audio,
             // LiveScreen tonearm lift + record fly-up) instead of cutting to
-            // trivia-os mid-song. Wait matches LiveScreen's exit sequence:
-            // 400ms lead-in + 1850ms to onClose (see its ending effect).
+            // trivia-os mid-song. Wait matches LiveScreen's exit sequence
+            // exactly — imports EXIT_TOTAL_MS instead of a second hardcoded
+            // number (2026-08-04, fable review) — previously nothing kept
+            // this in sync with a retune of LiveScreen's ending effect.
             handleStop()
-            await new Promise(r => setTimeout(r, 2250))
+            await new Promise(r => setTimeout(r, EXIT_TOTAL_MS))
           }
           // Flush any pending debounced Supabase write first — otherwise an edit
           // made just before handing back to trivia-os (add/reorder/trim/rename)
