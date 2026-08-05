@@ -238,6 +238,11 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
   const pendingBlendRef    = useRef(null)
   const colorSeeds         = useMemo(makeColorSeeds, [])
   const tinySizeRef        = useRef({ w: 48, h: 48 })
+  // Snap detector (2026-08-04) — watches the actual RENDERED output frame to
+  // frame, not the state. If this ever fires again after the rewrite above,
+  // it names its own cause: check the console.log tags emitted right before
+  // it (startBlendTo/shuffleKey-reset/entrance-release) for what just ran.
+  const anchorHistRef      = useRef({ a0: null, a1: null, ts: 0 })
 
   const st = useRef(null)
   if (!st.current) {
@@ -251,6 +256,31 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     }
   }
 
+  // 2026-08-04 — Opus review after a FOURTH live color-snap report survived
+  // three rounds of per-site patches. Root cause of the pattern, not just
+  // one instance of it: this state used to have THREE independent places
+  // that each re-derived "where is the blend right now" by hand (startBlendTo's
+  // re-trigger branch, the shuffleKey reset, draw() itself) — and a fourth,
+  // the visibilitychange handler, that didn't derive it at all and just
+  // teleported to the destination color, which is itself an unconditional
+  // snap whenever a tab-switch happens mid-blend (the DOMINANT way this
+  // actually gets seen live, per CLAUDE.md: tested against the deployed URL
+  // in a browser tab, not headless). Every future entry point was one more
+  // chance to get that math wrong, and half of them already had.
+  //
+  // Collapsed to a single source of truth: currentOklab() is now the ONLY
+  // interpolation in this file. Every writer below calls startBlendTo (set a
+  // new target) or settleNow (stop animating, freeze wherever we are) —
+  // neither one contains any lerp math of its own, so there's nothing left
+  // for a new call site to get wrong.
+  function currentOklab(now = performance.now()) {
+    const s = st.current
+    if (s.blendStart < 0) return s.steadyRgb.map(rgbToOklab)
+    const t = easeInOut(Math.min((now - s.blendStart) / s.blendDurationMs, 1))
+    return s.outRgb.map((c, i) => lerpOklabPolar(rgbToOklab(c), rgbToOklab(s.inRgb[i]), t))
+  }
+  const currentRgb = (now) => currentOklab(now).map(oklabToRgb)
+
   // durationMs: the entrance's own first real-palette blend uses
   // ENTRANCE_BLEND_DURATION_MS (2026-08-04, owner: the full 7.5s
   // song-to-song duration was still visibly shifting tint well after the
@@ -260,74 +290,39 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
   // not as "floating in"). Every other caller keeps the default song-to-song
   // duration.
   function startBlendTo(newHex, durationMs = BLEND_DURATION_MS) {
-    const s   = st.current
-    const now = performance.now()
-    if (s.blendStart >= 0 && (now - s.blendStart) < s.blendDurationMs) {
-      // Snapshot the CURRENT OKLab-blended position (not a fresh RGB lerp)
-      // as the new outgoing point, so re-triggering mid-blend doesn't
-      // reintroduce an RGB step. Uses the OUTGOING blend's own duration,
-      // not the new one about to start.
-      const t = easeInOut(Math.min((now - s.blendStart) / s.blendDurationMs, 1))
-      s.outRgb = s.outRgb.map((c, i) =>
-        oklabToRgb(lerpOklabPolar(rgbToOklab(c), rgbToOklab(s.inRgb[i]), t))
-      )
-    } else {
-      s.outRgb = s.steadyRgb.map(c => [...c])
-    }
-    s.inRgb          = parseColors(newHex, NUM_ANCHORS)
+    const s = st.current
+    // No branch, no gate — currentRgb() already handles "no blend running"
+    // (returns steadyRgb) and "blend already expired" (clamps to inRgb)
+    // correctly on its own. The old version only re-snapshotted when
+    // `elapsed < duration`; when a tab went hidden mid-blend and stayed
+    // hidden well past its expiry, that gate fell through to the stale
+    // pre-blend steadyRgb instead — a real corrupt-state snap.
+    console.log('[grad] startBlendTo', { to: newHex, durationMs, from: currentRgb(), hidden: document.hidden })
+    s.outRgb          = currentRgb()
+    s.inRgb           = parseColors(newHex, NUM_ANCHORS)
     s.blendStart      = performance.now()
     s.blendDurationMs = durationMs
     if (!rafRef.current && mountedRef.current) startLoop()
   }
 
+  // Stop animating without changing the target — freeze wherever the blend
+  // currently is into steadyRgb. Used by the shuffleKey reset below (a new
+  // session starting shouldn't force a black snap, just stop tracking the
+  // old blend) and could be reused anywhere else a caller needs "hold here."
+  function settleNow() {
+    const s = st.current
+    s.steadyRgb  = currentRgb()
+    s.blendStart = -1
+  }
+
   // shuffleKey: new session starts. No black snap — a forced black reset
-  // meant one for a chunk of the 7.5s entrance blend every time. Just clear
-  // blend-tracking state; the colors-effect below crossfades straight from
-  // whatever's on screen into the new song's palette.
-  //
-  // Bug found live (2026-08-04, Opus review of a repeated color-snap
-  // report): this used to just set blendStart = -1 without touching
-  // steadyRgb — but steadyRgb only ever gets updated by draw()'s own t>=1
-  // completion, which never ran if a blend was still mid-flight when
-  // shuffleKey changed. draw()'s next frame then falls into the
-  // `s.blendStart < 0` branch and renders whatever steadyRgb was frozen at
-  // BEFORE that blend even started — a real, visible hard cut back past
-  // wherever the blend had already progressed to. Snapshot the blend's
-  // current OKLab-interpolated position into steadyRgb first (identical math
-  // to startBlendTo's own re-trigger snapshot above) so clearing blendStart
-  // always leaves steadyRgb consistent with whatever's actually on screen.
+  // meant one for a chunk of the 7.5s entrance blend every time. Just settle
+  // wherever the blend currently is; the colors-effect below crossfades
+  // straight from there into the new song's palette.
   useEffect(() => {
     if (isFirstKey.current) { isFirstKey.current = false; return }
-    const s = st.current
-    if (s.blendStart >= 0) {
-      const now = performance.now()
-      const t = easeInOut(Math.min((now - s.blendStart) / s.blendDurationMs, 1))
-      s.steadyRgb = s.outRgb.map((c, i) =>
-        oklabToRgb(lerpOklabPolar(rgbToOklab(c), rgbToOklab(s.inRgb[i]), t))
-      )
-    }
-    s.blendStart = -1
+    settleNow()
   }, [shuffleKey])
-
-  // A backgrounded tab fully suspends requestAnimationFrame — draw() never
-  // runs while hidden, so a mid-flight blend's steadyRgb/blendStart can sit
-  // stale for however long the tab was away (2026-08-04, Opus review). The
-  // math self-corrects on refocus (draw() clamps t to 1 off the real elapsed
-  // time), but that can still land as a single-frame jump straight to the
-  // target with no visible transition. Settle instantly on refocus instead —
-  // same document.hidden guard/rationale LiveScreen.jsx already uses for the
-  // tonearm springs.
-  useEffect(() => {
-    const onVisibility = () => {
-      if (document.hidden) return
-      const s = st.current
-      if (s.blendStart < 0) return
-      s.steadyRgb = s.inRgb.map(c => [...c])
-      s.blendStart = -1
-    }
-    document.addEventListener('visibilitychange', onVisibility)
-    return () => document.removeEventListener('visibilitychange', onVisibility)
-  }, [])
 
   useEffect(() => {
     if (isFirstNext.current) { isFirstNext.current = false; return }
@@ -375,8 +370,8 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     // colors once it did — two back-to-back blends where there should be
     // one, which is where a lot of the "still snapping" reports likely trace
     // back to.
-    if (colors.length && colors.every(c => c === '#080808')) return
     pendingBlendRef.current = null
+    if (colors.length && colors.every(c => c === '#080808')) return
     if (entranceActiveRef.current) { pendingBlendRef.current = colors; return }
     startBlendTo(colors)
   }, [colors])
@@ -422,22 +417,34 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
 
     // Crossfade in OKLab, not RGB — a plain RGB lerp between e.g. red and
     // blue passes through a muddy gray at the midpoint; OKLab keeps it a
-    // real perceptual gradient the whole way. (This was the one place the
-    // original build still used an RGB lerp — everything else was already
-    // OKLab.)
-    let anchor0, anchor1
-    const outOklab = s.outRgb.map(rgbToOklab)
-    const inOklab  = s.inRgb.map(rgbToOklab)
-    if (s.blendStart >= 0) {
-      const t = easeInOut(Math.min((ts - s.blendStart) / s.blendDurationMs, 1))
-      ;[anchor0, anchor1] = outOklab.map((c, i) => lerpOklabPolar(c, inOklab[i], t))
-      if (t >= 1) {
-        s.steadyRgb = s.inRgb.map(c => [...c])
-        s.blendStart = -1
-      }
-    } else {
-      ;[anchor0, anchor1] = s.steadyRgb.map(rgbToOklab)
+    // real perceptual gradient the whole way. currentOklab() is the single
+    // source of truth for "what color is on screen right now" — see its
+    // definition above; nothing else in this file hand-computes this lerp.
+    const [anchor0, anchor1] = currentOklab(ts)
+    if (s.blendStart >= 0 && ts - s.blendStart >= s.blendDurationMs) {
+      s.steadyRgb  = s.inRgb.map(c => [...c])
+      s.blendStart = -1
     }
+
+    // Snap detector — a 7.5s blend can move at most ~0.002 OKLab units per
+    // 16ms frame, so a jump past this threshold between consecutive frames
+    // is a real render-time snap, not a normal step of the animation.
+    const hist = anchorHistRef.current
+    if (hist.a0) {
+      const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2])
+      const d0 = dist(anchor0, hist.a0), d1 = dist(anchor1, hist.a1)
+      if (d0 > 0.04 || d1 > 0.04) {
+        console.warn('[grad] SNAP', {
+          d0: +d0.toFixed(3), d1: +d1.toFixed(3),
+          dtMs: Math.round(ts - hist.ts),
+          blendStart: s.blendStart,
+          elapsed: s.blendStart < 0 ? null : Math.round(ts - s.blendStart),
+          dur: s.blendDurationMs,
+          hidden: document.hidden,
+        })
+      }
+    }
+    hist.a0 = anchor0; hist.a1 = anchor1; hist.ts = ts
 
     const tSec = ts / 1000                   // raw seconds — anchor duel timing
                                               // stays on its own clock, independent
