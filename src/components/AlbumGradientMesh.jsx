@@ -294,10 +294,20 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     if (isFirstNext.current) { isFirstNext.current = false; return }
     if (!nextColors.length) return
     if (nextColors.every(c => c === '#080808')) return
-    if (entranceActiveRef.current) {
-      pendingBlendRef.current = nextColors
-      return
-    }
+    // Don't defer into pendingBlendRef during entrance (2026-08-04, sweep
+    // finding): the colors-effect below defers the CURRENT song's own
+    // palette into that same ref while entranceActive, so the entrance can
+    // reveal it once the curtain lifts. nextColors is a background
+    // optimization -- it warms the UPCOMING song's palette early (during
+    // song 1's own playback, well before any fade-out) so that transition
+    // has a head start later. If that prefetch resolves during entrance and
+    // wrote into the same ref AFTER the current song's own colors did, it
+    // would silently overwrite them -- entrance would reveal song 2's colors
+    // instead of song 1's the first time this ever runs in a session. Simply
+    // skip the optimization during entrance; the real fade-out-triggered
+    // nextColors update (onFadeStart, well before song 2 actually plays)
+    // still runs normally for every later transition.
+    if (entranceActiveRef.current) return
     startBlendTo(nextColors)
   }, [nextColors])
 

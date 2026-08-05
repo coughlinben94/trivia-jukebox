@@ -341,6 +341,14 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
             transition: { type: 'spring', stiffness: 180, damping: 26 },
           })
         }
+        // Sweep finding (2026-08-04): the isPaused effect below bails out
+        // unconditionally while busyRef.current is true and never re-fires on
+        // its own once busy clears (its deps are just [isPaused], which
+        // didn't necessarily change again) — so a pause/resume that happened
+        // mid-entrance could leave the record's CSS spin animation not
+        // matching actual playback state indefinitely, even though the arm
+        // above already correctly re-syncs. Reconcile it here too.
+        setSpinPaused(isPausedRef.current)
 
         if (pendingRef.current && pendingRef.current.uri !== shown?.uri) {
           const pending = pendingRef.current
@@ -511,12 +519,12 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         const newArtUrl = target?.album?.images?.[0]?.url
         const preloadPromise = newArtUrl ? preloadImage(newArtUrl) : Promise.resolve()
         setPrev(prevTrack)
-        await sleep(700)   // arm fully lifted (400 -> 700, 2026-08-04: Ben wanted the arm clear of the record 300ms earlier relative to the record's own fly-up)
+        await sleep(900)   // arm fully lifted (400 -> 900, 2026-08-04: Ben wanted the arm clear of the record 500ms earlier relative to the record's own fly-up, revised from an initial 300ms)
 
         // Step 2 — record flies up once arm is clear
         flyCtrl.start({ y: -500, transition: { type: 'spring', stiffness: 220, damping: 22 } })
         setArtOpacity(0)
-        await Promise.all([preloadPromise, sleep(1700)])   // fly-up completes; preload runs concurrently (1200 -> 1700, 2026-08-04: Ben wanted the A->B jump a half-second longer)
+        await Promise.all([preloadPromise, sleep(1950)])   // fly-up completes; preload runs concurrently (1200 -> 1950, 2026-08-04: Ben wanted the A->B jump 0.75s longer, revised from an initial 0.5s)
         // Old record is gone — swap track identity
         setShown(target)
 
@@ -572,6 +580,12 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
             transition: { type: 'spring', stiffness: 180, damping: 26 },
           })
         }
+        // Sweep finding (2026-08-04) — same gap as runEntrance's identical
+        // re-sync above: the isPaused effect bails out while busyRef.current
+        // is true and won't naturally re-fire once busy clears, so a
+        // pause/resume during a song-to-song transition could leave the
+        // record's spin animation state stale even after the arm re-syncs.
+        setSpinPaused(isPausedRef.current)
 
         // Let the re-sync animation start before any recursive call fires ARM_OFF
         await new Promise(r => setTimeout(r, 50))
