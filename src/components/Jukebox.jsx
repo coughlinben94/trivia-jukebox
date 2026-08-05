@@ -775,7 +775,7 @@ const [newSetName, setNewSetName] = useState('')
         // (e.g. another tab/device grabbed the Spotify session mid-start).
         addToast('Couldn’t start playback — another session may be controlling Spotify')
       }
-    }, 400)
+    }, 650)   // 400 -> 650, 2026-08-04: Ben wanted the first song's audio to start 250ms later
   }, [library, addToast])
 
   const handleStop = useCallback(() => {

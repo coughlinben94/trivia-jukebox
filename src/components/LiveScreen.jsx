@@ -524,7 +524,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         // Step 2 — record flies up once arm is clear
         flyCtrl.start({ y: -500, transition: { type: 'spring', stiffness: 220, damping: 22 } })
         setArtOpacity(0)
-        await Promise.all([preloadPromise, sleep(700)])   // fly-up completes; preload runs concurrently (1200 -> 700, 2026-08-04, Opus review: the audio side got shortened earlier today (position_ms skips the seek round trip) but this visual sequence wasn't retimed to match — the new song was audibly playing ~1.5s before its own record was even back on the platter. The spring itself clears in 250-400ms; the rest was padding tuned for a slower audio side that no longer exists.)
+        await Promise.all([preloadPromise, sleep(1700)])   // fly-up completes; preload runs concurrently (700 -> 1700, 2026-08-04: Ben wanted the whole A->B gap about a second longer, overall)
         // Old record is gone — swap track identity
         setShown(target)
 
