@@ -750,6 +750,24 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         runTransition(pending, target)
         return
       }
+      // ponytail: known ceiling on the above checkpoint — it only catches a
+      // FAST play failure (bad HTTP status, 401-refresh failure, network
+      // error), which useSpotifyPlayer.js's playTrack resolves within ~1s of
+      // Step 3. A SLOW failure — Spotify's PUT /play returns 200 but another
+      // client actually holds the Connect session, so player_state_changed
+      // never confirms — doesn't resolve `false` until that confirm
+      // listener's own 4000ms timeout plus a getCurrentState re-check. By
+      // then this function has long since finished (busyRef cleared ~900ms
+      // after Step 3, regardless of outcome), so Jukebox.jsx's retry finds
+      // busyRef already false and starts a brand-new top-level transition
+      // instead of a queued one — this checkpoint never even runs for that
+      // path. The failed song still fully settles in (name + art) for
+      // several seconds first. Fixing that means either shortening the
+      // confirm-timeout (risks false negatives on a legitimately slow
+      // confirm — it gates every song, not just failures) or adding an
+      // earlier speculative getCurrentState check; don't guess at either
+      // without a live repro pinning down that THIS is the path Ben's
+      // actually hitting, not the fast one this checkpoint already covers.
 
       // The 500ms grace here used to run concurrently with an un-awaited
       // fly-down (the actual landing happened somewhere during it, timing
