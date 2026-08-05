@@ -357,44 +357,40 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           preloadFonts(),
         ])
 
-        // Fire the actual Spotify play call once the record has actually
-        // LANDED, not when it starts flying in (2026-08-04, Ben live: tried
-        // firing at fly-start first — "still is playing too early, not by
-        // much but def is". Awaiting flyCtrl.start()'s own promise below
-        // adds the fly-in spring's real settle time as buffer before Spotify
-        // is even asked, which should close that gap without another guessed
-        // constant). Jukebox.jsx no longer calls playTrackFn on its own
-        // independent timer; this is now the one trigger, with a fallback
-        // timer on Jukebox's side in case this never fires for some reason.
-        // REVERTED (2026-08-04) — bumped this spring to 480/44 to make audio
-        // fire sooner, since audio was tied to the promise resolving. Wrong
-        // move: 120/22 is not an arbitrary number, it's what multiple live
-        // 2026-07-30 tuning passes (see damping 22-vs-28 note, and the
-        // matching cap-race pattern in runTransition's fly-down below) landed
-        // on for how the drop should actually LOOK. 480/44 made the visual
-        // itself sped-up and wrong ("wayyyy too fast"), not just the audio.
-        // Fix: keep the tuned spring, race it against a timeout instead — so
-        // the animation keeps playing at its real, correct speed, but the
-        // await (and therefore onEntranceStart→audio below) doesn't wait for
-        // the whole thing to finish. Same race-against-a-cap technique
-        // already used for the identical spring in runTransition, just
-        // applied here for the first time. 350ms is a first guess, not a
-        // measured value — built to be nudged live like everything else in
-        // this file.
-        await Promise.race([
-          flyCtrl.start({
-            y: 0, opacity: 1, scale: 1,
-            transition: { type: 'spring', stiffness: 120, damping: 22 },
-          }),
-          new Promise(r => setTimeout(r, 350)),
-        ])
-        onEntranceStart?.()
+        // Record fly-in — audio no longer gated on this step (2026-08-04,
+        // see below), so back to a plain await of the real tuned spring, no
+        // race-against-a-cap needed here anymore. 120/22 is the same
+        // 2026-07-30 live-tuned value used for every other fly/drop in this
+        // file — do not bump this for speed, see runTransition's identical
+        // spring for why that goes wrong.
+        await flyCtrl.start({
+          y: 0, opacity: 1, scale: 1,
+          transition: { type: 'spring', stiffness: 120, damping: 22 },
+        })
 
         await sleep(250)   // 1200 -> 900 -> 1000 -> 500 -> 250, 2026-08-04: Ben — still too long, another 50%
-        tonearmCtrl.start({
+
+        // Audio fires when the ARM actually lands, not off the record's
+        // fly-in (2026-08-04, Ben live: "the first song is when the arm
+        // lands, the ones after are on the flydown" — flows better this
+        // way). This is deliberately DIFFERENT from runTransition, where
+        // audio fires at the start of the fly-down instead — that's correct
+        // there too, per the same live feedback. Await the arm spring's own
+        // promise so this stays tied to the real animation, not a guessed
+        // delay (same principle as the old record-landing gate this replaces).
+        await tonearmCtrl.start({
           ...(isPausedRef.current ? ARM_OFF : ARM_ON),
           transition: { type: 'spring', stiffness: 180, damping: 22 },
         })
+        onEntranceStart?.()
+        // Reuse the same stale-pause guard runTransition uses (2026-08-04,
+        // Opus review flag): the "Bug 3" re-sync just below reads
+        // isPausedRef.current only 50ms after audio just fired, well inside
+        // the SDK's normal confirm lag — without this it could read stale
+        // `true` and flip the arm OFF then back ON a moment later, the same
+        // wobble already fixed on the transition path.
+        audioJustFiredRef.current = true
+        setTimeout(() => { audioJustFiredRef.current = false }, 1800)
 
         await sleep(50)   // 200 -> 100 -> 50, 2026-08-04: same halving
         setTextInstant(false)
@@ -405,11 +401,12 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         // Settle instantly if the tab is hidden — same rationale as the isPaused
         // effect above: this spring is rAF-driven and stalls while backgrounded,
         // then visibly snaps/catches up on refocus if left animating.
+        const armPaused = audioJustFiredRef.current ? false : isPausedRef.current
         if (document.hidden) {
-          tonearmCtrl.set(isPausedRef.current ? ARM_OFF : ARM_ON)
+          tonearmCtrl.set(armPaused ? ARM_OFF : ARM_ON)
         } else {
           tonearmCtrl.start({
-            ...(isPausedRef.current ? ARM_OFF : ARM_ON),
+            ...(armPaused ? ARM_OFF : ARM_ON),
             transition: { type: 'spring', stiffness: 180, damping: 26 },
           })
         }
@@ -419,8 +416,10 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         // didn't necessarily change again) — so a pause/resume that happened
         // mid-entrance could leave the record's CSS spin animation not
         // matching actual playback state indefinitely, even though the arm
-        // above already correctly re-syncs. Reconcile it here too.
-        setSpinPaused(isPausedRef.current)
+        // above already correctly re-syncs. Reconcile it here too. Uses the
+        // same guarded armPaused as the arm re-sync just above, not a raw
+        // isPausedRef read, so the two can't disagree.
+        setSpinPaused(armPaused)
 
         if (pendingRef.current && pendingRef.current.uri !== shown?.uri) {
           const pending = pendingRef.current
