@@ -260,6 +260,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // Always-current isPaused so async functions don't read a stale closure value
   const isPausedRef = useRef(isPaused)
   const runTransitionRef = useRef(null)
+  const trackChangeDebounceRef = useRef(null)
   useEffect(() => { isPausedRef.current = isPaused }, [isPaused])
 
   // Register palette-prefetch handler with Jukebox so advanceToNext can notify us
@@ -613,7 +614,28 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
     }
 
     runTransitionRef.current = runTransition
-    runTransition(currentTrack)
+
+    // Debounced, not immediate (2026-08-04, Ben live: switching windows away
+    // and back mid-song was replaying the fly-down even though the arm ended
+    // up back in the right place). The Spotify Web Playback SDK is known to
+    // re-emit a stale player_state_changed on reconnect after a tab regains
+    // focus, briefly reporting a different current_track before catching up
+    // to the real one a moment later (useSpotifyPlayer.js's player_state_changed
+    // listener has no defense against this — it only dedupes IDENTICAL uris,
+    // not a uri that changes and reverts). This effect fires on every
+    // currentTrack.uri change with no debounce, so a flicker-and-revert ran
+    // two full real transitions back to back: one out to the momentarily-
+    // reported track, one back — net correct arm position, but a fly
+    // animation the user never asked for. Delaying the actual call lets the
+    // effect's own cleanup (React re-running this effect on the very next uri
+    // change) cancel the stale timeout before it fires, so a revert within
+    // the window never starts a transition at all. 220ms comfortably covers
+    // the SDK's own reconnect-and-correct gap without adding a perceptible
+    // delay to a real song change.
+    trackChangeDebounceRef.current = setTimeout(() => {
+      runTransition(currentTrack)
+    }, 220)
+    return () => clearTimeout(trackChangeDebounceRef.current)
   }, [currentTrack?.uri])
 
   // Cleanup prev background after crossfade
