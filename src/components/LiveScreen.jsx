@@ -960,7 +960,16 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                     ? { duration: 0.35, ease: [0.23, 1, 0.32, 1] }
                     : { duration: 0.2, delay: 0.25, ease: [0.23, 1, 0.32, 1] }}
                 >
-                  {/* Spin layer: art img + groove rings rotate together */}
+                  {/* Spin layer: art img + groove rings rotate together.
+                       clipPath alongside overflow-hidden+rounded-full (2026-08-06,
+                       live-observed): the square art's corners briefly showed past
+                       the circular rim on entrance for at least one track — this
+                       div is will-change:transform + a running CSS animation, so
+                       it's promoted to its own compositing layer, and overflow+
+                       border-radius clipping on a freshly (re)created layer can
+                       paint a frame before the clip is established. clip-path is
+                       enforced independently of that layer-promotion path, so it
+                       holds even if the overflow clip's first frame doesn't. */}
                   <div
                     className="absolute inset-0 rounded-full overflow-hidden"
                     style={{
@@ -968,6 +977,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                       animationPlayState: spinPaused ? 'paused' : 'running',
                       willChange: 'transform',
                       transform: 'translateZ(0)',
+                      clipPath: 'circle(50%)',
                     }}
                   >
                     <img src={artUrl} alt="" decoding="async" className="absolute inset-0 w-full h-full object-cover" />
