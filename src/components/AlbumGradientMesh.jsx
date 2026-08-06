@@ -191,7 +191,27 @@ function lerpOklabPolar(a, b, t) {
   const ulen = Math.hypot(ux, uy)
   const h = ulen > 1e-6 ? Math.atan2(uy, ux) : h1
 
-  return [L, C * Math.cos(h), C * Math.sin(h)]
+  // 2026-08-06 — swimming-ring bug: when the two anchors' hues sit near
+  // 180deg apart, their unit direction vectors nearly cancel partway
+  // through the blend (ulen -> 0). atan2 near the origin is genuinely
+  // ill-defined there -- there IS no single "average direction" between two
+  // opposite colors -- so `h` used to swing hard between two arbitrary
+  // values a hair's-width apart in t, while C (chroma) kept its full
+  // straight-line-lerped value regardless. That combination committed to a
+  // wrong, fully-saturated third hue right at the unstable point. Verified
+  // against Out Tonight/Penelope Road (#115867 / #e45a34, ~180deg apart):
+  // that's exactly the pair that snapped to a hard rgb(130,84,9) at t=0.28.
+  // Because this per-pixel lerp runs with the noise-driven `mix` as its t
+  // (see draw()), the unstable point traces its own wiggly isoline across
+  // the frame -- reported live as a colored ring "swimming" around blob
+  // edges, independent of the intended blend boundary.
+  // Fix: scale chroma by ulen. ulen is a real, meaningful signal -- it's
+  // exactly how coherent "average hue" is at this point -- so as it shrinks
+  // toward 0 the color desaturates toward true gray (correct: two opposite
+  // hues in equal measure IS gray) instead of holding full saturation
+  // through an arbitrary, unstable hue. Away from the cancellation point
+  // ulen stays close to 1 and this is a no-op.
+  return [L, C * ulen * Math.cos(h), C * ulen * Math.sin(h)]
 }
 
 // ── OKLab conversion — standard Bjorn Ottosson formulas.
