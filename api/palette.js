@@ -26,7 +26,13 @@ export function pickMonochromeAccentHues() {
   return [300, 330];
 }
 
-const LUMA_THRESHOLD = 30;   // below this, a candidate reads as a void against the near-black canvas, not a color
+// Matches LiveScreen.jsx's safeGradientColor threshold (luma < 60 -> hot-pink
+// fallback) — 2026-08-06, Ben: shuffled and got a pure-pink background. This
+// floor used to sit at 30, letting the server hand back real dark colors
+// that the client's safety net then silently swapped for neon pink on
+// render, since it never accepted anything below 60. Raised to match so a
+// server-picked color always survives the client's own check.
+const LUMA_THRESHOLD = 60;
 const CHROMA_FLOOR = 0.12;   // below this, a candidate is too washed-out to read as a real color
 
 export default async function handler(req, res) {
