@@ -388,6 +388,15 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         // 2026-07-30 live-tuned value used for every other fly/drop in this
         // file — do not bump this for speed, see runTransition's identical
         // spring for why that goes wrong.
+        // Explicit .set() to the same start pose runTransition's Step 3 uses
+        // (y:-500, scale:1) instead of relying on the JSX initial={{y:-400,
+        // scale:0.85}} below (2026-08-06, Ben: fly-down felt jumpy/different
+        // between shuffle-entrance and song-to-song). Same spring constants
+        // but a shorter travel distance AND an extra scale-up baked into the
+        // entrance meant the two never actually matched despite the shared
+        // 120/22 tuning — this makes the starting state identical so the two
+        // drops are the same motion, not just the same spring.
+        flyCtrl.set({ opacity: 0, y: -500, scale: 1 })
         await flyCtrl.start({
           y: 0, opacity: 1, scale: 1,
           transition: { type: 'spring', stiffness: 120, damping: 22 },
@@ -818,9 +827,32 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // exists for STEADY-STATE anomalies (tab-focus SDK reconnect blips) that
   // by definition can't happen until well after the entrance settles, so
   // skip it entirely while the entrance is still active.
+  // Guard: busyRef — 2026-08-06, Ben mid-session: "a song flew down, jumped
+  // up, then flew back down" a few songs into a shuffle (not at the
+  // entrance, so entranceActiveGuardRef above didn't apply). Root cause is
+  // the same shape as that entrance bug, just for the steady-state case:
+  // runTransition's Step 3 calls setShown(target) BEFORE the real Spotify
+  // play call even fires, so for the whole rest of that transition (~2s of
+  // arm-land/re-sync awaits) currentTrack (still reporting the OLD track
+  // until Spotify confirms the new one) and shown (already the new track)
+  // legitimately disagree — that's expected and self-resolves the moment
+  // Spotify confirms. But this effect had no awareness a transition owned
+  // the record: it scheduled its 220ms debounced correction anyway,
+  // runTransition's own busyRef check (called 220ms later) just queued it
+  // into pendingRef since busy was still true, and runTransition's own
+  // end-of-function pendingRef drain (a few lines above, `if
+  // (pendingRef.current...)`) then fired a real SECOND transition — arm up,
+  // the record that had just landed flying back up, then back down to
+  // whatever stale currentTrack snapshot the debounce timer had closed over.
+  // Skipping entirely while busyRef is true removes the false trigger at its
+  // source: any mismatch during an active transition is either about to
+  // self-resolve (the common case) or, if truly a competing SDK event,
+  // belongs to whichever check runs once busy clears — not a queued
+  // correction fired against an already-outdated snapshot.
   useEffect(() => {
     if (!currentTrack || !shown || currentTrack.uri === shown.uri) return
     if (entranceActiveGuardRef.current) return
+    if (busyRef.current) return
 
     // Debounced, not immediate (2026-08-04, Ben live: switching windows away
     // and back mid-song was replaying the fly-down even though the arm ended
@@ -934,7 +966,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
               <motion.div
                 className="absolute inset-0"
                 style={{ zIndex: 2, willChange: 'transform, opacity' }}
-                initial={{ opacity: 0, y: -400, scale: 0.85 }}
+                initial={{ opacity: 0, y: -500, scale: 1 }}
                 animate={flyCtrl}
               >
                 {/* Layer 0 – turntable platter: travels with the record now.
