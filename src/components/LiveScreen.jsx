@@ -966,7 +966,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         style={{ background: 'radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,0.32) 100%)' }}
       />
 
-      <div className="relative z-10 flex flex-col items-center gap-8 px-10 text-center max-w-lg w-full" style={{ paddingTop: '15vh' }}>
+      <div className="relative z-10 flex flex-col items-center gap-8 px-10 text-center max-w-lg w-full" style={{ paddingTop: '10vh' }}>
         {shown ? (
           <>
             {/* Record + tonearm scene */}
@@ -989,19 +989,27 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                      2026-08-07: the platter and spindle used to sit OUTSIDE this
                      wrapper as siblings, so they never faded — and the fly-off's
                      y:-500 does not actually clear the top of the viewport. The
-                     scene starts at paddingTop:15vh, so what's left on screen
-                     after the fly-off is (15vh + recordHeight - 500)px of the
-                     record's bottom edge: ~3px at the old 368px size (invisible),
-                     but ~47px on a 900px-tall viewport at today's 412px size —
-                     i.e. the "bottom 10% of the album stuck near the top of the
-                     screen" Ben reported, as a dark platter chord that then sat
-                     there until the whole overlay faded ~1.2s later. Same defect
-                     on runTransition's Step 2 fly-up, since both paths animate
-                     this one shared flyCtrl wrapper. Folding the platter and
-                     spindle into the existing fade fixes both paths at once and
-                     is viewport/size independent — no spring, distance, or delay
-                     retuned. Paint order is unchanged: platter zIndex:0 first in
-                     tree, spin layer + shadow z-auto next, spindle zIndex:1 on top. */}
+                     leftover on screen after a fly-off is
+                     (paddingTop + recordHeight - 500)px of the record's bottom
+                     edge: at the then-current 15vh anchor that was ~3px at the
+                     old 368px record (invisible) but ~47px on a 900px-tall
+                     viewport at today's 412px size — i.e. the "bottom 10% of the
+                     album stuck near the top of the screen" Ben reported, as a
+                     dark platter chord that then sat there until the whole
+                     overlay faded ~1.2s later. Same defect on runTransition's
+                     Step 2 fly-up, since both paths animate this one shared
+                     flyCtrl wrapper. Folding the platter and spindle into the
+                     existing fade fixes both paths at once and is
+                     viewport/size/position independent — no spring, distance, or
+                     delay retuned. Paint order is unchanged: platter zIndex:0
+                     first in tree, spin layer + shadow z-auto next, spindle
+                     zIndex:1 on top.
+
+                     The anchor is 10vh as of the same day (see the container
+                     above); that only shrinks the leftover — 90+412-500 = ~2px at
+                     900px tall, ~20px at 1080 — and this fade covers it either
+                     way, which is exactly why the fix was written as a fade and
+                     not as a bigger travel constant. */}
                 <motion.div
                   className="absolute inset-0"
                   style={{ willChange: 'opacity' }}
