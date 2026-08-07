@@ -970,7 +970,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         {shown ? (
           <>
             {/* Record + tonearm scene */}
-            <div className="relative w-[370px] h-[370px] sm:w-[412px] sm:h-[412px]">
+            <div className="relative w-[352px] h-[352px] sm:w-[391px] sm:h-[391px]">
 
               {/* Layer 2 – fly wrapper: drops in on entrance, flies straight up on exit.
                    Never rotated — fly-up is always vertical regardless of spin angle.
@@ -1122,7 +1122,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         ) : (
           /* Waiting state — track hasn't arrived from SDK yet. Show an empty turntable
              so the screen isn't black. Once shown populates, the entrance animation plays. */
-          <div className="relative w-[330px] h-[330px] sm:w-[368px] sm:h-[368px]">
+          <div className="relative w-[352px] h-[352px] sm:w-[391px] sm:h-[391px]">
             {/* Platter */}
             <div
               className="absolute rounded-full"
