@@ -108,6 +108,60 @@ describe('lerpOklabPolar', () => {
     expect(maxJump).toBeLessThan(60)
   })
 
+  // 2026-08-07 — regression test for a SECOND bug in the same mechanism,
+  // caught by a follow-up Opus critique pass: draw() used to null hueArcRef
+  // the instant a blend completed ("for symmetry" with startBlendTo/
+  // settleNow, which reset it when the target colors actually CHANGE). But
+  // at natural completion the colors DON'T change -- inRgb just gets
+  // promoted to steadyRgb, same values next frame -- so nulling the ref
+  // forced a fresh shortestDelta rederivation clamped to (-pi,pi], which can
+  // differ from the accumulated (possibly >pi) arc by up to a full turn.
+  // Simulated at ~32% of transitions producing a >60-unit jump at the exact
+  // frame a blend landed. This test drives the frame loop THROUGH a blend
+  // landing (anchors drift, then freeze) with no reset at the freeze point,
+  // matching the fixed behavior.
+  it('frame-to-frame: no color jump at the moment a blend completes and anchors freeze', () => {
+    const rgbDist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2])
+    const DRIFT_FRAMES = 450
+    const HOLD_FRAMES = 30
+    // Chosen so the accumulated arc is well past +-pi by the time anchors
+    // freeze -- the exact condition that exposes the bug (a shortestDelta
+    // rederivation at freeze would clamp back into range and jump).
+    const startHueA = 0.2, endHueA = 5.6
+    const startHueB = 3.0, endHueB = -1.4
+    const C = 0.15, L = 0.6
+    const anchorAt = (h) => [L, C * Math.cos(h), C * Math.sin(h)]
+
+    let prevArc = null
+    let prevMidRgb = null
+    let maxJump = 0
+    let jumpAtFreezeBoundary = 0
+    const totalFrames = DRIFT_FRAMES + HOLD_FRAMES
+    for (let f = 0; f < totalFrames; f++) {
+      const frac = Math.min(f, DRIFT_FRAMES - 1) / (DRIFT_FRAMES - 1)
+      const anchor1 = anchorAt(lerp(startHueA, endHueA, frac))
+      const anchor0 = anchorAt(lerp(startHueB, endHueB, frac))
+      const hue1 = Math.atan2(anchor1[2], anchor1[1])
+      const hue0 = Math.atan2(anchor0[2], anchor0[1])
+      const rawArc = shortestDelta(hue1, hue0)
+      // No reset anywhere in this loop at the drifting->frozen boundary —
+      // that absence IS the fix under test.
+      const hueArc = prevArc === null ? rawArc : prevArc + shortestDelta(prevArc, rawArc)
+      prevArc = hueArc
+
+      const midRgb = oklabToRgb(lerpOklabPolar(anchor1, anchor0, 0.5, hueArc))
+      if (prevMidRgb) {
+        const jump = rgbDist(midRgb, prevMidRgb)
+        maxJump = Math.max(maxJump, jump)
+        if (f === DRIFT_FRAMES) jumpAtFreezeBoundary = jump
+      }
+      prevMidRgb = midRgb
+    }
+
+    expect(maxJump).toBeLessThan(60)
+    expect(jumpAtFreezeBoundary).toBeLessThan(10)
+  })
+
   function lerp(a, b, t) { return a + (b - a) * t }
 
   it('control pair: full-strength blend at t=0/t=1 returns the endpoints unchanged', () => {

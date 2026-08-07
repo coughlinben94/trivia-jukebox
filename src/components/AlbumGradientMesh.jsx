@@ -502,12 +502,21 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     if (s.blendStart >= 0 && ts - s.blendStart >= s.blendDurationMs) {
       s.steadyRgb  = s.inRgb.map(c => [...c])
       s.blendStart = -1
-      // Not required for correctness with the unwrap approach (steady,
-      // non-drifting anchors converge the unwrapped arc to a stable value
-      // within one frame on their own) — reset anyway for symmetry with
-      // startBlendTo/settleNow, so every place that changes which colors
-      // are being tracked resets the same way (2026-08-07, Opus review).
-      hueArcRef.current = null
+      // Do NOT reset hueArcRef here (2026-08-07, second Opus critique pass —
+      // this was a real regression the first "for symmetry" version shipped
+      // with). The anchor COLORS don't change at this instant — inRgb just
+      // gets promoted to steadyRgb, currentOklab() keeps returning the same
+      // values next frame. Nulling the ref forced the very next frame to
+      // re-derive rawArc via shortestDelta, which clamps to (-pi, pi] — but
+      // the accumulated unwrapped arc right before completion is routinely
+      // well past that range on a real crossfade (anchors drift independently
+      // in currentOklab() and can carry the arc past +-180deg). The reset
+      // was a full-arc snap disguised as a no-op: simulated at ~32% of
+      // transitions producing a >60-unit single-frame RGB jump at the exact
+      // moment a blend lands, versus 0% with no reset at all. startBlendTo/
+      // settleNow DO reset it, correctly — those fire when the target colors
+      // themselves change, where the old arc genuinely has nothing to do
+      // with the new pair. This is not that case.
     }
 
     // Snap detector — a 7.5s blend can move at most ~0.04 OKLab units per
