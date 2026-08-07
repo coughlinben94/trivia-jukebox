@@ -192,19 +192,71 @@ const [newSetName, setNewSetName] = useState('')
     pendingTransitionFireRef.current?.()
   }, [])
 
-  const library = sets.items[sets.activeId]?.songs ?? []
-  const activeSetName = sets.items[sets.activeId]?.name ?? 'Library'
+  // Unscrubbed view (2026-08-07, Ben: songs with no trim points sit
+  // invisibly inside whatever real set they were added to — hasTrim already
+  // silently excludes them from shuffle, so nobody notices they exist until
+  // they wonder why a song never comes up). A LOCAL, non-persisted toggle —
+  // deliberately NOT stored as sets.activeId itself: that field is the real
+  // persisted "which set" pointer (synced to Supabase), and this view spans
+  // MULTIPLE real sets at once, so it can never itself be a real set id.
+  const [unscrubbedView, setUnscrubbedView] = useState(false)
+
+  // Tagged with __sourceSetId/__sourceSetName per song (2026-08-07) — this
+  // aggregate is a fresh derived array every render, never fed back into
+  // setSets as a whole object, so the tag is safe: it only ever gets read
+  // back out by id, alongside an explicit source-set id, by updateTimes/
+  // updateGradientOverride/moveOrCopySong below (never spread wholesale into
+  // storage — see those functions' signatures).
+  const unscrubbedAggregate = useMemo(() => {
+    const out = []
+    for (const [id, set] of Object.entries(sets.items)) {
+      for (const song of set.songs ?? []) {
+        if (!hasTrim(song)) out.push({ ...song, __sourceSetId: id, __sourceSetName: set.name })
+      }
+    }
+    return out
+  }, [sets.items])
+
+  // The real set songs actually get written to, regardless of what `library`
+  // below is currently DISPLAYING (2026-08-07) — writes (add/dedup-check)
+  // always target sets.activeId even while unscrubbedView shows the
+  // aggregate instead. Shared by addToLibrary and resultsList's `inLibrary`
+  // mark so both check against the actual write target, not the view.
+  const realActiveSongs = sets.items[sets.activeId]?.songs ?? []
+  const library = unscrubbedView ? unscrubbedAggregate : realActiveSongs
+  const activeSetName = unscrubbedView ? 'Unscrubbed' : (sets.items[sets.activeId]?.name ?? 'Library')
   // Recomputed only when the library's songs actually change, not on every
   // 300ms position tick from playback (Jukebox re-renders on every tick).
   const libraryRuntime = useMemo(() => fmtRuntime(calcRuntime(library)), [library])
 
-  const setLibrary = useCallback((updater) => {
+  // setId (2026-08-07, unscrubbed-view rewire): optional explicit target,
+  // defaulting to prev.activeId — every pre-existing caller (add/remove/
+  // drag-reorder, all real-set-only actions) is unaffected. Exists so
+  // updateTimes/updateGradientOverride below can target a song's REAL home
+  // set even while the UI is showing the unscrubbed aggregate (whose
+  // "active" set may be a totally different real set, or none).
+  const setLibraryFor = useCallback((setId, updater) => {
     setSets(prev => {
-      const cur = prev.items[prev.activeId]?.songs ?? []
+      const targetId = setId ?? prev.activeId
+      // Bail if targetId doesn't exist (2026-08-07, Opus review) — reachable
+      // via a stale modalTrack: the modal is opened from a click-time
+      // snapshot (src/components/SongDetailModal.jsx), so if that song's
+      // real set gets deleted by another tab (realtime sync is live, see
+      // Jukebox's Supabase effect) while the modal is still open, a later
+      // Done/backdrop-close would otherwise write `{ ...undefined, songs }`
+      // — a new phantom entry keyed by the deleted set's old id, with
+      // name: undefined. That phantom then renders as a blank sidebar row,
+      // and createSet's duplicate-name check (`s.name.trim()`) throws on it
+      // — breaking set creation app-wide until manually cleared. Silently
+      // dropping the write here is correct: the set is gone, so is anywhere
+      // to save the trim to.
+      if (!prev.items[targetId]) return prev
+      const cur = prev.items[targetId]?.songs ?? []
       const songs = typeof updater === 'function' ? updater(cur) : updater
-      return { ...prev, items: { ...prev.items, [prev.activeId]: { ...prev.items[prev.activeId], songs } } }
+      return { ...prev, items: { ...prev.items, [targetId]: { ...prev.items[targetId], songs } } }
     })
   }, [])
+  const setLibrary = useCallback((updater) => setLibraryFor(undefined, updater), [setLibraryFor])
 
   // Stable session ID — embedded in every Supabase write so the realtime handler can
   // detect its own echoes without touching the sets payload shape.
@@ -837,9 +889,22 @@ const [newSetName, setNewSetName] = useState('')
   }, [])
 
   const addToLibrary = (track) => {
-    if (!track || library.some(t => t.id === track.id)) return
+    // Dedup guard against realActiveSongs, not `library` (2026-08-07, Opus
+    // review — a real bug, not a cosmetic one): setLibrary() below always
+    // writes into sets.activeId regardless of unscrubbedView, but `library`
+    // while viewing the aggregate is every unscrubbed song across EVERY set.
+    // A song already trimmed in the active set doesn't appear there at all
+    // (trimmed songs aren't in the aggregate), so the old `library.some`
+    // guard would pass and silently double-add it — two rows sharing one
+    // id, breaking removeFromLibrary/updateTimes (`filter`/`map` by id hit
+    // both at once).
+    if (!track || realActiveSongs.some(t => t.id === track.id)) return
     setLibrary(prev => [{ ...slimTrack(track), startMs: 0, stopMs: track.duration_ms }, ...prev])
-    addToast(`Added to ${activeSetName}`)
+    // activeSetName reads 'Unscrubbed' while viewing that aggregate, but
+    // setLibrary() (no explicit setId) always writes into the real
+    // sets.activeId underneath it — name the set that actually got the
+    // song, not the view labeling it.
+    addToast(`Added to ${unscrubbedView ? (sets.items[sets.activeId]?.name ?? 'Library') : activeSetName}`)
   }
 
   const removeFromLibrary = (id) => {
@@ -851,9 +916,15 @@ const [newSetName, setNewSetName] = useState('')
     addToast('Removed')
   }
 
-  const updateTimes = useCallback((id, startMs, stopMs) => {
-    setLibrary(prev => prev.map(t => t.id === id ? { ...t, startMs, stopMs } : t))
-  }, [setLibrary])
+  // setId (2026-08-07, unscrubbed-view rewire): the modal passes the song's
+  // real __sourceSetId when open from the unscrubbed aggregate, so a trim
+  // save lands in the set the song actually lives in — not sets.activeId,
+  // which while viewing that aggregate is unrelated to any given song's home
+  // set. Every other caller omits it and gets the original activeId-scoped
+  // behavior via setLibraryFor's own default.
+  const updateTimes = useCallback((id, startMs, stopMs, setId) => {
+    setLibraryFor(setId, prev => prev.map(t => t.id === id ? { ...t, startMs, stopMs } : t))
+  }, [setLibraryFor])
 
   // Manual gradient-color override (2026-08-03, thinktank round 3; extended
   // 2026-08-04 to color 1 too): a per-song hex the owner picked in
@@ -863,15 +934,20 @@ const [newSetName, setNewSetName] = useState('')
   // already-saved songs). Manual choices are stored exactly as selected;
   // the renderer handles the resulting two-pool blend. hex === null clears
   // the override at that slot, falling back to auto-pick.
-  const updateGradientOverride = useCallback((id, slot, hex) => {
+  const updateGradientOverride = useCallback((id, slot, hex, setId) => {
     const field = slot === 1 ? 'gradientOverride1' : 'gradientOverride'
-    setLibrary(prev => prev.map(t => t.id === id ? { ...t, [field]: hex } : t))
-  }, [setLibrary])
+    setLibraryFor(setId, prev => prev.map(t => t.id === id ? { ...t, [field]: hex } : t))
+  }, [setLibraryFor])
 
-  const moveOrCopySong = useCallback((songId, destSetId, mode) => {
+  // sourceSetId (2026-08-07): explicit source, defaulting to prev.activeId —
+  // same reasoning as setLibraryFor/updateTimes above. Needed so "Move/Copy"
+  // from the unscrubbed aggregate moves the song OUT of its real home set,
+  // not out of whatever real set happens to be active underneath the view.
+  const moveOrCopySong = useCallback((songId, destSetId, mode, sourceSetId) => {
     setSets(prev => {
-      const activeSongs = prev.items[prev.activeId]?.songs ?? []
-      const song = activeSongs.find(t => t.id === songId)
+      const srcId = sourceSetId ?? prev.activeId
+      const srcSongs = prev.items[srcId]?.songs ?? []
+      const song = srcSongs.find(t => t.id === songId)
       if (!song) return prev
       const destSongs = prev.items[destSetId]?.songs ?? []
       if (destSongs.some(t => t.id === songId)) return prev
@@ -883,7 +959,7 @@ const [newSetName, setNewSetName] = useState('')
         },
       }
       if (mode === 'move') {
-        newItems[prev.activeId] = { ...prev.items[prev.activeId], songs: activeSongs.filter(t => t.id !== songId) }
+        newItems[srcId] = { ...prev.items[srcId], songs: srcSongs.filter(t => t.id !== songId) }
       }
       return { ...prev, items: newItems }
     })
@@ -892,6 +968,16 @@ const [newSetName, setNewSetName] = useState('')
   const startShuffle = useCallback(() => {
     clearTimeout(shuffleDebounceRef.current)
     shuffleDebounceRef.current = setTimeout(async () => {
+      // Unscrubbed aggregate can't shuffle by construction (2026-08-07,
+      // Opus review nitpick) — it only ever contains songs that FAIL
+      // hasTrim, so `scrubbed` below is always empty and the generic
+      // "scrub a few songs first" message doesn't make sense for a view
+      // where the whole point is songs that haven't been scrubbed *yet*.
+      // Said plainly instead, before falling into that generic check.
+      if (unscrubbedView) {
+        addToast('Pick a real library to shuffle — Unscrubbed is a to-do list, not a set')
+        return
+      }
       // Shuffle/skip only ever play songs someone's actually trimmed in
       // SongDetailModal — an untrimmed song plays its full raw length with
       // no fade-out/auto-advance trigger (stopMs defaults to duration_ms,
@@ -945,7 +1031,7 @@ const [newSetName, setNewSetName] = useState('')
       // trigger.
       entranceFallbackRef.current = setTimeout(() => firePendingEntrancePlay(song), 4000)
     }, 100)   // 400 -> 650 -> 850 -> 600 -> 100, 2026-08-04: Ben — first song's audio + tonearm swing need to be another 500ms sooner. Same lever as the 250ms cut before this — this debounce gates the whole entrance, arm lift and audio both sit downstream of it.
-  }, [library, addToast, firePendingEntrancePlay])
+  }, [library, addToast, firePendingEntrancePlay, unscrubbedView])
 
   const handleStop = useCallback(() => {
     clearTimeout(shuffleDebounceRef.current)
@@ -999,7 +1085,12 @@ const [newSetName, setNewSetName] = useState('')
   }, [handleStop])
 
   const switchSet = (id) => {
-    if (id === sets.activeId) return
+    // unscrubbedView check added (2026-08-07) — without it, clicking a real
+    // set while VIEWING the unscrubbed aggregate no-ops when that set
+    // happens to already equal sets.activeId underneath (activeId never
+    // changed just because the aggregate was showing), leaving the user
+    // stuck looking at the aggregate with no visible way back to that set.
+    if (!unscrubbedView && id === sets.activeId) return
     // Always cancel a pending shuffle start, not just when isPlaying is
     // already true — startShuffle's 400ms debounce leaves isPlaying false
     // until it fires, so switching sets inside that window previously let
@@ -1007,7 +1098,22 @@ const [newSetName, setNewSetName] = useState('')
     clearTimeout(shuffleDebounceRef.current)
     if (isPlaying) handleStop()
     setPlayingId(null)
+    setUnscrubbedView(false)
     setSets(prev => ({ ...prev, activeId: id }))
+    setLibrarySearch('')
+  }
+
+  // Selects the unscrubbed aggregate — mirrors switchSet's side effects
+  // (stop any pending/live playback, clear search) but never touches
+  // sets.activeId: this view spans multiple real sets, so there's no single
+  // real id to point activeId at, and it must stay untouched so the
+  // underlying real set is still there to return to.
+  const selectUnscrubbed = () => {
+    if (unscrubbedView) return
+    clearTimeout(shuffleDebounceRef.current)
+    if (isPlaying) handleStop()
+    setPlayingId(null)
+    setUnscrubbedView(true)
     setLibrarySearch('')
   }
 
@@ -1155,22 +1261,40 @@ const [newSetName, setNewSetName] = useState('')
         const i = indexById.get(track.id)
         return (
           <LibraryCard
-            key={track.id}
+            // sourceSetId-prefixed in the aggregate (2026-08-07, Opus review)
+            // — copy-to-set preserves startMs/stopMs (moveOrCopySong), so an
+            // unscrubbed song copied into a second set stays unscrubbed in
+            // both, and the aggregate then holds two entries sharing one
+            // track.id. A bare key={track.id} collides across them (React
+            // key warning, unstable reconcile); the source set id makes each
+            // entry's key unique again since __sourceSetId differs.
+            key={unscrubbedView ? `${track.__sourceSetId}:${track.id}` : track.id}
             track={track}
             isPlaying={track.id === playingId && !player.isPaused}
             isPaused={track.id === playingId && player.isPaused}
-            onRemove={() => removeFromLibrary(track.id)}
             onClick={() => setModalTrack(track)}
-            onDragStart={() => handleDragStart(i)}
-            onDragOver={(e) => handleDragOver(e, i)}
-            onDragEnd={handleDragEnd}
+            // Drag-reorder and remove are both real-set-only actions
+            // (2026-08-07): reordering across the unscrubbed aggregate's
+            // multiple real sets isn't a coherent action (there's no single
+            // array to reorder within), and remove would silently operate on
+            // whatever real set happens to be sets.activeId underneath the
+            // view — unrelated to this song's actual home set. Omitted
+            // entirely rather than wired to a wrong/no-op handler; LibraryCard
+            // already hides the ✕ and disables drag when these are absent.
+            // The modal's own Move/Copy is the real way to relocate a song
+            // from here.
+            onRemove={unscrubbedView ? undefined : () => removeFromLibrary(track.id)}
+            onDragStart={unscrubbedView ? undefined : () => handleDragStart(i)}
+            onDragOver={unscrubbedView ? undefined : (e) => handleDragOver(e, i)}
+            onDragEnd={unscrubbedView ? undefined : handleDragEnd}
+            sourceLabel={unscrubbedView ? track.__sourceSetName : undefined}
           />
         )
       })}
     </div>
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filteredLibrary, library, playingId, player.isPaused])
+  }, [filteredLibrary, library, playingId, player.isPaused, unscrubbedView])
 
   const resultsList = useMemo(() => (
     <div key={resultsKey}>
@@ -1179,13 +1303,13 @@ const [newSetName, setNewSetName] = useState('')
           key={track.id}
           track={track}
           index={i}
-          inLibrary={library.some(t => t.id === track.id)}
+          inLibrary={realActiveSongs.some(t => t.id === track.id)}
           onAdd={addToLibrary}
         />
       ))}
     </div>
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ), [results, resultsKey, library, activeSetName])
+  ), [results, resultsKey, realActiveSongs, activeSetName])
 
   return (
     <div className="h-screen bg-surface text-white flex flex-col overflow-hidden">
@@ -1276,7 +1400,7 @@ const [newSetName, setNewSetName] = useState('')
                 key={id}
                 id={id}
                 set={sets.items[id]}
-                isActive={sets.activeId === id}
+                isActive={!unscrubbedView && sets.activeId === id}
                 isRenaming={renamingId === id}
                 renamingVal={renamingVal}
                 onSelect={() => switchSet(id)}
@@ -1297,6 +1421,22 @@ const [newSetName, setNewSetName] = useState('')
                 onRenameCancel={() => setRenamingId(null)}
               />
             ))}
+          </div>
+
+          {/* Unscrubbed — virtual, spans every real set (2026-08-07). Not a
+              real set: no delete/clear/rename (all those handlers omitted,
+              which SetItem already renders as simply absent). Reuses SetItem
+              wholesale for its name/count/runtime display — set={{name,
+              songs}} is the only shape SetItem actually needs. */}
+          <div className="px-2 pt-2 mt-2 border-t border-white/[0.05]">
+            <SetItem
+              id="__unscrubbed"
+              set={{ name: 'Unscrubbed', songs: unscrubbedAggregate }}
+              isActive={unscrubbedView}
+              isRenaming={false}
+              renamingVal=""
+              onSelect={selectUnscrubbed}
+            />
           </div>
         </aside>
 
@@ -1344,6 +1484,11 @@ const [newSetName, setNewSetName] = useState('')
                   <p className="text-white text-sm">No matches for &ldquo;{librarySearch}&rdquo;</p>
                 </div>
               )
+            ) : unscrubbedView ? (
+              <div className="flex flex-col items-center justify-center h-full text-center select-none pb-16">
+                <p className="text-white text-sm">Nothing waiting to be scrubbed</p>
+                <p className="text-ink-muted text-xs mt-1">Every song across every library has trim points set</p>
+              </div>
             ) : (
               <div className="flex flex-col items-center justify-center h-full text-center select-none pb-16">
                 <p className="text-white text-sm">
@@ -1446,6 +1591,10 @@ const [newSetName, setNewSetName] = useState('')
           moveOrCopySong={moveOrCopySong}
           sets={sets}
           activeId={sets.activeId}
+          // __sourceSetId is only present on entries from unscrubbedAggregate
+          // (2026-08-07) — falls back to the real activeId for every normal
+          // set's song, exactly the modal's previous behavior.
+          sourceSetId={modalTrack.__sourceSetId ?? sets.activeId}
           onToast={addToast}
           isLiveShuffling={isPlaying}
           onStopLiveShuffle={handleStop}
@@ -1595,7 +1744,15 @@ function TrackRow({ track, index, inLibrary, onAdd }) {
   )
 }
 
-function LibraryCard({ track, isPlaying, isPaused, onRemove, onClick, onDragStart, onDragOver, onDragEnd }) {
+// sourceLabel (2026-08-07): set only when rendered inside the unscrubbed
+// aggregate, showing which real set this song actually lives in (the
+// aggregate spans every set, so without this a card gives no clue where a
+// "Move/Copy" from the modal would actually be moving it FROM). onRemove/
+// onDragStart/onDragOver/onDragEnd all optional now — the aggregate passes
+// none of them (see libraryGrid), and `draggable`/the ✕ button are gated on
+// whether they're actually present instead of always rendering a handler
+// that would silently misbehave (see libraryGrid's comment for why).
+function LibraryCard({ track, isPlaying, isPaused, onRemove, onClick, onDragStart, onDragOver, onDragEnd, sourceLabel }) {
   const img = track.album?.images?.[0]
   const artists = track.artists?.map(a => a.name).join(', ')
   const trimmed = hasTrim(track)
@@ -1604,7 +1761,7 @@ function LibraryCard({ track, isPlaying, isPaused, onRemove, onClick, onDragStar
       className={`relative group rounded-xl overflow-hidden cursor-pointer select-none transition-[transform,box-shadow] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] hover:scale-[1.02] hover:shadow-xl ${
         isPlaying ? 'ring-1 ring-accent/40' : isPaused ? 'ring-1 ring-white/15' : ''
       }`}
-      draggable
+      draggable={!!onDragStart}
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDragEnd={onDragEnd}
@@ -1633,10 +1790,17 @@ function LibraryCard({ track, isPlaying, isPaused, onRemove, onClick, onDragStar
         {trimmed && !isPlaying && !isPaused && (
           <div className="absolute bottom-1.5 left-1.5 w-1.5 h-1.5 rounded-full bg-accent/60" />
         )}
-        <button
-          onClick={e => { e.stopPropagation(); onRemove() }}
-          className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-150 cursor-pointer text-[10px]"
-        >✕</button>
+        {sourceLabel && (
+          <div className="absolute bottom-1.5 left-1.5 right-1.5 truncate text-center text-[9px] font-semibold text-white bg-black/70 rounded px-1 py-0.5">
+            {sourceLabel}
+          </div>
+        )}
+        {onRemove && (
+          <button
+            onClick={e => { e.stopPropagation(); onRemove() }}
+            className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-150 cursor-pointer text-[10px]"
+          >✕</button>
+        )}
       </div>
       <div className="p-2 bg-white/[0.03] text-center">
         <p className={`text-[11px] font-semibold truncate ${isPlaying ? 'text-accent' : 'text-white'}`}>{track.name}</p>

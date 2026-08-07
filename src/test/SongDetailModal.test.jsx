@@ -7,6 +7,13 @@ vi.mock('../hooks/usePalette', () => ({
   usePalette: () => ({ colors: ['#112233', '#ff0000', '#00ff00'] }),
 }))
 
+// onUpdateTimes/onUpdateGradientOverride assertions below all expect a
+// trailing `undefined` 4th arg (2026-08-07, unscrubbed-view rewire) —
+// SongDetailModal now always passes effectiveSourceId (sourceSetId ??
+// activeId) as the last argument to both callbacks. None of these tests pass
+// either prop, so it resolves to undefined; that's a real, correct signature
+// change, not test rot — see SongDetailModal.jsx's header comment.
+
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
 const TRACK = {
@@ -70,7 +77,7 @@ describe('Gradient color override', () => {
       target: { value: '#abcdef' },
     })
 
-    expect(onUpdateGradientOverride).toHaveBeenCalledWith('track-1', 2, '#abcdef')
+    expect(onUpdateGradientOverride).toHaveBeenCalledWith('track-1', 2, '#abcdef', undefined)
   })
 
   it('saves the exact valid color selected by the user for color 1', () => {
@@ -82,7 +89,7 @@ describe('Gradient color override', () => {
       target: { value: '#abcdef' },
     })
 
-    expect(onUpdateGradientOverride).toHaveBeenCalledWith('track-1', 1, '#abcdef')
+    expect(onUpdateGradientOverride).toHaveBeenCalledWith('track-1', 1, '#abcdef', undefined)
   })
 })
 
@@ -107,7 +114,7 @@ describe('Set In', () => {
 
     fireEvent.click(setInBtn())
 
-    expect(onUpdateTimes).toHaveBeenCalledWith('track-1', 30000, TRACK.stopMs)
+    expect(onUpdateTimes).toHaveBeenCalledWith('track-1', 30000, TRACK.stopMs, undefined)
   })
 
   it('saves localPos as startMs when track is not active', () => {
@@ -117,7 +124,7 @@ describe('Set In', () => {
 
     fireEvent.click(setInBtn())
 
-    expect(onUpdateTimes).toHaveBeenCalledWith('track-1', TRACK.startMs, TRACK.stopMs)
+    expect(onUpdateTimes).toHaveBeenCalledWith('track-1', TRACK.startMs, TRACK.stopMs, undefined)
   })
 
   it('Set In marker turns green (✓) immediately after click', () => {
@@ -151,7 +158,7 @@ describe('Set In', () => {
     )
 
     fireEvent.click(setInBtn())
-    expect(onUpdateTimes).toHaveBeenLastCalledWith('track-1', 5000, TRACK.stopMs)
+    expect(onUpdateTimes).toHaveBeenLastCalledWith('track-1', 5000, TRACK.stopMs, undefined)
 
     // Move position and Set Out
     player.position = 190000
@@ -166,7 +173,7 @@ describe('Set In', () => {
 
     fireEvent.click(setOutBtn())
     // startMs should still be 5000 (what we set), not the original 10000
-    expect(onUpdateTimes).toHaveBeenLastCalledWith('track-1', 5000, 190000)
+    expect(onUpdateTimes).toHaveBeenLastCalledWith('track-1', 5000, 190000, undefined)
   })
 })
 
@@ -183,7 +190,7 @@ describe('Set Out', () => {
 
     fireEvent.click(setOutBtn())
 
-    expect(onUpdateTimes).toHaveBeenCalledWith('track-1', TRACK.startMs, 180000)
+    expect(onUpdateTimes).toHaveBeenCalledWith('track-1', TRACK.startMs, 180000, undefined)
   })
 
   it('Set Out marker turns green (✓) immediately after click', () => {
@@ -216,7 +223,7 @@ describe('Set Out', () => {
     )
 
     fireEvent.click(setOutBtn())
-    expect(onUpdateTimes).toHaveBeenLastCalledWith('track-1', TRACK.startMs, 190000)
+    expect(onUpdateTimes).toHaveBeenLastCalledWith('track-1', TRACK.startMs, 190000, undefined)
 
     player.position = 8000
     rerender(
@@ -230,7 +237,7 @@ describe('Set Out', () => {
 
     fireEvent.click(setInBtn())
     // stopMs should still be 190000 (what we set)
-    expect(onUpdateTimes).toHaveBeenLastCalledWith('track-1', 8000, 190000)
+    expect(onUpdateTimes).toHaveBeenLastCalledWith('track-1', 8000, 190000, undefined)
   })
 })
 
@@ -243,7 +250,7 @@ describe('Reset', () => {
 
     fireEvent.click(screen.getByText(/reset/i))
 
-    expect(onUpdateTimes).toHaveBeenCalledWith('track-1', 0, TRACK.duration_ms)
+    expect(onUpdateTimes).toHaveBeenCalledWith('track-1', 0, TRACK.duration_ms, undefined)
   })
 
   it('resets In field to 0:00 and Out field to 4:00', () => {
@@ -268,7 +275,7 @@ describe('Close (Done button + backdrop)', () => {
 
     fireEvent.click(screen.getByText('Done'))
 
-    expect(onUpdateTimes).toHaveBeenCalledWith('track-1', TRACK.startMs, TRACK.stopMs)
+    expect(onUpdateTimes).toHaveBeenCalledWith('track-1', TRACK.startMs, TRACK.stopMs, undefined)
     expect(onClose).toHaveBeenCalled()
   })
 
@@ -289,7 +296,7 @@ describe('Close (Done button + backdrop)', () => {
     const backdrop = document.querySelector('.fixed.inset-0.z-40')
     fireEvent.click(backdrop)
 
-    expect(onUpdateTimes).toHaveBeenCalledWith('track-1', TRACK.startMs, TRACK.stopMs)
+    expect(onUpdateTimes).toHaveBeenCalledWith('track-1', TRACK.startMs, TRACK.stopMs, undefined)
   })
 
   it('Done button stops preview playback when song is active and playing', () => {
@@ -455,7 +462,7 @@ describe('TimeField', () => {
     // Close via Done
     fireEvent.click(screen.getByText('Done'))
 
-    expect(onUpdateTimes).toHaveBeenLastCalledWith('track-1', 45000, TRACK.stopMs)
+    expect(onUpdateTimes).toHaveBeenLastCalledWith('track-1', 45000, TRACK.stopMs, undefined)
   })
 })
 

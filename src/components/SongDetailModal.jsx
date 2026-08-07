@@ -10,8 +10,18 @@ const MIN_CLIP_MS = 1000
 // overridable, see LiveScreen.applyGradientOverride).
 const MAX_SWATCHES = 6
 
-export default function SongDetailModal({ track, player, onUpdateTimes, onUpdateGradientOverride, onClose, moveOrCopySong, sets, activeId, onToast, isLiveShuffling, onStopLiveShuffle }) {
+// sourceSetId (2026-08-07, unscrubbed-view rewire): the real set this
+// specific song lives in — always equal to `activeId` for a song opened from
+// a normal set, but genuinely different from `activeId` when opened from the
+// unscrubbed aggregate (which spans every set, so `activeId` alone can't
+// identify where THIS song actually lives). Falls back to `activeId` so
+// every pre-existing caller is unaffected. Used for the Move/Copy
+// destination list (excluding the song's real home, not just whatever set
+// happens to be selected underneath) and passed through to onUpdateTimes/
+// onUpdateGradientOverride/moveOrCopySong so a save lands in the right place.
+export default function SongDetailModal({ track, player, onUpdateTimes, onUpdateGradientOverride, onClose, moveOrCopySong, sets, activeId, sourceSetId, onToast, isLiveShuffling, onStopLiveShuffle }) {
   const { position, duration, seek, playTrack, pause, currentTrack, isPaused } = player
+  const effectiveSourceId = sourceSetId ?? activeId
 
   const isActive = currentTrack?.uri === track.uri
   const isPlaying = isActive && !isPaused
@@ -23,7 +33,7 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onUpdate
   const [moveCopyOpen, setMoveCopyOpen] = useState(false)
   const [selectedMode, setSelectedMode] = useState('move')
   const [confirmMsg, setConfirmMsg]     = useState(null)
-  const otherSets = Object.entries(sets?.items ?? {}).filter(([id]) => id !== activeId)
+  const otherSets = Object.entries(sets?.items ?? {}).filter(([id]) => id !== effectiveSourceId)
   const displayPosition = draggingRef.current || dragMs !== null
     ? dragMs
     : (isActive ? position : localPos)
@@ -53,8 +63,8 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onUpdate
   const [colorPickerOpen, setColorPickerOpen] = useState(false)
 
   const handlePickGradientColor = (slot, hex) => {
-    if (slot === 1) { setGradientOverride1(hex); onUpdateGradientOverride?.(track.id, 1, hex) }
-    else            { setGradientOverride2(hex); onUpdateGradientOverride?.(track.id, 2, hex) }
+    if (slot === 1) { setGradientOverride1(hex); onUpdateGradientOverride?.(track.id, 1, hex, effectiveSourceId) }
+    else            { setGradientOverride2(hex); onUpdateGradientOverride?.(track.id, 2, hex, effectiveSourceId) }
   }
 
   // Keep refs so handleClose always has current values even inside closures
@@ -100,17 +110,17 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onUpdate
     const ms = Math.min(displayPosition, Math.max(0, stopMsRef.current - MIN_CLIP_MS))
     setStartMs(ms)
     startMsRef.current = ms
-    onUpdateTimes(track.id, ms, stopMsRef.current)
+    onUpdateTimes(track.id, ms, stopMsRef.current, effectiveSourceId)
   }
   const handleSetOut = () => {
     const ms = Math.max(displayPosition, Math.min(displayDuration, startMsRef.current + MIN_CLIP_MS))
     setStopMs(ms)
     stopMsRef.current = ms
-    onUpdateTimes(track.id, startMsRef.current, ms)
+    onUpdateTimes(track.id, startMsRef.current, ms, effectiveSourceId)
   }
 
   const handleMoveOrCopy = (destSetId, destSetName) => {
-    moveOrCopySong(track.id, destSetId, selectedMode)
+    moveOrCopySong(track.id, destSetId, selectedMode, effectiveSourceId)
     const msg = `${selectedMode === 'move' ? 'Moved' : 'Copied'} to ${destSetName}`
     setConfirmMsg(msg)
     onToast?.(msg)
@@ -129,12 +139,12 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onUpdate
     setLocalPos(0)
     startMsRef.current = 0
     stopMsRef.current  = dur
-    onUpdateTimes(track.id, 0, dur)
+    onUpdateTimes(track.id, 0, dur, effectiveSourceId)
   }
 
   // Close: always save current times (catches TimeField edits), then stop preview if active
   const handleClose = () => {
-    onUpdateTimes(track.id, startMsRef.current, stopMsRef.current)
+    onUpdateTimes(track.id, startMsRef.current, stopMsRef.current, effectiveSourceId)
     if (isPlaying) pause()
     onClose()
   }
@@ -264,7 +274,7 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onUpdate
 
           {/* Typed In/Out fields + reset */}
           <div className="flex items-center justify-between px-1 mb-5">
-            <TimeField label="In"  value={startMs} maxMs={Math.max(0, stopMs - MIN_CLIP_MS)} onChange={v => { setStartMs(v); startMsRef.current = v; onUpdateTimes(track.id, v, stopMsRef.current) }} />
+            <TimeField label="In"  value={startMs} maxMs={Math.max(0, stopMs - MIN_CLIP_MS)} onChange={v => { setStartMs(v); startMsRef.current = v; onUpdateTimes(track.id, v, stopMsRef.current, effectiveSourceId) }} />
             <div className="flex flex-col items-center gap-1">
               <div className="w-24 h-[1px] bg-accent/20" />
               <button
@@ -274,7 +284,7 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onUpdate
                 ↺ reset
               </button>
             </div>
-            <TimeField label="Out" value={stopMs}  minMs={Math.min(displayDuration, startMs + MIN_CLIP_MS)} maxMs={displayDuration} onChange={v => { setStopMs(v);  stopMsRef.current  = v; onUpdateTimes(track.id, startMsRef.current, v) }} />
+            <TimeField label="Out" value={stopMs}  minMs={Math.min(displayDuration, startMs + MIN_CLIP_MS)} maxMs={displayDuration} onChange={v => { setStopMs(v);  stopMsRef.current  = v; onUpdateTimes(track.id, startMsRef.current, v, effectiveSourceId) }} />
           </div>
 
           {/* Gradient colors — opens its own pop-up window (GradientColorPicker)
