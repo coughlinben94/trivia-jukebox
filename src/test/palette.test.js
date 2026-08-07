@@ -10,8 +10,9 @@ describe('palette client cache version', () => {
   // to this number. v7->v8 shipped 2026-08-07 for exactly the failure this
   // guards: two real server-output changes (83a0ffd, 33c61dc) shipped
   // earlier without a bump, so the CDN kept serving pre-fix palettes.
+  // v8->v9 (same day): picked.length===1 branch fixed.
   it('pins PALETTE_VERSION so a bump requires touching this test', () => {
-    expect(usePaletteModule.PALETTE_VERSION).toBe(8)
+    expect(usePaletteModule.PALETTE_VERSION).toBe(9)
   })
 })
 

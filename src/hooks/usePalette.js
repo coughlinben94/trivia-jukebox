@@ -46,7 +46,10 @@ const FALLBACK = { colors: FALLBACK_COLORS, weights: FALLBACK_COLORS.map(() => 0
 // api/palette.js changes -- this comment is the reminder, not a hash or any
 // other mechanism, because the version also has to stay byte-stable for
 // cache warmth across unrelated edits (comment tweaks, whitespace).
-export const PALETTE_VERSION = 8;
+// v9 (2026-08-07) -- single-candidate branch fixed (was emitting an
+// identical-hex duplicate, then briefly a luma-scale bug that emitted pure
+// white; see api/palette.js's picked.length === 1 branch).
+export const PALETTE_VERSION = 9;
 const versionQuery = `&pv=${PALETTE_VERSION}`;
 
 // Cache key includes the version + tuning query so a VARIETY-overridden fetch

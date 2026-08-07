@@ -371,14 +371,22 @@ const [newSetName, setNewSetName] = useState('')
           if (totalSongs(lsSets) > 0) {
             try {
               const nowIso = new Date().toISOString()
-              await supabase.from('jukebox_state').upsert({
+              // Same {error} check as the main debounced write below (2026-08-07,
+              // Opus review) — supabase-js resolves {data, error} on a DB-level
+              // failure instead of throwing, so this catch alone let a failed
+              // migration still advance the sync-tracking refs.
+              const { error: migrateError } = await supabase.from('jukebox_state').upsert({
                 id: 'singleton',
                 sets: lsSets,
                 last_writer: sessionIdRef.current,
                 updated_at: nowIso,
               })
-              lastAppliedUpdatedAtRef.current = nowIso
-              lastAppliedSetsRef.current = lsSets
+              if (migrateError) {
+                console.error('[Jukebox] migration write failed:', migrateError)
+              } else {
+                lastAppliedUpdatedAtRef.current = nowIso
+                lastAppliedSetsRef.current = lsSets
+              }
             } catch { /* migration failed silently — localStorage remains the truth */ }
           }
         } else {

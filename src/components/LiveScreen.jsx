@@ -823,13 +823,15 @@ function LiveScreen({ currentTrack, isPaused, error, ending, onClose, shuffleKey
       }
     } catch (err) {
       console.error('[runTransition]', err)
-      busyRef.current = false
-      setTransitioning(false)
-      // Same endingRef guard as the three call sites above — the close
-      // sequence owns tonearmCtrl exclusively once it's in flight, and an
-      // exception during a transition that overlaps a close would otherwise
-      // fire ARM_ON straight into the close animation.
+      // Same endingRef guard as the happy-path block above (2026-08-07 —
+      // clearing busyRef re-opens pendingRef draining and un-hides text, so
+      // an exception during a transition that overlaps a close would relocate
+      // the exact glitch that guard was built to remove, not fix it). If a
+      // close is in flight, its own cleanup (the `ending` effect) owns
+      // resetting these once it takes over.
       if (!endingRef.current) {
+        busyRef.current = false
+        setTransitioning(false)
         tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 26 } })
       }
     }

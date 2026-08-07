@@ -561,9 +561,16 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
                                               // stays on its own clock, independent
                                               // of FLOW_SPEED tuning
     // Integrate the instantaneous flow speed over real elapsed time — see
-    // flowPhaseRef's declaration for why this can't be speed x tSec.
+    // flowPhaseRef's declaration for why this can't be speed x tSec. Clamped
+    // to 0.05s (2026-08-07, Opus review): rAF just stops firing while the tab
+    // is hidden rather than clearing rafRef, so the visibility-resume effect
+    // above's `!rafRef.current` check never sees it as stopped and never
+    // calls startLoop() to reset this timestamp — the first frame back would
+    // otherwise integrate the ENTIRE hidden gap in one step, snapping the
+    // noise field instead of resuming it. A normal dropped frame or two is
+    // far under this cap; only a real backgrounding gets clamped.
     const prevTs = flowPhaseTsRef.current
-    const dtSec  = prevTs === null ? 0 : Math.max(0, tSec - prevTs)
+    const dtSec  = prevTs === null ? 0 : Math.min(0.05, Math.max(0, tSec - prevTs))
     flowPhaseTsRef.current = tSec
     flowPhaseRef.current  += dtSec * flowSpeedAt(tSec)
     const t    = flowPhaseRef.current        // drives noise domain warp/flow

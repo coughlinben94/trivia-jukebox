@@ -130,7 +130,8 @@ export default async function handler(req, res) {
       // sat motionless. Derive the second anchor as a lightness-shifted
       // variant of the same hue instead — same trick the grayscale branch
       // above uses when there's no second real color.
-      const { hue, luma } = picked[0];
+      const { hue, luma: luma255 } = picked[0];
+      const luma = luma255 / 255; // hexToLuma returns 0-255; hslToHex wants 0-1 (see avgLuma above)
       const shiftedLuma = luma > 0.5 ? Math.max(0.15, luma - 0.35) : Math.min(0.85, luma + 0.35);
       const shifted = hslToHex(hue, 0.55, shiftedLuma);
       colors = [picked[0].hex, shifted];
