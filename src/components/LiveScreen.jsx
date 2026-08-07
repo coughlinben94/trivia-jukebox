@@ -223,7 +223,14 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       // fills it edge to edge like before — either way the artist paragraph
       // that follows sits at the same y every time, since the box height
       // no longer depends on the title's own content height.
-      if (titleBoxRef.current) titleBoxRef.current.style.height = `${maxH}px`
+      // lhPx * 2, NOT maxH (Opus review, 2026-08-07) — maxH's +4 is a
+      // sub-pixel fit-test buffer for the scrollHeight comparison below, not
+      // a layout dimension. Reusing it here reserved 4px more than a real
+      // 2-line title's own content height, so the artist sat 4px lower than
+      // Ben's approved reference screenshot (a 2-line title, which used to
+      // size the box exactly to its own content pre-fix). lhPx * 2
+      // reproduces that reference position exactly for every title length.
+      if (titleBoxRef.current) titleBoxRef.current.style.height = `${lhPx * 2}px`
 
       titleBasePxRef.current = basePx
 
