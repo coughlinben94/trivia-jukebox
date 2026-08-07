@@ -260,7 +260,17 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
     // Same gotcha Trivia OS's own autoFitText guards against for this reason.
     let cancelled = false
     document.fonts?.ready?.then(() => { if (!cancelled) measure() })
-    return () => { cancelled = true }
+
+    // Re-measure on resize (2026-08-07, Opus review of ccd11c7) — this
+    // effect only ever re-ran on a song change or the fonts-ready callback
+    // above, so crossing the sm: 640px breakpoint (48px/60px title) without
+    // a song change left both the shrink threshold AND the title box's
+    // reserved height (see the box-height comment above) stamped for
+    // whichever breakpoint was active on the last song change. Growing past
+    // 640 without a resize-triggered re-measure means real content can
+    // overflow a box still sized for the smaller font.
+    window.addEventListener('resize', measure)
+    return () => { cancelled = true; window.removeEventListener('resize', measure) }
   }, [shown?.name])
 
   const { colors: paletteColorsFull, weights: paletteWeightsFull } = usePalette(artUrl)
