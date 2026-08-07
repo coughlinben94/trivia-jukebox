@@ -120,6 +120,56 @@ function flowSpeedAt(tSec) {
   return FLOW_SPEED * (1 + 0.25 * Math.sin(tSec / 43))
 }
 
+// Divider ORIENTATION (2026-08-07, Ben live: "that sin wave mesh is also
+// supposed to move on a random axis rotating... should already be wired up
+// and functional?"). It wasn't — the deleted point-light renderer
+// (GradientBackground.jsx, replaced 2026-08-04) had two anchor pools
+// genuinely orbiting each other, producing continuous boundary rotation; this
+// renderer's own divider only ever swept left-right (anchorDivider above),
+// with a small fixed y-lean (`tilt`, now removed) standing in for real
+// rotation. This is the real thing: theta is the angle of the dividing
+// line's normal vector, consumed by draw() as cos(theta)/sin(theta) in a
+// signed-distance projection — see the edge computation there.
+//
+// NOT a constant rotation rate (`2*pi*t/T`) — a clock hand doing N identical
+// revolutions over an hours-long shift is exactly the periodicity class this
+// file has been fixed for five separate times already (see anchorDivider's
+// own history above). The linear term is jittered by two faster,
+// incommensurate sines whose combined rate-of-change (0.9/37 + 0.6/61 =
+// 0.034) exceeds the linear term's own rate (2*pi/300 = 0.021) — the
+// rotation genuinely stalls and reverses sometimes instead of ticking
+// steadily, and periods (300/37/61) were picked with no near-integer ratio
+// to anchorDivider's (11.4/29.3/7.1) or flowSpeedAt's (43), so the two
+// motions don't beat against each other either (Opus review, 2026-08-07).
+//
+// Closed-form off tSec, not integrated like flowPhaseRef — inherits the
+// hidden-tab-resume fix for free (tSec already has hiddenOffsetMsRef
+// subtracted out before this is called) without a third time-integration
+// clock in this file (Opus review: two is already the max that's safe to
+// reason about — flowPhaseRef and hiddenOffsetMsRef — a third invites the
+// exact class of resume bug those two exist to prevent).
+//
+// Note: rotating the line's normal by pi swaps which color is on which side
+// but leaves the same physical boundary — orientation as drawn repeats every
+// T/2 (~150s here), not T. Budgeted into the 300s constant, not a bug.
+export function dividerAngle(tSec) {
+  return (tSec / 300) * Math.PI * 2
+    + 0.9 * Math.sin(tSec / 37)
+    + 0.6 * Math.sin(tSec / 61)
+}
+
+// Signed-distance edge value for a pixel at (xFrac, yFrac) — see the
+// offset/theta comment in draw() for the geometry. Pure and exported (same
+// reason as anchorDivider/lerpOklabPolar above) so the theta=0 case can be
+// pinned as a regression test against the old x/SW - divider formula it
+// replaces, without needing a canvas to run draw() itself.
+export function dividerEdge(xFrac, yFrac, theta, aspect, offset, sharpness) {
+  const ct = Math.cos(theta), st = Math.sin(theta)
+  const half = 0.5 * (aspect * Math.abs(ct) + Math.abs(st))
+  const proj = (xFrac - 0.5) * aspect * ct + (yFrac - 0.5) * st
+  return Math.tanh((proj / (2 * half) - offset) * sharpness)
+}
+
 export function hexToRgb(hex) {
   if (!hex || hex.length < 7) return [8, 8, 8]
   return [
@@ -607,7 +657,26 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     // toward one blended pastel). `mix` blends local noise texture (so the
     // boundary isn't a perfectly straight line) with the sweeping divider
     // position (so the boundary visibly travels).
-    const divider = anchorDivider(tSec)
+    //
+    // offset/theta hoisted out of the pixel loop (2026-08-07, Opus review) —
+    // both are per-frame, not per-pixel, and the old `tilt` term this
+    // replaces was actually computed INSIDE the x loop despite depending
+    // only on y, needlessly. offset is anchorDivider() re-centered on 0 (its
+    // already-bounded +-0.3 swing — see anchorDivider's header — now reused
+    // as "how far the dividing line's plane sits from screen center," same
+    // meaning, new geometry); theta is the line's rotation (see
+    // dividerAngle's header). `half` is half the projected screen extent
+    // along the line's own normal, aspect-corrected (SW/SH, not necessarily
+    // square) so the tanh blend band renders the SAME width whether the line
+    // is near-vertical or near-horizontal — without this, a horizontal
+    // boundary on a 16:9 canvas would render ~1.8x crisper than a vertical
+    // one at the same ANCHOR_SHARPNESS, visibly hardening/softening the seam
+    // over each ~150s half-rotation.
+    const offset = anchorDivider(tSec) - 0.5
+    const theta  = dividerAngle(tSec)
+    const ct = Math.cos(theta), st = Math.sin(theta)
+    const aspect = SW / SH
+    const half = 0.5 * (aspect * Math.abs(ct) + Math.abs(st))
 
     // Commit the hue traversal arc ONCE per frame, not per pixel (2026-08-07,
     // see lerpOklabPolar's header) — anchor1/anchor0 are this frame's live-
@@ -645,14 +714,18 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
         const v = (y / SH) * 5.5
         const wx = pseudoNoise(u + 9, v - 4, t * 0.6) * 0.6
         const wy = pseudoNoise(u - 6, v + 8, t * 0.6) * 0.6
-        // Divider edge — POSITION-based (x/SW, plain 0-1 across the canvas),
-        // not the noise-scaled u/v above. tanh gives a soft +-1 transition
-        // centered on the divider instead of a hard cut. 2026-08-04, Fable's
-        // critique: a slow y-dependent lean so the meeting line doesn't sit
-        // perfectly vertical forever — tilt is a fraction of a screen-width,
-        // its own ~30s period so it doesn't lock to the divider's rhythm.
-        const tilt = 0.15 * Math.sin(tSec / 31) * (y / SH - 0.5)
-        const edge = Math.tanh((x / SW - divider + tilt) * ANCHOR_SHARPNESS)
+        // Divider edge — signed-distance projection of this pixel's position
+        // (POSITION-based, x/SW & y/SH plain 0-1 across the canvas, not the
+        // noise-scaled u/v above) onto the line's rotating normal (ct/st),
+        // aspect-corrected and re-centered by `half` so the result is
+        // exactly comparable to the old `x/SW - divider` at theta=0 (see
+        // offset/theta's declaration above) — tanh gives the same soft +-1
+        // transition centered on the divider it always has, just along a
+        // rotating axis now instead of a fixed vertical one. Replaces the
+        // old fixed small-lean `tilt` hack entirely (2026-08-07) — real
+        // rotation, not a fake stand-in for it.
+        const proj = (x / SW - 0.5) * aspect * ct + (y / SH - 0.5) * st
+        const edge = Math.tanh((proj / (2 * half) - offset) * ANCHOR_SHARPNESS)
 
         const n0 = pseudoNoise(u + wx + colorSeeds[0].seedU, v + wy + colorSeeds[0].seedV, t) * 0.5 + 0.5
         const n1 = pseudoNoise(u + wx + colorSeeds[1].seedU, v + wy + colorSeeds[1].seedV, t + 1.3) * 0.5 + 0.5
