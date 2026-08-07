@@ -19,11 +19,14 @@ import { TUNING_EVENT } from '../lib/gradientTuning.js'
 // header toggle, the `b` handoff — is untouched. Closing stops playback and
 // hands everything back exactly as handleStop() would from the library view.
 export default function TestScreen({ currentTrack, isPaused, shuffleKey, onUpcomingTrack, onClose, entranceSong, onEntranceStart, onRegisterTransition, onTransitionAudioStart }) {
-  // Bumped to remount LiveScreen. Necessary — not belt-and-braces:
-  //  · renderer field/motion parameters are prepared once per scene
-  //  · VARIETY changes the /api/palette query string, and usePalette only
-  //    refetches when its effect re-runs
-  // CROSSFADE is read during the blend and applies without a remount.
+  // Bumped to remount LiveScreen — VARIETY only, since 2026-08-07's tuning
+  // dial rewire: it's the one dial still marked `remount`/`server` in
+  // gradientTuning.js's DIALS, because changing it means an actual network
+  // refetch of the extracted palette (/api/palette query string), and
+  // usePalette only refetches when its effect re-runs. Every other dial
+  // (BRIGHTNESS/MOTION/SIZE/BLEND/DEPTH/CROSSFADE) is read live, every frame,
+  // straight out of AlbumGradientMesh.jsx's draw() loop — no prepared/baked
+  // scene state left to rebuild, so no remount needed for those.
   const [liveKey, setLiveKey] = useState(0)
 
   useEffect(() => {

@@ -1,49 +1,71 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
-  brightnessAdjustment, motionSpeed, anchorAmplitude, seamWidth,
-  wobbleAmount, shadeAmount, blendDurationMs, clearDials, setDial,
-  exportSnippet,
+  brightnessOffset, flowSpeedBase, dividerOffsetCap, mixSharpness,
+  noiseContrast, blendDurationMs, clearDials, setDial, exportSnippet,
 } from '../lib/gradientTuning.js'
 
-describe('single-renderer gradient tuning', () => {
+// 2026-08-07 — rewired to AlbumGradientMesh.jsx (the OKLab noise-duel/
+// rotating-divider engine). The old target here, GradientBackground.jsx's
+// two-pool point-light engine, was deleted 2026-08-04; these dials were live
+// on the board the whole time in between but connected to nothing the
+// renderer actually read.
+describe('gradient tuning — wired to AlbumGradientMesh.jsx', () => {
   beforeEach(() => clearDials())
 
-  it('keeps the shipped two-pool defaults neutral', () => {
-    expect(brightnessAdjustment()).toBe(0)
-    expect(motionSpeed()).toBeCloseTo(1.2, 10)
-    expect(anchorAmplitude()).toBeCloseTo(0.15, 10)
-    expect(seamWidth()).toBeCloseTo(0.05, 10)
-    expect(wobbleAmount()).toBeCloseTo(0.106, 10)
-    expect(shadeAmount()).toBeCloseTo(0.105, 10)
+  it('keeps every dial at its exact pre-rewire hardcoded value by default', () => {
+    expect(brightnessOffset()).toBe(0)
+    expect(flowSpeedBase()).toBeCloseTo(0.55, 10)
+    expect(dividerOffsetCap()).toBeCloseTo(0.30, 10)
+    expect(mixSharpness()).toBeCloseTo(1.4, 10)
+    expect(noiseContrast()).toBeCloseTo(1.5, 10)
     expect(blendDurationMs()).toBe(7500)
   })
 
-  it('keeps wobble amount within its x0.53-rescaled range (2.65%-18.55%, was 5-35% pre-normalization-fix)', () => {
-    setDial('DEPTH', 0)
-    expect(wobbleAmount()).toBeCloseTo(0.0265, 10)
-    setDial('DEPTH', 100)
-    expect(wobbleAmount()).toBeCloseTo(0.1855, 10)
+  it('SIZE never exceeds the 0.30 bleed-over safety ceiling, at any dial position', () => {
+    // The whole point of dividerOffsetCap()'s clamp: this is the exact bug
+    // fixed earlier the same day (three sine amplitudes summing past +-0.3
+    // let the divider leave the visible screen). A dial that could push past
+    // 0.30 would let Ben reintroduce it live from the UI.
+    for (let t = 0; t <= 100; t += 5) {
+      setDial('SIZE', t)
+      expect(dividerOffsetCap()).toBeLessThanOrEqual(0.30)
+    }
+    setDial('SIZE', 100)
+    expect(dividerOffsetCap()).toBeCloseTo(0.30, 10)
   })
 
-  it('keeps shade amount (the +-10% pool shading) in lockstep with wobble on the same DEPTH dial', () => {
-    setDial('DEPTH', 0)
-    expect(shadeAmount()).toBeCloseTo(0.03, 10)
-    setDial('DEPTH', 100)
-    expect(shadeAmount()).toBeCloseTo(0.18, 10)
+  it('SIZE below default genuinely shrinks the cap (not flat the whole range)', () => {
+    setDial('SIZE', 0)
+    expect(dividerOffsetCap()).toBeCloseTo(0.05, 10)
+    setDial('SIZE', 25)
+    const capAt25 = dividerOffsetCap()
+    setDial('SIZE', 50)
+    expect(capAt25).toBeLessThan(dividerOffsetCap())
   })
 
-  it('exports paste-ready declarations for real derived functions', () => {
+  it('BRIGHTNESS ranges +-0.06 around neutral', () => {
+    setDial('BRIGHTNESS', 0)
+    expect(brightnessOffset()).toBeCloseTo(-0.06, 10)
+    setDial('BRIGHTNESS', 100)
+    expect(brightnessOffset()).toBeCloseTo(0.06, 10)
+  })
+
+  it('exports paste-ready declarations for the real derived functions', () => {
     for (const id of ['BRIGHTNESS', 'MOTION', 'SIZE', 'BLEND', 'DEPTH', 'VARIETY', 'CROSSFADE']) {
       setDial(id, 60)
     }
     const snippet = exportSnippet()
 
     for (const name of [
-      'brightnessAdjustment', 'motionSpeed', 'anchorAmplitude',
-      'seamWidth', 'wobbleAmount', 'shadeAmount', 'blendDurationMs',
+      'brightnessOffset', 'flowSpeedBase', 'dividerOffsetCap',
+      'mixSharpness', 'noiseContrast', 'blendDurationMs',
     ]) expect(snippet).toContain(`export function ${name}()`)
     expect(snippet).toContain('export function varietyToConfig()')
     expect(snippet).toContain('// paletteDefaults.js')
-    expect(snippet).not.toMatch(/BLEND_DURATION_MS|brightnessAdjustment:|motionSpeed:/)
+    expect(snippet).not.toMatch(/brightnessAdjustment|anchorAmplitude|seamWidth|wobbleAmount|shadeAmount/)
+  })
+
+  it('exports nothing but the header when no dials are touched', () => {
+    expect(exportSnippet()).toContain('(no dials moved from default)')
   })
 })

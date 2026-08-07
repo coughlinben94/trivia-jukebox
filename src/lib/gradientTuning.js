@@ -1,16 +1,27 @@
 // Single source of truth for the seven-dial DJ tuning board and the values
-// consumed by GradientBackground and palette extraction.
+// consumed by AlbumGradientMesh.jsx and palette extraction.
 //
 // Every dial is a plain 0-100 "feel" value, no units. T(id) returns a live
 // board override when present (persisted in localStorage under STORAGE_KEY),
 // 50 (the default — reproduces today's live behavior exactly) otherwise.
 // The renderer calls the named derived-value functions below.
 //
+// Rewired 2026-08-07 (Ben: "tuning dial rewire, go") — this whole derived-
+// value section used to target GradientBackground.jsx's two-pool point-light
+// engine, which was deleted 2026-08-04 and replaced by AlbumGradientMesh.jsx
+// (the OKLab noise-duel/rotating-divider engine). Nothing here was ever
+// updated to match — every dial except VARIETY (which only ever touched the
+// server-side palette call, untouched by the renderer swap) was live on the
+// board but silently connected to nothing; AlbumGradientMesh.jsx read its own
+// hardcoded module consts instead. Six dials rewired below to the real
+// per-frame constants that engine actually reads.
+//
 // The board is a tuning aid, not the long-term source of truth: COPY VALUES
 // (exportSnippet) emits a paste-ready block of the real constants each dial
-// currently resolves to, for pasting back over the hardcoded values in
-// GradientBackground.jsx / twoLightBlend.js / api/palette.js. Paste, commit,
-// then RESET ALL.
+// currently resolves to, for pasting back over the derived-value functions
+// below (this file — AlbumGradientMesh.jsx calls them directly now, it has
+// no hardcoded consts of its own left for these 6 dials) or, for VARIETY,
+// over api/palette.js. Paste, commit, then RESET ALL.
 
 import { varietyToConfig } from './paletteDefaults.js'
 
@@ -19,16 +30,22 @@ export const TUNING_EVENT = 'trivia-tuning-change'
 
 export const lerp = (a, b, t) => a + (b - a) * t
 
-// commit: 'live' dials apply every drag frame. 'release' dials take effect
-// on pointer-up — they're baked into prepared scene/field values or (for
-// VARIETY) trigger a serverless refetch, both too heavy to do per drag pixel.
+// commit: 'live' dials apply every drag frame — AlbumGradientMesh.jsx has no
+// prepared/baked scene state (draw() recomputes every constant from tSec
+// fresh every rAF frame, same as anchorDivider()/flowSpeedAt()), so a dial
+// change is picked up on the very next frame with nothing to rebuild. This
+// is why `remount` (force a full LiveScreen/turntable remount — killing
+// in-flight playback UI just to apply a gradient number) no longer exists on
+// any dial here: it was load-bearing for the OLD renderer's prepared field,
+// not this one. Only VARIETY still needs 'release'+server — an actual
+// network refetch of the extracted palette, genuinely too heavy to fire on
+// every drag pixel.
 export const DIALS = [
-  { id: 'BRIGHTNESS', label: 'BRIGHTNESS', commit: 'release', remount: true },
-  { id: 'MOTION',     label: 'MOTION',     commit: 'release', remount: true },
-  { id: 'SIZE',       label: 'SIZE',       commit: 'release', remount: true },
-  { id: 'BLEND',      label: 'BLEND',      commit: 'release', remount: true },
-  // DEPTH is baked into the prepared two-pool field (wobbleAmount/shadeAmount).
-  { id: 'DEPTH',      label: 'DEPTH',      commit: 'release', remount: true },
+  { id: 'BRIGHTNESS', label: 'BRIGHTNESS', commit: 'live' },
+  { id: 'MOTION',     label: 'MOTION',     commit: 'live' },
+  { id: 'SIZE',       label: 'SIZE',       commit: 'live' },
+  { id: 'BLEND',      label: 'BLEND',      commit: 'live' },
+  { id: 'DEPTH',      label: 'DEPTH',      commit: 'live' },
   { id: 'VARIETY',    label: 'VARIETY',    commit: 'release', server: true },
   { id: 'CROSSFADE',  label: 'CROSSFADE',  commit: 'live' },
 ]
@@ -73,7 +90,15 @@ if (typeof window !== 'undefined') {
 }
 
 // The one call the board and renderers make for a dial's raw 0-100 value.
-export function T(id) { return overrides[id] ?? DEFAULT_VALUE }
+// Number.isFinite guard (2026-08-07, Opus review): before the tuning dial
+// rewire, a garbage override was inert — nothing read the derived values.
+// Now they're live per-frame renderer inputs (SIZE feeds a Math.min clamp,
+// others feed straight into tanh/OKLab math), so a non-numeric value
+// (corrupted localStorage, another tab's bad JSON via the storage-rehydrate
+// listener above) would propagate as NaN through the whole per-pixel loop —
+// every pixel resolves to black. Falling back to DEFAULT_VALUE keeps a
+// corrupted override inert again, same as it always was pre-rewire.
+export function T(id) { const v = overrides[id]; return Number.isFinite(v) ? v : DEFAULT_VALUE }
 
 export function isOverridden(id) { return overrides[id] !== undefined && overrides[id] !== DEFAULT_VALUE }
 export function hasOverrides() { return Object.keys(overrides).some(isOverridden) }
@@ -85,8 +110,14 @@ function persist() {
 
 function dispatch(id, committed) {
   const d = DIAL_BY_ID[id]
+  // No per-dial `remount` anymore (2026-08-07 rewire, Opus nitpick) — no
+  // DIALS entry sets it, so this was always dispatching false. The two
+  // broader resync events below (__external/__all) still hardcode
+  // remount:true directly — those are real, deliberate full-resync signals
+  // (another tab's overrides landed, or RESET ALL), unrelated to any single
+  // dial's own config.
   window.dispatchEvent(new CustomEvent(TUNING_EVENT, {
-    detail: { id, committed, remount: !!d?.remount, server: !!d?.server },
+    detail: { id, committed, server: !!d?.server },
   }))
 }
 
@@ -119,82 +150,47 @@ export function clearDials() {
   }))
 }
 
-// ── Derived values — what the renderers actually call ──────────────────────
-export function blendDurationMs()  { return lerp(12000, 3000, T('CROSSFADE') / 100) }       // 50 → 7500 (was 7500, exact)
+// ── Derived values — what AlbumGradientMesh.jsx actually calls ─────────────
+// Every range below is centered so T=50 reproduces the exact value
+// AlbumGradientMesh.jsx had hardcoded before this rewire — an untouched dial
+// changes nothing about tonight's show.
+export function blendDurationMs()  { return lerp(12000, 3000, T('CROSSFADE') / 100) }       // 50 → 7500 (song-to-song crossfade length, ms)
 
-// GradientBackground's renderer. Field-building values remount on release so
-// the Canvas hot path retains parsed numbers and allocates nothing.
-export function brightnessAdjustment() { return lerp(-0.10, 0.10, T('BRIGHTNESS') / 100) } // 50 → neutral
-// 0.50-1.50 -> 0.60-1.80 (owner, live: "increase the motion standard by
-// 20%"). Whole range scaled x1.2 so every dial position moves 20% faster,
-// not just the default.
-export function motionSpeed()          { return lerp(0.60, 1.80, T('MOTION') / 100) }       // 50 → 1.2
+// L-channel offset applied to both anchor colors before the per-pixel blend
+// (draw(), right after currentOklab()) — the one dial with no pre-existing
+// mechanism to hook into; this section didn't exist in AlbumGradientMesh.jsx
+// before this rewire. +-0.06 in OKLab L (roughly 0-1 scale) is a visible but
+// not washed-out/crushed swing at either extreme.
+export function brightnessOffset() { return lerp(-0.06, 0.06, T('BRIGHTNESS') / 100) }      // 50 → 0 (neutral)
 
-// 2026-08-04: the whole point-light field (lightRadius/haloDepth/seamBlend,
-// history below) was replaced by prepareTwoPoolField's unweighted nearest-
-// anchor split after three rounds of tuning still didn't land -- owner,
-// live: "2 pools. each one color... they mesh and flow together, and where
-// they meet is gradient." Point-light math blends by distance to two points,
-// which can only ever produce nested-oval (Apollonius circle) shapes no
-// matter how radius/blur/weight are tuned, and at any real weight split the
-// minority color's oval sits small and close to its own center -- a blob,
-// not a comparable pool. These three dials keep their names/ids (SIZE,
-// DEPTH, BLEND) so the board and exportSnippet don't need new wiring, but
-// now drive the pool renderer instead:
-//
-// SIZE -> anchorAmplitude(): how far each pool's anchor wanders, which is
-// what actually moves the boundary now (there's no per-light radius in a
-// nearest-anchor split).
-// DEPTH -> wobbleAmount(): how much the boundary deviates from a straight
-// line between the two anchors -- the "flow" in "mesh and flow together".
-// BLEND -> seamWidth(): width of the actual gradient band where the two
-// pools meet; outside it each pool is flat, undiluted color.
-//
-// Old history, point-light era (kept for context, no longer load-bearing):
-// 0.45-0.75 (50 -> 0.60, 2026-08-03) let each light's influence stay
-// entirely within the canvas -- combined with the halo's old fixed-radius
-// clamp, the reachable edge of a light's circle landed inside the frame on
-// every song, reading as a spotlight/orb floating around ("the circle
-// floating around has to go... no shapes, mesh" -- owner, live). Widened to
-// 0.90-1.50, pulled back to 0.65-1.05 once blur (not radius) was identified
-// as the actual cause of a follow-up "not two distinct beings" regression.
-// None of that geometry survived the move to prepareTwoPoolField.
-export function anchorAmplitude()      { return lerp(0.08, 0.22, T('SIZE') / 100) }          // 50 → 0.15
-// DEPTH now drives two related things off one dial (2026-08-04) rather than
-// adding an 8th fader: how much the boundary itself wobbles, and how much
-// each pool's own lightness varies internally (the owner's "+-10% shade"
-// ask, added the same day). Both are "how much organic depth/richness" in
-// the same sense the old point-light era's haloDepth()/DEPTH hint already
-// described ("how far each color fans into darker and lighter shades") --
-// that hint just pointed at the wrong mechanism after the pool rewrite; this
-// reunites the dial with a mechanism the hint actually describes again.
-// wobbleAmount's range x0.53 (2026-08-04, opus-consultant catch): the
-// render side (GradientBackground.jsx's `w = fbm(...)/FBM_PEAK * wobbleAmt`)
-// was fixed the same day to correctly normalize fbm's noise output --
-// before that fix, wobbleAmt's stated value was silently only ~53%
-// delivered, and the owner had already approved how the boundary looked at
-// that (buggy) effective magnitude. Correcting the normalization alone,
-// without also correcting this range, would have made the boundary wobble
-// ~1.9x stronger than what was approved -- measured to reopen the isolated-
-// "circle"-blob artifact (0.2% -> 6.8% of frames at defaults, up to 32.6% at
-// DEPTH=100) and thin the white-text legibility margin further. This range
-// scale restores the same on-screen magnitude under the corrected formula.
-// shadeAmount is deliberately NOT scaled the same way -- unlike wobble, a
-// stronger shade was the owner's actual ask ("the 10% either way gradients
-// need to be more apparent"), and fixing the normalization bug is what
-// finally let shadeAmount deliver the ~10% it always claimed rather than
-// the ~5% it was silently capped at -- confirmed by review to read as
-// intentional richness, not noise. Only wobble needed rolling back.
-export function wobbleAmount()         { return lerp(0.0265, 0.1855, T('DEPTH') / 100) }     // 50 → 0.106
-export function shadeAmount()          { return lerp(0.03, 0.18, T('DEPTH') / 100) }         // 50 → 0.105
-// 0.02-0.08 (50 -> 0.05, 2026-08-04 second pass) -- owner, live, dragging
-// the board: "it's closer to what i want when i tune blend to 0." Scaled
-// the whole 0.05-0.20 range down by the same 0.4x factor (0.05/0.125) so
-// the DEFAULT now lands exactly where the owner's approved BLEND=0 used
-// to sit, rather than just moving the floor -- the dial keeps working
-// proportionally above and below that point instead of being clamped at
-// its old minimum.
-export function seamWidth()            { return lerp(0.02, 0.08, T('BLEND') / 100) }         // 50 → 0.05
+// FLOW_SPEED's base value (flowSpeedAt() still layers its own +-25% breathing
+// cycle on top of whatever this returns — MOTION sets the average tempo, not
+// the breathing itself).
+export function flowSpeedBase()    { return lerp(0.30, 0.80, T('MOTION') / 100) }           // 50 → 0.55
+
+// The divider's offset-from-center amplitude cap — see anchorDivider()'s own
+// header for why this exists (the 2026-08-07 bleed-over fix: three sine
+// amplitudes summing past +-0.3 let the divider leave the visible screen
+// entirely, letting one color swallow the frame). SIZE is "how far the
+// boundary wanders" — the literal thing this cap controls — but the safety
+// property has to survive every dial position, not just the default, so the
+// output is hard-clamped to the same 0.3 ceiling regardless of T: raw lerp
+// peaks at 0.55, and everything from T=50 up collapses flat to 0.30. Below
+// 50, SIZE genuinely shrinks the boundary's travel toward near-stationary.
+export function dividerOffsetCap() { return Math.min(0.30, lerp(0.05, 0.55, T('SIZE') / 100)) }  // 50 → 0.30 (== today's fixed cap)
+
+// Steepness of the anchor0<->anchor1 mix transition itself (ANCHOR_MIX_SHARPNESS
+// in AlbumGradientMesh.jsx) — this is the dial BLEND's own hint describes
+// ("sharp pool edges vs. a soft, wide gradient where they meet"): lower is a
+// wider, softer band where the two colors visibly mix; higher snaps to a
+// crisper line with less visible in-between.
+export function mixSharpness()     { return lerp(0.6, 2.2, T('BLEND') / 100) }              // 50 → 1.4
+
+// How much local noise texture (vs. the divider sweep) shapes the boundary's
+// wobble and each pool's internal richness (ANCHOR_NOISE_CONTRAST) — DEPTH's
+// hint: "how much the edge flows, and how much each color shades within
+// itself."
+export function noiseContrast()    { return lerp(0.7, 2.3, T('DEPTH') / 100) }              // 50 → 1.5
 
 // VARIETY resolves through the SAME curve as the server (paletteDefaults.js)
 // — used client-side only for the board's own readout; the actual palette
@@ -217,20 +213,19 @@ export function exportSnippet() {
   const touched = DIALS.filter(d => isOverridden(d.id))
   if (!touched.length) { lines.push('// (no dials moved from default)'); return lines.join('\n') }
   if (isOverridden('BRIGHTNESS')) {
-    lines.push('', '// gradientTuning.js — replace brightnessAdjustment():', `export function brightnessAdjustment() { return ${fmt(brightnessAdjustment())} }`)
+    lines.push('', '// gradientTuning.js — replace brightnessOffset():', `export function brightnessOffset() { return ${fmt(brightnessOffset())} }`)
   }
   if (isOverridden('MOTION')) {
-    lines.push('', '// gradientTuning.js — replace motionSpeed():', `export function motionSpeed() { return ${fmt(motionSpeed())} }`)
+    lines.push('', '// gradientTuning.js — replace flowSpeedBase():', `export function flowSpeedBase() { return ${fmt(flowSpeedBase())} }`)
   }
   if (isOverridden('SIZE')) {
-    lines.push('', '// gradientTuning.js — replace anchorAmplitude():', `export function anchorAmplitude() { return ${fmt(anchorAmplitude())} }`)
+    lines.push('', '// gradientTuning.js — replace dividerOffsetCap():', `export function dividerOffsetCap() { return ${fmt(dividerOffsetCap())} }`)
   }
   if (isOverridden('BLEND')) {
-    lines.push('', '// gradientTuning.js — replace seamWidth():', `export function seamWidth() { return ${fmt(seamWidth())} }`)
+    lines.push('', '// gradientTuning.js — replace mixSharpness():', `export function mixSharpness() { return ${fmt(mixSharpness())} }`)
   }
   if (isOverridden('DEPTH')) {
-    lines.push('', '// gradientTuning.js — replace wobbleAmount():', `export function wobbleAmount() { return ${fmt(wobbleAmount())} }`)
-    lines.push('', '// gradientTuning.js — replace shadeAmount():', `export function shadeAmount() { return ${fmt(shadeAmount())} }`)
+    lines.push('', '// gradientTuning.js — replace noiseContrast():', `export function noiseContrast() { return ${fmt(noiseContrast())} }`)
   }
   if (isOverridden('VARIETY')) {
     const cfg = varietyConfig()

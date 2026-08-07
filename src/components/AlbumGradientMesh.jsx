@@ -1,4 +1,8 @@
 import { useEffect, useRef, useMemo } from 'react'
+import {
+  blendDurationMs, brightnessOffset, flowSpeedBase,
+  dividerOffsetCap, mixSharpness, noiseContrast,
+} from '../lib/gradientTuning.js'
 
 // Canvas2D "soft mesh" gradient background — revived 2026-08-04 from
 // commit abdf50e (2026-07-19, "rebuild color math as real two-color
@@ -49,18 +53,27 @@ import { useEffect, useRef, useMemo } from 'react'
 // shuffleKey/entranceActive) so it drops into LiveScreen.jsx with no other
 // changes needed.
 
-const BLEND_DURATION_MS = 7500
+// Song-to-song crossfade length — was a fixed 7500ms module const until the
+// 2026-08-07 tuning dial rewire, now live off the CROSSFADE dial
+// (gradientTuning.js's blendDurationMs(), 50 -> 7500, same value). Read at
+// each call site below rather than hoisted to a const, since default
+// params/expressions re-evaluate per call in JS — a drag mid-show is picked
+// up on the very next song-to-song transition.
+//
 // The entrance's own first real-palette blend (near-black -> real colors) is
 // much shorter than a normal song-to-song crossfade — see startBlendTo's
-// header comment.
+// header comment. Deliberately NOT on the CROSSFADE dial — it's a one-time
+// near-black reveal, not a repeating "how long between songs" question.
 const ENTRANCE_BLEND_DURATION_MS = 2000
 const NUM_ANCHORS = 2
 // Full noise-flow cycle speed — the "dancing" knob (owner feedback on the
-// original: "still not enough dance" even after +75%). Now breathes (see
-// FLOW_SPEED_at() below) instead of sitting at one constant tempo forever —
+// original: "still not enough dance" even after +75%). Breathes (see
+// flowSpeedAt() below) instead of sitting at one constant tempo forever —
 // 2026-08-04, per Fable's critique: a fixed speed reads as a metronome
-// after a couple hours of a bar shift.
-const FLOW_SPEED = 0.55  // 0.79 -> 0.55 (2026-08-04, Ben: noise flow read too fast live)
+// after a couple hours of a bar shift. Base value (was a fixed 0.55 module
+// const, 0.79 -> 0.55 2026-08-04, Ben: noise flow read too fast live) is now
+// live off the MOTION dial — see flowSpeedAt() and gradientTuning.js's
+// flowSpeedBase(), 2026-08-07 rewire.
 // colors[0]/colors[1] slowly trade dominance back and forth across the frame.
 const ANCHOR_PERIOD_S   = 11.4  // primary divider sweep period (see anchorDivider() — now 3 incommensurate sines, not 1)
 // 0.30 -> 0.65 (2026-08-04, Fable's critique): at 0.30 the divider sweep was
@@ -70,7 +83,17 @@ const ANCHOR_PERIOD_S   = 11.4  // primary divider sweep period (see anchorDivid
 // anything. Raising this lets the sweep read as real travel.
 const ANCHOR_SWING      = 0.65  // how much the sweeping divider contributes to who's winning, vs. local noise texture
 const ANCHOR_SHARPNESS  = 3.5   // divider position->edge transition — lower = blurrier, higher = crisper
-const ANCHOR_NOISE_CONTRAST = 1.5  // how much local noise texture (vs. the divider sweep) shapes the boundary's wobble
+// ANCHOR_NOISE_CONTRAST and ANCHOR_MIX_SHARPNESS were fixed module consts
+// (1.5 and 1.4) until the 2026-08-07 tuning dial rewire — both are now live
+// off the DEPTH/BLEND dials (gradientTuning.js's noiseContrast()/
+// mixSharpness(), hoisted once per frame in draw() as liveNoiseContrast/
+// liveMixSharpness, not the module scope, since T() reads localStorage and
+// this file's inner loop runs 48x48 times a frame). 1.4/1.5 are still the
+// exact values both dials produce at their default (T=50) position — see
+// the tuning file for why those particular numbers, the history below is
+// about why 1.4 specifically was chosen as BLEND's own default, not a
+// module const anymore.
+//
 // 2.4 -> 1.4 (2026-08-04, Fable's critique, second round): owner reported
 // each color's DOMINANT interior (not the seam) reading as one flat heavy
 // block. Math: deep in a stronghold, edge saturates to ~+-1 (ANCHOR_SHARPNESS
@@ -84,7 +107,6 @@ const ANCHOR_NOISE_CONTRAST = 1.5  // how much local noise texture (vs. the divi
 // (score ~1.2) still reach ~0.97, so a hand-picked color still renders
 // essentially full-strength somewhere (preserves the no-ANCHOR_FLOOR fix
 // above). The blend band roughly doubles in width as a side effect.
-const ANCHOR_MIX_SHARPNESS  = 1.4  // steepness of the anchor0<->anchor1 transition itself — higher = crisper meeting line
 // No ANCHOR_FLOOR — see file header. tanh already keeps the transition soft;
 // nothing forces a trace of the "losing" color to survive into its own
 // stronghold anymore.
@@ -106,18 +128,30 @@ const ANCHOR_MIX_SHARPNESS  = 1.4  // steepness of the anchor0<->anchor1 transit
 // capping the combined swing at +-0.3, so the divider always stays within
 // 0.2-0.8 — both colors stay visibly present no matter how the three waves
 // line up.
-export function anchorDivider(tSec) {
+//
+// offsetCap (2026-08-07, tuning dial rewire — SIZE) parametrizes that same
+// 0.3 ceiling instead of hardcoding it, so gradientTuning.js's
+// dividerOffsetCap() can drive it live. Default stays 0.30 — the exact fixed
+// value shipped above — so every existing caller (draw() before this rewire,
+// both test files) is unaffected unless it explicitly passes a different
+// cap. The three sines keep their original relative proportions (7:3:2,
+// i.e. 0.175:0.075:0.05 at cap=0.3) so scaling the cap up or down preserves
+// the same "3 incommensurate periods" shape, just bigger or smaller.
+export function anchorDivider(tSec, offsetCap = 0.30) {
   return 0.5
-    + 0.175 * Math.sin((tSec / 11.4) * Math.PI * 2)
-    + 0.075 * Math.sin((tSec / 29.3) * Math.PI * 2)
-    + 0.05  * Math.sin((tSec / 7.1)  * Math.PI * 2)
+    + offsetCap * (7 / 12) * Math.sin((tSec / 11.4) * Math.PI * 2)
+    + offsetCap * (1 / 4)  * Math.sin((tSec / 29.3) * Math.PI * 2)
+    + offsetCap * (1 / 6)  * Math.sin((tSec / 7.1)  * Math.PI * 2)
 }
 
 // FLOW_SPEED breathes slowly (2026-08-04, Fable's critique) instead of
 // idling at one constant tempo — motion surges and settles on a ~4.5min
-// cycle instead of reading as a metronome.
+// cycle instead of reading as a metronome. Base speed now live off the
+// MOTION dial (2026-08-07 rewire, gradientTuning.js's flowSpeedBase()) —
+// the breathing cycle itself is unaffected, MOTION just sets the average
+// tempo it breathes around.
 function flowSpeedAt(tSec) {
-  return FLOW_SPEED * (1 + 0.25 * Math.sin(tSec / 43))
+  return flowSpeedBase() * (1 + 0.25 * Math.sin(tSec / 43))
 }
 
 // Divider ORIENTATION (2026-08-07, Ben live: "that sin wave mesh is also
@@ -375,7 +409,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
       outRgb:     initial.map(c => [...c]),
       inRgb:      initial.map(c => [...c]),
       blendStart: -1,
-      blendDurationMs: BLEND_DURATION_MS,
+      blendDurationMs: blendDurationMs(),
     }
   }
 
@@ -412,7 +446,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
   // settled, so a multi-second color creep afterward reads as unfinished,
   // not as "floating in"). Every other caller keeps the default song-to-song
   // duration.
-  function startBlendTo(newHex, durationMs = BLEND_DURATION_MS) {
+  function startBlendTo(newHex, durationMs = blendDurationMs()) {
     const s = st.current
     // No branch, no gate — currentRgb() already handles "no blend running"
     // (returns steadyRgb) and "blend already expired" (clamps to inRgb)
@@ -611,8 +645,20 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     // faster per frame — scale the threshold by the blend actually running
     // so the entrance doesn't over-trigger false positives (2026-08-04,
     // Opus review).
+    //
+    // SNAP_REF_BLEND_MS stays a FIXED constant, not blendDurationMs()
+    // (2026-08-07, second Opus review — caught before ship): 0.04 is 7500's
+    // calibration PARTNER, not an independent value — they were tuned
+    // together as one ratio. Making the numerator track CROSSFADE live
+    // cancels that ratio for the common case (CROSSFADE=100: numerator and
+    // denominator both become 3000, threshold stays 0.04 even though actual
+    // per-frame motion is 2.5x faster) and desyncs it from the entrance's
+    // fixed 2000ms in both directions. This is a dev-only diagnostic
+    // (console.warn), not TV-visible, but it's the one live signal this file
+    // has for a real color-snap bug — keeping its math correct matters.
+    const SNAP_REF_BLEND_MS = 7500
     const hist = anchorHistRef.current
-    const snapThreshold = 0.04 * (BLEND_DURATION_MS / Math.max(s.blendDurationMs, 1))
+    const snapThreshold = 0.04 * (SNAP_REF_BLEND_MS / Math.max(s.blendDurationMs, 1))
     if (hist.a0) {
       const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2])
       const d0 = dist(anchor0, hist.a0), d1 = dist(anchor1, hist.a1)
@@ -672,7 +718,10 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     // boundary on a 16:9 canvas would render ~1.8x crisper than a vertical
     // one at the same ANCHOR_SHARPNESS, visibly hardening/softening the seam
     // over each ~150s half-rotation.
-    const offset = anchorDivider(tSec) - 0.5
+    // SIZE dial (2026-08-07 rewire) — dividerOffsetCap() carries its own
+    // hard 0.30 ceiling regardless of dial position, so anchorDivider's
+    // 2026-08-07 bleed-over fix can't be reintroduced through the UI.
+    const offset = anchorDivider(tSec, dividerOffsetCap()) - 0.5
     const theta  = dividerAngle(tSec)
     // Named cosT/sinT, not ct/st (2026-08-07 live incident) — `st` is
     // already this component's blend-state ref (`const st = useRef(null)`,
@@ -686,6 +735,11 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     const cosT = Math.cos(theta), sinT = Math.sin(theta)
     const aspect = SW / SH
     const half = 0.5 * (aspect * Math.abs(cosT) + Math.abs(sinT))
+    // DEPTH/BLEND dials (2026-08-07 rewire) — hoisted once per frame, not
+    // read inside the pixel loop below (T() reads localStorage; the loop
+    // runs SW*SH times a frame).
+    const liveNoiseContrast = noiseContrast()
+    const liveMixSharpness  = mixSharpness()
 
     // Commit the hue traversal arc ONCE per frame, not per pixel (2026-08-07,
     // see lerpOklabPolar's header) — anchor1/anchor0 are this frame's live-
@@ -715,6 +769,19 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     const hueArc = prevArc === null ? rawArc : prevArc + shortestDelta(prevArc, rawArc)
     hueArcRef.current = hueArc
 
+    // BRIGHTNESS dial (2026-08-07 rewire) — L-channel offset applied to new
+    // arrays, not mutated onto anchor0/anchor1 themselves: those are the
+    // SAME array objects just written into hist.a0/hist.a1 above, and the
+    // snap-detector needs to keep watching the true underlying song colors,
+    // not renderer-tuning noise. hue0/hue1 above only read the a/b channels
+    // (chroma direction), so computing this after them is safe — L doesn't
+    // affect hue. Skips allocation entirely at the default (BRIGHTNESS
+    // untouched, the overwhelmingly common case) by reusing the original
+    // array reference.
+    const brightOffset = brightnessOffset()
+    const litAnchor0 = brightOffset === 0 ? anchor0 : [Math.max(0, Math.min(1, anchor0[0] + brightOffset)), anchor0[1], anchor0[2]]
+    const litAnchor1 = brightOffset === 0 ? anchor1 : [Math.max(0, Math.min(1, anchor1[0] + brightOffset)), anchor1[1], anchor1[2]]
+
     const img = sctx.getImageData(0, 0, SW, SH)
     const data = img.data
     for (let y = 0; y < SH; y++) {
@@ -739,14 +806,14 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
         const n0 = pseudoNoise(u + wx + colorSeeds[0].seedU, v + wy + colorSeeds[0].seedV, t) * 0.5 + 0.5
         const n1 = pseudoNoise(u + wx + colorSeeds[1].seedU, v + wy + colorSeeds[1].seedV, t + 1.3) * 0.5 + 0.5
         // score > 0 -> anchor0 winning at this pixel; < 0 -> anchor1 winning.
-        const score = (n0 - n1) * ANCHOR_NOISE_CONTRAST + edge * ANCHOR_SWING
-        const mix = 0.5 + 0.5 * Math.tanh(score * ANCHOR_MIX_SHARPNESS)  // no floor clamp — see file header
+        const score = (n0 - n1) * liveNoiseContrast + edge * ANCHOR_SWING
+        const mix = 0.5 + 0.5 * Math.tanh(score * liveMixSharpness)  // no floor clamp — see file header
 
         // Polar blend along this frame's committed hueArc (see above) — a
         // plain per-channel lerp(anchor1, anchor0, mix) is what produced the
         // muddy gray band on near-complementary anchor pairs; see
         // lerpOklabPolar's header comment for the full fix history.
-        const [L, a, b] = lerpOklabPolar(anchor1, anchor0, mix, hueArc)
+        const [L, a, b] = lerpOklabPolar(litAnchor1, litAnchor0, mix, hueArc)
 
         const [r, g, bb] = oklabToRgb([L, a, b])
         const idx = (y * SW + x) * 4
