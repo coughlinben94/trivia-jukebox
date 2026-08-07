@@ -94,11 +94,23 @@ const ANCHOR_MIX_SHARPNESS  = 1.4  // steepness of the anchor0<->anchor1 transit
 // an hours-long bar shift the eye eventually clocks the loop. Three periods
 // with no common factor (11.4s / 29.3s / 7.1s) mean the combined waveform
 // doesn't actually repeat on any timescale a viewer would sit through.
+//
+// Amplitudes scaled to 0.5x (2026-08-07, Ben live: "there isn't supposed to
+// be a max of the sin wave bleeding over into the other color") — the
+// original 0.35/0.15/0.10 amplitudes summed to 0.60, so at their combined
+// peak the divider left the visible 0-1 screen range entirely (as far as
+// -0.10 / 1.10), which saturates the edge term across nearly the whole
+// canvas and lets one anchor color swallow the screen. Simulated over a 4hr
+// shift: this happened 4.5% of the time. Scaling all three by the same
+// factor keeps their relative sizes (same multi-wave "random" shape) while
+// capping the combined swing at +-0.3, so the divider always stays within
+// 0.2-0.8 — both colors stay visibly present no matter how the three waves
+// line up.
 export function anchorDivider(tSec) {
   return 0.5
-    + 0.35 * Math.sin((tSec / 11.4) * Math.PI * 2)
-    + 0.15 * Math.sin((tSec / 29.3) * Math.PI * 2)
-    + 0.10 * Math.sin((tSec / 7.1)  * Math.PI * 2)
+    + 0.175 * Math.sin((tSec / 11.4) * Math.PI * 2)
+    + 0.075 * Math.sin((tSec / 29.3) * Math.PI * 2)
+    + 0.05  * Math.sin((tSec / 7.1)  * Math.PI * 2)
 }
 
 // FLOW_SPEED breathes slowly (2026-08-04, Fable's critique) instead of
