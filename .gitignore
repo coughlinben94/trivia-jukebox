@@ -29,3 +29,4 @@ dist-ssr
 *.bak
 .claude/settings.local.json
 .impeccable/
+.migration-backup/
