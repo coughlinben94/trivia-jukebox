@@ -674,9 +674,18 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     // over each ~150s half-rotation.
     const offset = anchorDivider(tSec) - 0.5
     const theta  = dividerAngle(tSec)
-    const ct = Math.cos(theta), st = Math.sin(theta)
+    // Named cosT/sinT, not ct/st (2026-08-07 live incident) — `st` is
+    // already this component's blend-state ref (`const st = useRef(null)`,
+    // used throughout draw() as `st.current`). A same-named local const
+    // here shadows that ref for the ENTIRE function body, including the
+    // `const s = st.current` above THIS line — JS scoping doesn't care
+    // about textual order, only which block declares the name. Threw
+    // "Cannot access 'st' before initialization" on every live tab, which
+    // aborted draw() before the canvas ever painted a pixel (blank black
+    // screen — not a gradient bug, a JS crash).
+    const cosT = Math.cos(theta), sinT = Math.sin(theta)
     const aspect = SW / SH
-    const half = 0.5 * (aspect * Math.abs(ct) + Math.abs(st))
+    const half = 0.5 * (aspect * Math.abs(cosT) + Math.abs(sinT))
 
     // Commit the hue traversal arc ONCE per frame, not per pixel (2026-08-07,
     // see lerpOklabPolar's header) — anchor1/anchor0 are this frame's live-
@@ -716,7 +725,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
         const wy = pseudoNoise(u - 6, v + 8, t * 0.6) * 0.6
         // Divider edge — signed-distance projection of this pixel's position
         // (POSITION-based, x/SW & y/SH plain 0-1 across the canvas, not the
-        // noise-scaled u/v above) onto the line's rotating normal (ct/st),
+        // noise-scaled u/v above) onto the line's rotating normal (cosT/sinT),
         // aspect-corrected and re-centered by `half` so the result is
         // exactly comparable to the old `x/SW - divider` at theta=0 (see
         // offset/theta's declaration above) — tanh gives the same soft +-1
@@ -724,7 +733,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
         // rotating axis now instead of a fixed vertical one. Replaces the
         // old fixed small-lean `tilt` hack entirely (2026-08-07) — real
         // rotation, not a fake stand-in for it.
-        const proj = (x / SW - 0.5) * aspect * ct + (y / SH - 0.5) * st
+        const proj = (x / SW - 0.5) * aspect * cosT + (y / SH - 0.5) * sinT
         const edge = Math.tanh((proj / (2 * half) - offset) * ANCHOR_SHARPNESS)
 
         const n0 = pseudoNoise(u + wx + colorSeeds[0].seedU, v + wy + colorSeeds[0].seedV, t) * 0.5 + 0.5
