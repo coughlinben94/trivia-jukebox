@@ -94,7 +94,7 @@ const ANCHOR_MIX_SHARPNESS  = 1.4  // steepness of the anchor0<->anchor1 transit
 // an hours-long bar shift the eye eventually clocks the loop. Three periods
 // with no common factor (11.4s / 29.3s / 7.1s) mean the combined waveform
 // doesn't actually repeat on any timescale a viewer would sit through.
-function anchorDivider(tSec) {
+export function anchorDivider(tSec) {
   return 0.5
     + 0.35 * Math.sin((tSec / 11.4) * Math.PI * 2)
     + 0.15 * Math.sin((tSec / 29.3) * Math.PI * 2)
@@ -295,6 +295,15 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
   // so a stopped/restarted RAF can't compute one giant bogus dt.
   const flowPhaseRef       = useRef(0)
   const flowPhaseTsRef     = useRef(null)
+  // Accumulated hidden-tab time (2026-08-07), same fix pattern as blendStart
+  // below but for anchorDivider()/tilt in draw(), which are pure functions of
+  // raw wall-clock tSec (not integrated like flowPhaseRef) — a long tab-hide
+  // otherwise still snaps the divider/tilt position on resume even though the
+  // color-blend and noise-flow snaps were already fixed. Subtracted from ts
+  // before deriving tSec so those two keep animating from wherever they
+  // genuinely were, instead of jumping to wherever raw wall-clock says they
+  // should be.
+  const hiddenOffsetMsRef  = useRef(0)
 
   const st = useRef(null)
   if (!st.current) {
@@ -468,6 +477,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
       hiddenAt = null
       const s = st.current
       if (s.blendStart >= 0) s.blendStart += hiddenMs
+      hiddenOffsetMsRef.current += hiddenMs
       if (mountedRef.current && !rafRef.current) startLoop()
     }
     document.addEventListener('visibilitychange', onVisibility)
@@ -557,9 +567,13 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     }
     hist.a0 = anchor0; hist.a1 = anchor1; hist.ts = ts
 
-    const tSec = ts / 1000                   // raw seconds — anchor duel timing
-                                              // stays on its own clock, independent
-                                              // of FLOW_SPEED tuning
+    const tSec = (ts - hiddenOffsetMsRef.current) / 1000  // raw seconds minus
+                                              // accumulated hidden-tab time —
+                                              // anchor duel timing stays on its
+                                              // own clock, independent of
+                                              // FLOW_SPEED tuning, but no longer
+                                              // jumps on tab resume (see
+                                              // hiddenOffsetMsRef above)
     // Integrate the instantaneous flow speed over real elapsed time — see
     // flowPhaseRef's declaration for why this can't be speed x tSec. Clamped
     // to 0.05s (2026-08-07, Opus review): rAF just stops firing while the tab
