@@ -193,7 +193,6 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   useEffect(() => { entranceActiveGuardRef.current = entranceActive }, [entranceActive])
 
   const titleRef                          = useRef(null)
-  const titleBoxRef                       = useRef(null)
   const titleBasePxRef                    = useRef(null)
   const [titleScale, setTitleScale]       = useState(1)
 
@@ -213,24 +212,6 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       // lineHeight can be 'normal' in some browsers; fall back to leading-tight ratio.
       const lhPx   = parseFloat(cs.lineHeight) || basePx * 1.25
       const maxH   = lhPx * 2 + 4  // two lines + 4px sub-pixel buffer
-
-      // Reserve the full two-line height regardless of how many lines this
-      // title actually uses (2026-08-07, Ben: lock the artist name to one
-      // fixed spot below, let short titles center in the middle of the
-      // title's own slot rather than sitting high with an empty second
-      // line). The wrapper below is flex+justify-center, so a one-line
-      // title centers vertically in this box and a two-line title just
-      // fills it edge to edge like before — either way the artist paragraph
-      // that follows sits at the same y every time, since the box height
-      // no longer depends on the title's own content height.
-      // lhPx * 2, NOT maxH (Opus review, 2026-08-07) — maxH's +4 is a
-      // sub-pixel fit-test buffer for the scrollHeight comparison below, not
-      // a layout dimension. Reusing it here reserved 4px more than a real
-      // 2-line title's own content height, so the artist sat 4px lower than
-      // Ben's approved reference screenshot (a 2-line title, which used to
-      // size the box exactly to its own content pre-fix). lhPx * 2
-      // reproduces that reference position exactly for every title length.
-      if (titleBoxRef.current) titleBoxRef.current.style.height = `${lhPx * 2}px`
 
       titleBasePxRef.current = basePx
 
@@ -260,17 +241,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
     // Same gotcha Trivia OS's own autoFitText guards against for this reason.
     let cancelled = false
     document.fonts?.ready?.then(() => { if (!cancelled) measure() })
-
-    // Re-measure on resize (2026-08-07, Opus review of ccd11c7) — this
-    // effect only ever re-ran on a song change or the fonts-ready callback
-    // above, so crossing the sm: 640px breakpoint (48px/60px title) without
-    // a song change left both the shrink threshold AND the title box's
-    // reserved height (see the box-height comment above) stamped for
-    // whichever breakpoint was active on the last song change. Growing past
-    // 640 without a resize-triggered re-measure means real content can
-    // overflow a box still sized for the smaller font.
-    window.addEventListener('resize', measure)
-    return () => { cancelled = true; window.removeEventListener('resize', measure) }
+    return () => { cancelled = true }
   }, [shown?.name])
 
   const { colors: paletteColorsFull, weights: paletteWeightsFull } = usePalette(artUrl)
@@ -1122,19 +1093,17 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
               animate={{ opacity: transitioning ? 0 : (textVisible ? 1 : 0), y: transitioning ? -6 : 0 }}
               transition={textInstant ? { duration: 0 } : { duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
             >
-              <div ref={titleBoxRef} className="flex flex-col justify-center mb-2">
-                <h1
-                  ref={titleRef}
-                  className="text-5xl sm:text-6xl text-white tracking-tight leading-tight"
-                  style={{
-                    fontFamily: FONT_DISPLAY,
-                    textShadow: TEXT_SCRIM,
-                    ...(titleScale < 1 ? { fontSize: `${(titleBasePxRef.current ?? 48) * titleScale}px` } : {}),
-                  }}
-                >
-                  {displayName(shown.name)}
-                </h1>
-              </div>
+              <h1
+                ref={titleRef}
+                className="text-5xl sm:text-6xl text-white tracking-tight leading-tight mb-2"
+                style={{
+                  fontFamily: FONT_DISPLAY,
+                  textShadow: TEXT_SCRIM,
+                  ...(titleScale < 1 ? { fontSize: `${(titleBasePxRef.current ?? 48) * titleScale}px` } : {}),
+                }}
+              >
+                {displayName(shown.name)}
+              </h1>
               <p
                 className="text-2xl sm:text-3xl text-white font-medium italic"
                 style={{ fontFamily: FONT_BODY, textShadow: TEXT_SCRIM }}
