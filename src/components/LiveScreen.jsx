@@ -982,21 +982,26 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                 initial={{ opacity: 0, y: -500, scale: 1 }}
                 animate={flyCtrl}
               >
-                {/* Layer 0 – turntable platter: travels with the record now.
-                     z-index 0 + first in tree order keeps it painted behind the
-                     content wrapper below (which is z-index:auto, i.e. effectively 0 —
-                     same-level positioned siblings paint in document order). */}
-                <div
-                  className="absolute rounded-full"
-                  style={{
-                    inset: '-9px',
-                    background: 'radial-gradient(circle at 40% 35%, #2a2a2a, #111)',
-                    zIndex: 0,
-                  }}
-                />
+                {/* Content wrapper: platter + art + groove rings + shadow + spindle
+                     ALL fade together via artOpacity.
+                     Transition delay on exit (0.25s) keeps art opaque while record is ~60% of the way up.
 
-                {/* Content wrapper: art + groove rings + shadow all fade together via artOpacity.
-                     Transition delay on exit (0.25s) keeps art opaque while record is ~60% of the way up. */}
+                     2026-08-07: the platter and spindle used to sit OUTSIDE this
+                     wrapper as siblings, so they never faded — and the fly-off's
+                     y:-500 does not actually clear the top of the viewport. The
+                     scene starts at paddingTop:15vh, so what's left on screen
+                     after the fly-off is (15vh + recordHeight - 500)px of the
+                     record's bottom edge: ~3px at the old 368px size (invisible),
+                     but ~47px on a 900px-tall viewport at today's 412px size —
+                     i.e. the "bottom 10% of the album stuck near the top of the
+                     screen" Ben reported, as a dark platter chord that then sat
+                     there until the whole overlay faded ~1.2s later. Same defect
+                     on runTransition's Step 2 fly-up, since both paths animate
+                     this one shared flyCtrl wrapper. Folding the platter and
+                     spindle into the existing fade fixes both paths at once and
+                     is viewport/size independent — no spring, distance, or delay
+                     retuned. Paint order is unchanged: platter zIndex:0 first in
+                     tree, spin layer + shadow z-auto next, spindle zIndex:1 on top. */}
                 <motion.div
                   className="absolute inset-0"
                   style={{ willChange: 'opacity' }}
@@ -1005,6 +1010,19 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                     ? { duration: 0.35, ease: [0.23, 1, 0.32, 1] }
                     : { duration: 0.2, delay: 0.25, ease: [0.23, 1, 0.32, 1] }}
                 >
+                  {/* Layer 0 – turntable platter: travels with the record now.
+                       z-index 0 + first in tree order keeps it painted behind the
+                       spin layer below (which is z-index:auto, i.e. effectively 0 —
+                       same-level positioned siblings paint in document order). */}
+                  <div
+                    className="absolute rounded-full"
+                    style={{
+                      inset: '-9px',
+                      background: 'radial-gradient(circle at 40% 35%, #2a2a2a, #111)',
+                      zIndex: 0,
+                    }}
+                  />
+
                   {/* Spin layer: art img + groove rings rotate together.
                        clipPath alongside overflow-hidden+rounded-full (2026-08-06,
                        live-observed): the square art's corners briefly showed past
@@ -1038,19 +1056,19 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                     className="absolute inset-0 rounded-full pointer-events-none"
                     style={{ boxShadow: '0 32px 80px rgba(0,0,0,0.7)' }}
                   />
-                </motion.div>
 
-                {/* Layer 3 – center hole/spindle: travels with the record now.
-                     Explicit positive z-index forms its own stacking context, which
-                     always paints above z-index:0/auto siblings (platter, content
-                     wrapper) regardless of tree order — so it stays a dot on top of
-                     the art, same visual result as the old zIndex:15 had outside. */}
-                <div
-                  className="absolute inset-0 flex items-center justify-center pointer-events-none"
-                  style={{ zIndex: 1 }}
-                >
-                  <div className="w-4 h-4 rounded-full bg-black ring-1 ring-white/10" />
-                </div>
+                  {/* Layer 3 – center hole/spindle: travels with the record now.
+                       Explicit positive z-index forms its own stacking context, which
+                       always paints above z-index:0/auto siblings (platter, spin
+                       layer, shadow) regardless of tree order — so it stays a dot on
+                       top of the art, same visual result as the old zIndex:15 had. */}
+                  <div
+                    className="absolute inset-0 flex items-center justify-center pointer-events-none"
+                    style={{ zIndex: 1 }}
+                  >
+                    <div className="w-4 h-4 rounded-full bg-black ring-1 ring-white/10" />
+                  </div>
+                </motion.div>
               </motion.div>
 
               {/* Layer 4 – tonearm */}
