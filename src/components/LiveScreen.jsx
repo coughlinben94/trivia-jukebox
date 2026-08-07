@@ -940,9 +940,22 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           very first paint frame before that mounts, so it snaps instantly
           instead of animating; animating two things at once just to reach
           the same "revealed" endpoint would double-count the reveal. */}
+      {/* #080808, not pure #000 (2026-08-07, Ben live: "black shifts from
+          one black to another, right before the gradients flow in") — this
+          div snaps instantly (no transition, see comment above) the moment
+          entranceActive flips, exposing whatever GradientBackground's canvas
+          is currently showing. Its resting/initial color before any real
+          palette lands is #080808 (usePalette's FALLBACK_COLORS, baked into
+          AlbumGradientMesh's own hexToRgb fallback too) — GradientBackground's
+          own entranceActive effect that starts the real color blend fires a
+          beat AFTER this cover disappears (separate component, separate
+          effect pass), so a pure-#000 cover was revealing a visibly
+          different near-black for that gap before any hue appeared. Matching
+          the two removes the value jump; the canvas's own blend still owns
+          the entire "floating in" motion from there. */}
       <div
         className="absolute inset-0 z-[1] pointer-events-none"
-        style={{ background: '#000', opacity: entranceActive ? 1 : 0 }}
+        style={{ background: '#080808', opacity: entranceActive ? 1 : 0 }}
       />
 
       {/* Light vignette — kept subtle on purpose. This screen's whole job is
