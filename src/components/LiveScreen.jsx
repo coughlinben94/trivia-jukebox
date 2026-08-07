@@ -832,6 +832,7 @@ function LiveScreen({ currentTrack, isPaused, error, ending, onClose, shuffleKey
       if (!endingRef.current) {
         busyRef.current = false
         setTransitioning(false)
+        setTextVisible(true)
         tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 26 } })
       }
     }

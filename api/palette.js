@@ -132,7 +132,13 @@ export default async function handler(req, res) {
       // above uses when there's no second real color.
       const { hue, luma: luma255 } = picked[0];
       const luma = luma255 / 255; // hexToLuma returns 0-255; hslToHex wants 0-1 (see avgLuma above)
-      const shiftedLuma = luma > 0.5 ? Math.max(0.15, luma - 0.35) : Math.min(0.85, luma + 0.35);
+      // Floor 0.28, not 0.15 (2026-08-07, Opus review): a luma255 128-149
+      // candidate shifted down to 0.15-0.23 lightness comes back under this
+      // file's own LUMA_THRESHOLD (60/255 = 0.235) once converted to RGB, so
+      // LiveScreen's client-side safeGradientColor check was substituting a
+      // hot-pink fallback for the very color this branch just picked. 0.28
+      // keeps the shifted anchor's luma safely above 60 with margin.
+      const shiftedLuma = luma > 0.5 ? Math.max(0.28, luma - 0.35) : Math.min(0.85, luma + 0.35);
       const shifted = hslToHex(hue, 0.55, shiftedLuma);
       colors = [picked[0].hex, shifted];
       weights = [0.6, 0.4];
