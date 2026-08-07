@@ -193,6 +193,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   useEffect(() => { entranceActiveGuardRef.current = entranceActive }, [entranceActive])
 
   const titleRef                          = useRef(null)
+  const titleBoxRef                       = useRef(null)
   const titleBasePxRef                    = useRef(null)
   const [titleScale, setTitleScale]       = useState(1)
 
@@ -212,6 +213,17 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       // lineHeight can be 'normal' in some browsers; fall back to leading-tight ratio.
       const lhPx   = parseFloat(cs.lineHeight) || basePx * 1.25
       const maxH   = lhPx * 2 + 4  // two lines + 4px sub-pixel buffer
+
+      // Reserve the full two-line height regardless of how many lines this
+      // title actually uses (2026-08-07, Ben: lock the artist name to one
+      // fixed spot below, let short titles center in the middle of the
+      // title's own slot rather than sitting high with an empty second
+      // line). The wrapper below is flex+justify-center, so a one-line
+      // title centers vertically in this box and a two-line title just
+      // fills it edge to edge like before — either way the artist paragraph
+      // that follows sits at the same y every time, since the box height
+      // no longer depends on the title's own content height.
+      if (titleBoxRef.current) titleBoxRef.current.style.height = `${maxH}px`
 
       titleBasePxRef.current = basePx
 
@@ -1093,17 +1105,19 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
               animate={{ opacity: transitioning ? 0 : (textVisible ? 1 : 0), y: transitioning ? -6 : 0 }}
               transition={textInstant ? { duration: 0 } : { duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
             >
-              <h1
-                ref={titleRef}
-                className="text-5xl sm:text-6xl text-white tracking-tight leading-tight mb-2"
-                style={{
-                  fontFamily: FONT_DISPLAY,
-                  textShadow: TEXT_SCRIM,
-                  ...(titleScale < 1 ? { fontSize: `${(titleBasePxRef.current ?? 48) * titleScale}px` } : {}),
-                }}
-              >
-                {displayName(shown.name)}
-              </h1>
+              <div ref={titleBoxRef} className="flex flex-col justify-center mb-2">
+                <h1
+                  ref={titleRef}
+                  className="text-5xl sm:text-6xl text-white tracking-tight leading-tight"
+                  style={{
+                    fontFamily: FONT_DISPLAY,
+                    textShadow: TEXT_SCRIM,
+                    ...(titleScale < 1 ? { fontSize: `${(titleBasePxRef.current ?? 48) * titleScale}px` } : {}),
+                  }}
+                >
+                  {displayName(shown.name)}
+                </h1>
+              </div>
               <p
                 className="text-2xl sm:text-3xl text-white font-medium italic"
                 style={{ fontFamily: FONT_BODY, textShadow: TEXT_SCRIM }}
