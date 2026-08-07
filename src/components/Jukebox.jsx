@@ -309,12 +309,21 @@ const [newSetName, setNewSetName] = useState('')
 
     const nowIso = new Date().toISOString()
     try {
-      await supabase.from('jukebox_state').upsert({
+      // supabase-js resolves { data, error } on a DB-level failure (RLS denial,
+      // constraint violation) — it does NOT throw, so this catch alone only
+      // covers network throws. Without checking `error`, a rejected write still
+      // advanced the sync-tracking refs, telling every downstream staleness
+      // comparison (Guard 3 above) that remote matches what we have locally.
+      const { error } = await supabase.from('jukebox_state').upsert({
         id: 'singleton',
         sets: outgoing,
         last_writer: sessionIdRef.current,
         updated_at: nowIso,
       })
+      if (error) {
+        console.error('[Jukebox] Supabase write failed:', error)
+        return
+      }
       lastAppliedUpdatedAtRef.current = nowIso
       lastAppliedSetsRef.current = outgoing
     } catch { /* silent — localStorage is always the local fallback */ }
@@ -571,8 +580,11 @@ const [newSetName, setNewSetName] = useState('')
       lib = keys[Math.floor(Math.random() * keys.length)]
     }
 
-    // Contract: lib must be an existing key in items.
-    if (!setsRef.current?.items?.[lib]) {
+    // Contract: lib must be an existing OWN key in items. Own-property check,
+    // not truthiness — `items` is a plain object, so ?lib=constructor (or
+    // toString, hasOwnProperty, …) resolves up the prototype chain to a real
+    // truthy function, sailed past this guard, and then threw on `.songs.length`.
+    if (!Object.hasOwn(setsRef.current?.items ?? {}, lib)) {
       console.warn('[Jukebox] ?lib= key not found:', lib)
       strip()
       return

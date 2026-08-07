@@ -825,7 +825,13 @@ function LiveScreen({ currentTrack, isPaused, error, ending, onClose, shuffleKey
       console.error('[runTransition]', err)
       busyRef.current = false
       setTransitioning(false)
-      tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 26 } })
+      // Same endingRef guard as the three call sites above — the close
+      // sequence owns tonearmCtrl exclusively once it's in flight, and an
+      // exception during a transition that overlaps a close would otherwise
+      // fire ARM_ON straight into the close animation.
+      if (!endingRef.current) {
+        tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 26 } })
+      }
     }
   }, [onTransitionAudioStart])
 

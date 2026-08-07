@@ -284,6 +284,17 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
   // Reset to null in startBlendTo/settleNow/on natural blend completion so a
   // new song doesn't inherit the previous anchor pair's committed direction.
   const hueArcRef          = useRef(null)
+  // Integrated flow phase (2026-08-07). flowSpeedAt() is an INSTANTANEOUS
+  // speed, so phase is its running integral, not speed x elapsed-time — the
+  // old `tSec * flowSpeedAt(tSec)` scaled the breathing sine by the full
+  // elapsed seconds, which over a multi-hour show grows without bound and
+  // makes the flow run away and periodically reverse instead of breathing.
+  // NOT reset on song changes (unlike hueArcRef) — this is continuous
+  // background motion with no relation to per-song blend state; resetting it
+  // would jump the noise domain. Only the timestamp is reset, in startLoop(),
+  // so a stopped/restarted RAF can't compute one giant bogus dt.
+  const flowPhaseRef       = useRef(0)
+  const flowPhaseTsRef     = useRef(null)
 
   const st = useRef(null)
   if (!st.current) {
@@ -469,6 +480,9 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
   }, [active])
 
   function startLoop() {
+    // Drop the previous run's last frame timestamp so the first frame of this
+    // run integrates dt = 0 instead of the whole gap since the loop stopped.
+    flowPhaseTsRef.current = null
     rafRef.current = requestAnimationFrame(tick)
   }
 
@@ -546,7 +560,13 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     const tSec = ts / 1000                   // raw seconds — anchor duel timing
                                               // stays on its own clock, independent
                                               // of FLOW_SPEED tuning
-    const t    = tSec * flowSpeedAt(tSec)    // drives noise domain warp/flow
+    // Integrate the instantaneous flow speed over real elapsed time — see
+    // flowPhaseRef's declaration for why this can't be speed x tSec.
+    const prevTs = flowPhaseTsRef.current
+    const dtSec  = prevTs === null ? 0 : Math.max(0, tSec - prevTs)
+    flowPhaseTsRef.current = tSec
+    flowPhaseRef.current  += dtSec * flowSpeedAt(tSec)
+    const t    = flowPhaseRef.current        // drives noise domain warp/flow
 
     // Two-color LERP between whichever anchor "wins" at a given point — like
     // two liquids meeting, not an N-color average (an average of many colors

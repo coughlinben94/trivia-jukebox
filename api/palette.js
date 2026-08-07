@@ -124,8 +124,17 @@ export default async function handler(req, res) {
       colors = [accent, offwhite];
       weights = [0.5, 0.5];
     } else if (picked.length === 1) {
-      colors = [picked[0].hex, picked[0].hex];
-      weights = [0.5, 0.5];
+      // Exactly one usable candidate and nothing in `ranked` to pair it with.
+      // Duplicating the hex gave both anchors the identical color, so the
+      // two-color collision had nothing to blend between and the background
+      // sat motionless. Derive the second anchor as a lightness-shifted
+      // variant of the same hue instead — same trick the grayscale branch
+      // above uses when there's no second real color.
+      const { hue, luma } = picked[0];
+      const shiftedLuma = luma > 0.5 ? Math.max(0.15, luma - 0.35) : Math.min(0.85, luma + 0.35);
+      const shifted = hslToHex(hue, 0.55, shiftedLuma);
+      colors = [picked[0].hex, shifted];
+      weights = [0.6, 0.4];
     } else {
       colors = picked.map(c => c.hex);
       const totalPop = picked.reduce((s, c) => s + c.population, 0);
