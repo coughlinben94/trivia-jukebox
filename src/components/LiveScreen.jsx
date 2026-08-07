@@ -158,7 +158,7 @@ function Tonearm({ controls }) {
 // forcing a re-render of everything under Jukebox. None of this component's props
 // change on that cadence, so memo() keeps it from redoing its render work — title-fit
 // measurement, palette lookups, the whole record/tonearm JSX tree — 3.3x/second for nothing.
-function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpcomingTrack, entranceSong, onEntranceStart, onRegisterTransition, onTransitionAudioStart }) {
+function LiveScreen({ currentTrack, isPaused, error, ending, onClose, shuffleKey, onUpcomingTrack, entranceSong, onEntranceStart, onRegisterTransition, onTransitionAudioStart }) {
   // entranceSong (2026-08-04): the chosen first song, handed down BEFORE
   // Spotify is asked to play it (see Jukebox.jsx's startShuffle) — falls
   // back to currentTrack for the tuning screen and any other caller that
@@ -169,7 +169,6 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // song's manual gradient-color overrides apply to the FIRST song, not just
   // the next one (the SDK object never carried those fields to begin with).
   const [shown, setShown]                 = useState(entranceSong ?? currentTrack)
-  const [prev,  setPrev]                  = useState(null)
   const [transitioning, setTransitioning] = useState(false)
   const [artOpacity, setArtOpacity]       = useState(1)
   const [artUrl, setArtUrl]               = useState((entranceSong ?? currentTrack)?.album?.images?.[0]?.url)
@@ -266,11 +265,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // already intends. useMemo restores the same stable-unless-really-changed
   // reference usePalette itself provides.
   const palette = useMemo(() => {
-    const result = applyGradientOverride(pickGradientColors(paletteColorsFull, paletteWeightsFull), paletteColorsFull, shown?.gradientOverride1, shown?.gradientOverride)
-    // TEMP DIAGNOSTIC (2026-08-04) — see matching log in runTransition.
-    // Remove once the color-change report is nailed down or ruled out.
-    console.log('[jukebox:palette]', { shownName: shown?.name, shownUri: shown?.uri, paletteColorsFull, resultColors: result.colors })
-    return result
+    return applyGradientOverride(pickGradientColors(paletteColorsFull, paletteWeightsFull), paletteColorsFull, shown?.gradientOverride1, shown?.gradientOverride)
   }, [paletteColorsFull, paletteWeightsFull, shown?.gradientOverride1, shown?.gradientOverride])
   const upcomingPalette = useMemo(
     () => applyGradientOverride(pickGradientColors(upcomingPaletteColorsFull, upcomingPaletteWeightsFull), upcomingPaletteColorsFull, upcomingGradientOverride1, upcomingGradientOverride),
@@ -280,6 +275,19 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   const tonearmCtrl = useAnimation()
   const flyCtrl     = useAnimation()
   const busyRef      = useRef(false)
+  // Set only by the ending effect below, read only by runTransition's three
+  // remaining animation calls (2026-08-07, Opus review) — both `ending` and
+  // an in-flight runTransition write busyRef/drive flyCtrl+tonearmCtrl with
+  // no awareness of each other, so a b-hold landing mid-transition could
+  // fire the ending's ARM_OFF+fly-up while runTransition was still mid-flight,
+  // then have runTransition's own Step 3 fire fly-down+ARM_ON right after —
+  // record drops back down and the arm falls on it right at the trivia-os
+  // handoff. Do NOT add a bail-checkpoint inside runTransition itself for
+  // this — 35ae006 reverted exactly that pattern for breaking the entrance.
+  // This only gates runTransition's remaining animation COMMANDS once ending
+  // has started; none of its state bookkeeping (busyRef, pendingRef drain)
+  // is touched.
+  const endingRef    = useRef(false)
   const mountedRef   = useRef(false)
   const pendingRef   = useRef(null)
   const pauseSeqRef  = useRef([])
@@ -287,13 +295,6 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   const isPausedRef = useRef(isPaused)
   const trackChangeDebounceRef = useRef(null)
   useEffect(() => { isPausedRef.current = isPaused }, [isPaused])
-  // Always-current `shown`, read by the hoisted runTransition below instead
-  // of a `prevTrack = shown` default param (2026-08-04, Opus review) — a
-  // default param would re-capture a fresh `shown` closure every render,
-  // which fights runTransition being a single stable function now instead
-  // of being redefined inside an effect on every currentTrack change.
-  const shownRef = useRef(shown)
-  useEffect(() => { shownRef.current = shown }, [shown])
   // True for a short window right after Step 3 fires the real Spotify play
   // call for the incoming song (2026-08-04, Opus review) — guards the arm/
   // spin re-sync just after Step 3 from trusting isPausedRef, which can
@@ -397,10 +398,23 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         // 120/22 tuning — this makes the starting state identical so the two
         // drops are the same motion, not just the same spring.
         flyCtrl.set({ opacity: 0, y: -500, scale: 1 })
-        await flyCtrl.start({
-          y: 0, opacity: 1, scale: 1,
-          transition: { type: 'spring', stiffness: 120, damping: 22 },
-        })
+        // Deadlock-breaker cap (2026-08-07, Opus review) — NOT a timing knob
+        // like runTransition's 550ms race (that one trims perceived
+        // sluggishness against a spring that's already visually settled).
+        // This 4000ms must never win under normal conditions — it exists
+        // only because a backgrounded tab stalls rAF, so a bare await here
+        // could hang forever, leaving entranceActive stuck true (the
+        // #080808 cover never lifts) and busyRef stuck true (every
+        // subsequent song swallowed into pendingRef with nothing to drain
+        // it). Do not shorten this to "fix" a timing complaint — that's a
+        // different knob elsewhere in this function.
+        await Promise.race([
+          flyCtrl.start({
+            y: 0, opacity: 1, scale: 1,
+            transition: { type: 'spring', stiffness: 120, damping: 22 },
+          }),
+          new Promise(r => setTimeout(r, 4000)),
+        ])
 
         await sleep(0)   // 1200 -> 900 -> 1000 -> 500 -> 250 -> 100 -> 0, 2026-08-04: Ben — arm needs to come down sooner still. Arm now drops the instant the record lands (spring above is already awaited, so this is just the last bit of slack removed, not a race).
 
@@ -417,10 +431,15 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         // when runTransition's identical spring was fixed; underdamped
         // (critical = 2*sqrt(180)≈26.8) so it overshot, which also delayed
         // this await (and therefore audio) resolving.
-        await tonearmCtrl.start({
-          ...(isPausedRef.current ? ARM_OFF : ARM_ON),
-          transition: { type: 'spring', stiffness: 180, damping: 26 },
-        })
+        // Same deadlock-breaker rationale as the fly-in cap above — 4000ms,
+        // never meant to win normally (2026-08-07, Opus review).
+        await Promise.race([
+          tonearmCtrl.start({
+            ...(isPausedRef.current ? ARM_OFF : ARM_ON),
+            transition: { type: 'spring', stiffness: 180, damping: 26 },
+          }),
+          new Promise(r => setTimeout(r, 4000)),
+        ])
         onEntranceStart?.()
         // Reuse the same stale-pause guard runTransition uses (2026-08-04,
         // Opus review flag): the "Bug 3" re-sync just below reads
@@ -569,6 +588,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   useEffect(() => {
     if (!ending) return
     busyRef.current = true
+    endingRef.current = true
     setTransitioning(true)
     let t2, t3, t4
     const t1 = setTimeout(() => {
@@ -589,6 +609,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
     return () => {
       clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4)
       busyRef.current = false
+      endingRef.current = false
       setTransitioning(false)
     }
   }, [ending])
@@ -620,7 +641,6 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   // Spotify play call now fires from INSIDE Step 3 below via
   // onTransitionAudioStart, not from an independent timer in Jukebox.jsx.
   const runTransition = useCallback(async (target, prevTrack) => {
-    const from = prevTrack ?? shownRef.current
     try {
       if (busyRef.current) {
         pendingRef.current = target
@@ -646,7 +666,6 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       // Kick off preload during the arm lift so it has more time
       const newArtUrl = target?.album?.images?.[0]?.url
       const preloadPromise = newArtUrl ? preloadImage(newArtUrl) : Promise.resolve()
-      setPrev(from)
       await sleep(450)   // arm fully lifted (400 -> 200 -> 50 -> 450, 2026-08-04: 50ms had the record flying before the arm's spring (~350ms settle) even finished lifting — no stall, just clipping. Ben confirmed live: arm off, a real stall, then fly off. 450ms clears the spring's settle with a bit of pause on top.)
 
       // Step 2 — record flies up once arm is clear. stiffness 220 -> 120
@@ -662,19 +681,6 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       // Spotify object never had those fields — see the palette useMemo
       // above; manual color overrides silently didn't apply on any but the
       // NEXT-preview song before this) — 2026-08-04, Opus review.
-      // TEMP DIAGNOSTIC (2026-08-04) — Ben reported a color-change bug on a
-      // NORMAL song1->song2 transition, symptom unclear/not caught live.
-      // Rather than guess at another fix on top of tonight's changes, log
-      // what runTransition actually hands the palette pipeline so the next
-      // occurrence gives real data instead of speculation. Safe to remove
-      // once this is nailed down or ruled out.
-      console.log('[jukebox:transition]', {
-        name: target?.name,
-        uri: target?.uri,
-        gradientOverride: target?.gradientOverride,
-        gradientOverride1: target?.gradientOverride1,
-        newArtUrl,
-      })
       setShown(target)
 
       // If another skip arrived during this window, bail before flying the new record in
@@ -738,10 +744,16 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       // resolves — the raw await was stacking invisible extra wait on top
       // of a motion that had already finished playing. Race it against a
       // cap instead; the arm cue below fires at whichever comes first.
-      await Promise.race([
-        flyCtrl.start({ y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 22 } }),
-        new Promise(r => setTimeout(r, 550)),
-      ])
+      // endingRef guard (2026-08-07, Opus review) — see its declaration
+      // above. If the close sequence started while this transition was
+      // mid-flight, stop driving flyCtrl/tonearmCtrl entirely from here on;
+      // the ending effect owns them exclusively from this point.
+      if (!endingRef.current) {
+        await Promise.race([
+          flyCtrl.start({ y: 0, opacity: 1, scale: 1, transition: { type: 'spring', stiffness: 120, damping: 22 } }),
+          new Promise(r => setTimeout(r, 550)),
+        ])
+      }
 
       // The 500ms grace here used to run concurrently with an un-awaited
       // fly-down (the actual landing happened somewhere during it, timing
@@ -756,12 +768,25 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       // a visible double-settle even in the happy path, amplifying the
       // 700ms-guard bug fixed just above. Matching 180/26 here so both
       // springs to ARM_ON agree.
-      tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 26 } })
+      if (!endingRef.current) {
+        tonearmCtrl.start({ ...ARM_ON, transition: { type: 'spring', stiffness: 180, damping: 26 } })
+      }
       await sleep(200)
       setTextInstant(false)
-      setTransitioning(false)
-      busyRef.current = false
-      setTextVisible(true)
+      // Guarded (2026-08-07, Opus review of the endingRef fix) — the
+      // adjudicator's original spec left these three unconditional on the
+      // theory that only ANIMATION commands needed gating, not state
+      // bookkeeping. But `transitioning`/`textVisible` gate the title/artist
+      // opacity in the JSX below, and clearing busyRef re-opens pendingRef
+      // draining — so a close landing mid-transition made the text fade back
+      // in while the record was flying off, then let a fresh runTransition
+      // fire its own (unguarded) OPENING animation calls during the exit
+      // window, relocating the glitch instead of removing it.
+      if (!endingRef.current) {
+        setTransitioning(false)
+        busyRef.current = false
+        setTextVisible(true)
+      }
 
       // Re-sync arm in case isPaused changed while busy. Settle instantly if
       // the tab is hidden — see the identical guard in runEntrance above.
@@ -769,7 +794,10 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
       // PREVIOUS song's state in the narrow window right after Step 3 fired
       // the new song's play request (see that ref's own comment above).
       const paused = audioJustFiredRef.current ? false : isPausedRef.current
-      if (document.hidden) {
+      if (endingRef.current) {
+        // Close sequence took over mid-transition — skip the re-sync
+        // entirely rather than fight it for control of tonearmCtrl.
+      } else if (document.hidden) {
         tonearmCtrl.set(paused ? ARM_OFF : ARM_ON)
       } else {
         tonearmCtrl.start({
@@ -877,13 +905,6 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
     return () => clearTimeout(trackChangeDebounceRef.current)
   }, [currentTrack?.uri, runTransition])
 
-  // Cleanup prev background after crossfade
-  useEffect(() => {
-    if (!prev) return
-    const t = setTimeout(() => setPrev(null), 900)
-    return () => clearTimeout(t)
-  }, [prev?.uri])
-
   // Escape key
   useEffect(() => {
     const h = e => {
@@ -921,7 +942,14 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           motion matters most. Previously active={!isPaused || transitioning}
           froze the canvas RAF loop on pause, so the one moment the room stares
           at this screen the longest showed a dead frame. */}
-      <GradientBackground colors={palette.colors} weights={palette.weights} nextColors={upcomingPalette.colors} nextWeights={upcomingPalette.weights} active={true} shuffleKey={shuffleKey} entranceActive={entranceActive} artUrl={artUrl} nextArtUrl={upcomingArtUrl} />
+      {/* weights/nextWeights/artUrl/nextArtUrl dropped (2026-08-07, Opus
+          review) — AlbumGradientMesh's signature never accepted them (see
+          that file), so the entire population-weight pipeline (api/palette.js
+          weights -> usePalette.normalize -> pickGradientColors) was feeding
+          props nothing read. Left the upstream pipeline itself alone —
+          removing it from api/palette.js would change server output and need
+          another PALETTE_VERSION bump. */}
+      <GradientBackground colors={palette.colors} nextColors={upcomingPalette.colors} active={true} shuffleKey={shuffleKey} entranceActive={entranceActive} />
 
       {/* Entrance black cover (2026-08-04, owner spec), scoped ONLY to
           entranceActive (true exactly once, the very first song of a
@@ -1167,6 +1195,20 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
           ✕
         </button>
       </div>
+
+      {/* Player error surfaced here too (2026-08-07, Opus review) — this used
+          to render ONLY in the library view's small header corner
+          (Jukebox.jsx), which LiveScreen's fixed inset-0 z-50 overlay
+          completely covers. An auth failure or Premium-required error mid-show
+          left the host staring at a black screen with a stalled record and
+          zero explanation anywhere. Bottom-center, small and unobtrusive —
+          this is diagnostic text for whoever's running the show, not part of
+          the audience-facing design. */}
+      {error && (
+        <div className="absolute bottom-4 left-0 right-0 z-20 flex justify-center pointer-events-none">
+          <span className="text-xs text-red-400/80 bg-black/40 px-3 py-1 rounded-full">{error}</span>
+        </div>
+      )}
     </div>
   )
 }

@@ -20,6 +20,7 @@ describe('usePalette retry-once behavior', () => {
       callCount++
       if (callCount === 1) return Promise.reject(new Error('network blip'))
       return Promise.resolve({
+        ok: true,
         json: () => Promise.resolve({ colors: ['#112233', '#445566'], weights: [0.6, 0.4] }),
       })
     })
@@ -41,6 +42,38 @@ describe('usePalette retry-once behavior', () => {
     })
 
     expect(result.current.colors).toEqual(['#112233', '#445566'])
+    expect(callCount).toBe(2)
+  })
+
+  it('retries after a 500 with valid JSON, not just a network rejection', async () => {
+    // 2026-08-07, Opus review: api/palette.js's error responses are valid
+    // JSON ({error: ...}), so a bare `.then(r => r.json())` with no r.ok
+    // check ran the .then chain to completion (data.colors undefined, no-op)
+    // and .catch — the actual retry trigger — never fired. Palette stayed
+    // pinned at FALLBACK for the whole song with no retry, silently.
+    vi.useFakeTimers()
+    let callCount = 0
+    global.fetch = vi.fn(() => {
+      callCount++
+      if (callCount === 1) {
+        return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: 'boom' }) })
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ colors: ['#abcdef', '#123456'], weights: [0.5, 0.5] }),
+      })
+    })
+
+    let result
+    await act(async () => {
+      ;({ result } = renderHook(() => usePalette('https://i.scdn.co/image/retry-test-500')))
+    })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1200)
+    })
+
+    expect(result.current.colors).toEqual(['#abcdef', '#123456'])
     expect(callCount).toBe(2)
   })
 

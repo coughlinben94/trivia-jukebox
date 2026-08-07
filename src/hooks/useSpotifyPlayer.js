@@ -167,7 +167,10 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     // between this tick firing and the ref-based clear running).
     const intervalId = setInterval(async () => {
       if (genRef.current !== gen) { clearInterval(intervalId); return }
-      const state = await playerRef.current?.getCurrentState()
+      // Capped (2026-08-07, Opus review) — matches the file's own stated
+      // discipline (every awaited step needs a deadline) that this specific
+      // call missed. Degrades safely: !state just skips one 300ms tick.
+      const state = await withTimeout(playerRef.current?.getCurrentState(), 1500)
       if (!state) return
       if (seekingRef.current) return
       const pos = state.position
@@ -225,7 +228,6 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     if (!deviceId) {
       // SDK ready event hasn't fired yet — poll for up to 5s
       deviceId = await new Promise(resolve => {
-        const deadline = setTimeout(() => resolve(null), 5000)
         const poll = setInterval(() => {
           if (deviceIdRef.current) {
             clearInterval(poll)
@@ -233,6 +235,11 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
             resolve(deviceIdRef.current)
           }
         }, 100)
+        // clearInterval(poll) added (2026-08-07, Opus review) — the deadline
+        // losing the race left this 100ms interval running for the life of
+        // the page, exactly when the device never becomes ready (i.e.
+        // exactly when something's already gone wrong).
+        const deadline = setTimeout(() => { clearInterval(poll); resolve(null) }, 5000)
       })
       if (!deviceId) {
         setError('Spotify player still connecting — try again in a moment.')
@@ -319,18 +326,21 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
       player.addListener('player_state_changed', check)
     })
 
-    transitioningRef.current = false  // new track confirmed; restore isPaused tracking
     // A newer playTrack call superseded this one — bail without reporting
     // failure. Callers must treat `undefined` (superseded) differently from
     // `false` (genuine failure): only a real failure should reset the UI.
+    // Gen check moved above the transitioningRef write (2026-08-07, Opus
+    // review) — writing it first let a superseded call transiently
+    // un-suppress isPaused tracking while a newer call was still mid-confirm.
     if (genRef.current !== gen) return undefined
+    transitioningRef.current = false  // new track confirmed; restore isPaused tracking
 
     if (!confirmed) {
       // The state-changed listener never fired a matching uri within 4s — the
       // /play PUT may have landed after a different call's PUT reordered on the
       // network, so Spotify could be playing the wrong track. Double-check
       // directly before blindly seeking/fading against a track that isn't loaded.
-      const state = await player.getCurrentState()
+      const state = await withTimeout(player.getCurrentState(), 1500)
       if (state?.track_window?.current_track?.uri !== uri) {
         console.error('[playTrack] Spotify never confirmed this track loaded — aborting')
         return false
@@ -357,7 +367,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
     // isn't reliably present on that event.
     let seekNeeded = startMs > 0
     if (startMs > 0) {
-      const s = await player.getCurrentState()
+      const s = await withTimeout(player.getCurrentState(), 1500)
       if (genRef.current !== gen) return undefined
       if (s && s.position >= startMs - 300 && s.position <= startMs + 3000) {
         seekNeeded = false
@@ -398,7 +408,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
         let poll, deadline
         const settle = (result) => { clearInterval(poll); clearTimeout(deadline); resolve(result) }
         const check = async () => {
-          const s = await player.getCurrentState()
+          const s = await withTimeout(player.getCurrentState(), 1500)
           return !!s && s.position >= startMs - 300 && s.position <= startMs + 5000
         }
         deadline = setTimeout(() => settle(false), 3000)

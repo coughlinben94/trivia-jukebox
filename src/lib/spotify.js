@@ -65,6 +65,12 @@ export async function handleCallback(code) {
   })
 
   const data = await res.json()
+  // res.ok check (2026-08-07, Opus review) — a failed exchange (expired
+  // code, PKCE mismatch) returned Spotify's error JSON without throwing, so
+  // App.jsx's .catch never fired and the user silently bounced back to the
+  // "Connect Spotify" screen with no error message shown — indistinguishable
+  // from never having clicked the button.
+  if (!res.ok) throw new Error(data.error_description || data.error || 'Spotify token exchange failed')
   if (data.access_token) {
     localStorage.setItem('spotify_token', data.access_token)
     if (data.refresh_token) localStorage.setItem('spotify_refresh_token', data.refresh_token)
@@ -131,6 +137,10 @@ export async function searchTracks(query) {
     `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=8`,
     { headers: { Authorization: `Bearer ${token}` } }
   )
+  // A 401/expired-token response still returns JSON, so without this a
+  // failed search silently rendered as "No results found" — diagnosable now
+  // via the console at least (2026-08-07, Opus review).
+  if (!res.ok) { console.error('[searchTracks] request failed', res.status); return [] }
   const data = await res.json()
   return data.tracks?.items ?? []
 }

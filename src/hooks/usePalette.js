@@ -36,7 +36,17 @@ const FALLBACK = { colors: FALLBACK_COLORS, weights: FALLBACK_COLORS.map(() => 0
 // output, and s-maxage=86400 means an unbumped version can serve the old
 // accent placement/weight for up to 24h post-deploy.
 // v7 (same day): ACCENT_WEIGHT 0.30 -> 0.40 (60/40, owner spec).
-export const PALETTE_VERSION = 7;
+// v8 (2026-08-07, Opus review) — TWO server-output changes shipped since v7
+// with no bump, so s-maxage=86400 has been serving PRE-fix palettes for any
+// cover cached before either deploy: api/palette.js was rewritten ~1150->250
+// lines (83a0ffd, dropped the recoloring/accent/MIN_COLORS systems entirely
+// -- the whole v3-v7 history above describes fields/branches that no longer
+// exist), and LUMA_THRESHOLD raised 30->60 (33c61dc, the fix for a live
+// "pure pink background" report). Bump PALETTE_VERSION here whenever
+// api/palette.js changes -- this comment is the reminder, not a hash or any
+// other mechanism, because the version also has to stay byte-stable for
+// cache warmth across unrelated edits (comment tweaks, whitespace).
+export const PALETTE_VERSION = 8;
 const versionQuery = `&pv=${PALETTE_VERSION}`;
 
 // Cache key includes the version + tuning query so a VARIETY-overridden fetch
@@ -63,7 +73,7 @@ export function prefetchPalette(albumArtUrl) {
   const key = cacheKey(albumArtUrl)
   if (cache.has(key)) return;
   fetch(`/api/palette?url=${encodeURIComponent(albumArtUrl)}${versionQuery}${paletteQuery()}`)
-    .then(r => r.json())
+    .then(r => { if (!r.ok) throw new Error(`palette ${r.status}`); return r.json(); })
     .then(data => {
       if (data.colors?.length >= 2) cache.set(key, normalize(data));
     })
@@ -111,7 +121,13 @@ export function usePalette(albumArtUrl) {
 
     const attempt = (isRetry) => {
       fetch(url, { signal: controller.signal })
-        .then(r => r.json())
+        // r.ok check (2026-08-07, Opus review) — a 500 from api/palette.js
+        // returns valid JSON ({error: ...}), so without this the .then chain
+        // ran, data.colors was undefined, nothing happened, and .catch below
+        // (the actual retry trigger) never fired -- the palette stayed
+        // pinned at FALLBACK for the song's whole playback with no retry,
+        // exactly the failure mode this retry exists to catch.
+        .then(r => { if (!r.ok) throw new Error(`palette ${r.status}`); return r.json(); })
         .then(data => {
           if (data.colors?.length >= 2) {
             const p = normalize(data);

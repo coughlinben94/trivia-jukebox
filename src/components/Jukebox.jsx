@@ -79,7 +79,13 @@ export default function Jukebox({ onLogout }) {
   const [isPlaying, setIsPlaying] = useState(false)
   const [showLive, setShowLive] = useState(false)
   const [liveEnding, setLiveEnding] = useState(false)
-  const closeLive = useCallback(() => { setShowLive(false); setLiveEnding(false) }, [])
+  // setEntranceSong(null) added (2026-08-07, Opus review) — this used to be
+  // the one close path that didn't clear it (handleStop and the play-failure
+  // branch both already did). Escape/toggle-close left the session's FIRST
+  // song's entranceSong stranded, so reopening Live later re-seeded `shown`
+  // from it instead of the actual currentTrack, replaying a full entrance
+  // for the wrong song before the reconciliation backstop caught up.
+  const closeLive = useCallback(() => { setShowLive(false); setLiveEnding(false); setEntranceSong(null) }, [])
   // Gradient tuning screen (TestScreen.jsx) — a second, separate mount of the
   // real LiveScreen with the DJ board attached. Opened only by the TUNE button
   // in the header; no hotkey, deliberately, so nothing can pop it open mid-show.
@@ -1381,6 +1387,7 @@ const [newSetName, setNewSetName] = useState('')
         <LiveScreen
           currentTrack={player.currentTrack}
           isPaused={player.isPaused}
+          error={player.error}
           ending={liveEnding}
           onClose={closeLive}
           shuffleKey={shuffleKey}

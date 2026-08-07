@@ -108,7 +108,7 @@ function flowSpeedAt(tSec) {
   return FLOW_SPEED * (1 + 0.25 * Math.sin(tSec / 43))
 }
 
-function hexToRgb(hex) {
+export function hexToRgb(hex) {
   if (!hex || hex.length < 7) return [8, 8, 8]
   return [
     parseInt(hex.slice(1, 3), 16),
@@ -129,31 +129,67 @@ function easeInOut(t) {
 
 function lerp(a, b, t) { return a + (b - a) * t }
 
-// Polar OKLab lerp (2026-08-04, fixes the muddy-gray-band bug) — replaces
-// lerpOklab everywhere colors actually blend. lerpOklab above is a straight
-// Cartesian lerp of (a,b): two near-complementary hues (e.g. orange/blue)
-// point roughly opposite directions in the a/b plane, so their vector sum
-// cancels toward the origin at the midpoint -- chroma collapses near 0 (gray)
-// even though L and each endpoint's own chroma are both fine. This project
-// hit and fixed the identical bug once before in an earlier, more complex
-// mesh build (git a5dc1cc) via hue/chroma blending instead of vector
-// averaging; this is that fix adapted to the current 2-anchor lerp model.
+// Signed shortest angular delta h1->h2, in (-pi, pi].
+export function shortestDelta(h1, h2) {
+  let d = (h2 - h1) % (2 * Math.PI)
+  if (d > Math.PI) d -= 2 * Math.PI
+  if (d < -Math.PI) d += 2 * Math.PI
+  return d
+}
+
+// Polar OKLab lerp — rewritten 2026-08-07 (Opus review) after the version
+// that shipped 2026-08-04..08-06 was proven to be a NO-OP, bit for bit
+// identical to a plain Cartesian lerp of the a/b channels (algebra + a
+// 300k-random-pair numeric check, max deviation 3.9e-16, float noise only).
+// Full history, for the next person who touches this:
 //
-// L lerps linearly (unaffected by the bug). Chroma lerps as a scalar
-// magnitude (can't cancel -- averaging two positive numbers never produces
-// something smaller than both). Hue lerps via shortest angular path, but
-// with the *blend fraction* itself weighted by each endpoint's own chroma
-// (Fable review, 2026-08-04): a near-achromatic endpoint (e.g. the B&W-cover
-// offwhite fallback, chroma ~0.01) has an arbitrary atan2 hue, and a plain
-// t-weighted hue lerp would swing the mid-fade through that arbitrary hue at
-// rising chroma -- a faint wrong-colored tint where the result should read
-// neutral. Chroma-weighting means a near-zero-chroma color barely votes on
-// hue at all. Endpoint hues are fixed for the life of one call (h1/h2 come
-// from the two OKLab colors passed in, not from any per-frame state), so
-// there's no frame-to-frame "which way around the circle" instability within
-// a single crossfade -- the direction is only decided once, at each call's
-// own fixed inputs.
-function lerpOklabPolar(a, b, t) {
+//   1. (2026-08-04) Original bug: two near-complementary hues (e.g.
+//      orange/blue) point roughly opposite directions in the a/b plane, so
+//      their vector SUM cancels toward the origin at the midpoint -- chroma
+//      collapses near 0 (gray) even though L and each endpoint's own chroma
+//      are both fine. Fixed by blending unit hue VECTORS (not raw atan2 hues
+//      + a shortest-path branch, which flips discretely as live-drifting
+//      anchors sweep their hue gap past +-180deg, producing a full-width
+//      single-frame color jump mid-crossfade).
+//
+//   2. (2026-08-06) That vector blend's magnitude (`ulen`) naturally shrinks
+//      toward 0 near exact antipodality (180deg apart) -- atan2 near the
+//      origin is ill-defined, so the resolved hue swung between two
+//      arbitrary values a hair's-width apart in t while chroma held its
+//      full lerped value, committing to a wrong saturated hue right at the
+//      unstable point ("swimming ring" bug, live-verified on Out Tonight /
+//      Penelope Road, #115867/#e45a34, ~180deg apart). Fixed by scaling
+//      output chroma by `ulen`.
+//
+//   Fix #2 is the bug. `ulen` is EXACTLY the ratio between the unit-vector
+//   blend's magnitude and the Cartesian lerp's magnitude -- multiplying it
+//   back in after computing hue/magnitude from the unit vectors algebraically
+//   reconstructs the plain Cartesian lerp of (a,b), i.e. fix #1, undone.
+//   Every comment that used to be here describing "chroma can't cancel, it's
+//   a scalar magnitude" was describing intent, not the code beneath it.
+//
+// The actual fix for both bugs at once: don't re-derive hue direction PER
+// PIXEL at all. The unit-vector trick existed only to make direction
+// continuous as the CALLER's two input hues drift frame to frame (draw()
+// calls this once per pixel per frame with the SAME pair of live-moving
+// anchors) -- but if the caller instead fixes the traversal arc ONCE per
+// frame (see hueArcRef in draw()), every pixel that frame uses the same
+// monotone hue path, so there's no per-pixel instability left to guard
+// against, and chroma can lerp as a true scalar magnitude with nothing
+// scaling it down. The `dh` param carries that caller-fixed arc; frame-to-
+// frame stability (the actual antipodality hazard, now once-per-frame
+// instead of once-per-pixel) is an unwrap in draw(), not anything in here —
+// see hueArcRef there for why it's an unwrap and not a threshold/hysteresis.
+//
+// L lerps linearly. Chroma lerps as a scalar magnitude — two positive
+// numbers can't average to something smaller than both, so this is where
+// bug #1 actually stays fixed. Hue lerps along `dh` (or the shortest path
+// between a/b's own hues, if the caller has no per-frame drift to worry
+// about — see the crossfade call in currentOklab(), whose endpoints are
+// fixed for the life of one blend), with the blend fraction itself
+// chroma-weighted (unchanged from the original design): a near-achromatic
+// endpoint has an arbitrary atan2 hue and should barely vote on the result.
+export function lerpOklabPolar(a, b, t, dh) {
   const [L1, a1, b1] = a
   const [L2, a2, b2] = b
   const C1 = Math.hypot(a1, b1)
@@ -164,54 +200,11 @@ function lerpOklabPolar(a, b, t) {
   const denom = C1 * (1 - t) + C2 * t
   const th = denom > 1e-4 ? (C2 * t) / denom : t
 
-  // Hue via chroma-weighted blend of the two UNIT hue vectors, not
-  // atan2(h1)/atan2(h2) + shortest-path angle correction (2026-08-04,
-  // Opus review, fourth trace of the recurring color-snap report). The old
-  // version picked a "shortest path" direction from the two endpoint hues
-  // every call. That's stable for one fixed pair of endpoints, but this
-  // function is called every frame during a crossfade with the CURRENT pair
-  // of live-moving anchors (see the per-pixel call in draw() below) — as the
-  // anchors drift, their hue gap can sweep past +-180 deg, flipping which
-  // direction is "shortest" between one frame and the next. That flip
-  // reverses which side of the hue circle the entire blend band takes,
-  // producing a full-width, single-frame color jump mid-crossfade that the
-  // anchor-position snap detector in draw() can't see (the anchors
-  // themselves still moved smoothly — only the per-pixel interpolation
-  // direction flipped). Measured up to ~34% of vivid near-complementary
-  // pairs on a single ordinary transition, no rapid input or jank needed.
-  // Blending unit vectors instead is continuous in the endpoint hues
-  // everywhere except exact antipodality (180.0 deg apart, chroma-magnitude
-  // dependent on where they land) — 179.9 and 180.1 now give near-identical
-  // results instead of opposite ones, and the direction is never decided by
-  // a discrete branch.
   const h1 = Math.atan2(b1, a1)
-  const h2 = Math.atan2(b2, a2)
-  const ux = lerp(Math.cos(h1), Math.cos(h2), th)
-  const uy = lerp(Math.sin(h1), Math.sin(h2), th)
-  const ulen = Math.hypot(ux, uy)
-  const h = ulen > 1e-6 ? Math.atan2(uy, ux) : h1
+  const arc = dh ?? shortestDelta(h1, Math.atan2(b2, a2))
+  const h = h1 + arc * th
 
-  // 2026-08-06 — swimming-ring bug: when the two anchors' hues sit near
-  // 180deg apart, their unit direction vectors nearly cancel partway
-  // through the blend (ulen -> 0). atan2 near the origin is genuinely
-  // ill-defined there -- there IS no single "average direction" between two
-  // opposite colors -- so `h` used to swing hard between two arbitrary
-  // values a hair's-width apart in t, while C (chroma) kept its full
-  // straight-line-lerped value regardless. That combination committed to a
-  // wrong, fully-saturated third hue right at the unstable point. Verified
-  // against Out Tonight/Penelope Road (#115867 / #e45a34, ~180deg apart):
-  // that's exactly the pair that snapped to a hard rgb(130,84,9) at t=0.28.
-  // Because this per-pixel lerp runs with the noise-driven `mix` as its t
-  // (see draw()), the unstable point traces its own wiggly isoline across
-  // the frame -- reported live as a colored ring "swimming" around blob
-  // edges, independent of the intended blend boundary.
-  // Fix: scale chroma by ulen. ulen is a real, meaningful signal -- it's
-  // exactly how coherent "average hue" is at this point -- so as it shrinks
-  // toward 0 the color desaturates toward true gray (correct: two opposite
-  // hues in equal measure IS gray) instead of holding full saturation
-  // through an arbitrary, unstable hue. Away from the cancellation point
-  // ulen stays close to 1 and this is a no-op.
-  return [L, C * ulen * Math.cos(h), C * ulen * Math.sin(h)]
+  return [L, C * Math.cos(h), C * Math.sin(h)]
 }
 
 // ── OKLab conversion — standard Bjorn Ottosson formulas.
@@ -220,7 +213,7 @@ function srgbToLinear(c) { c /= 255; return c <= 0.04045 ? c / 12.92 : Math.pow(
 function linearToSrgb(c) { c = c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(Math.max(c, 0), 1 / 2.4) - 0.055; return Math.max(0, Math.min(255, c * 255)) }
 function cbrt(x) { return Math.sign(x) * Math.pow(Math.abs(x), 1 / 3) }
 
-function rgbToOklab([r, g, b]) {
+export function rgbToOklab([r, g, b]) {
   r = srgbToLinear(r); g = srgbToLinear(g); b = srgbToLinear(b)
   const l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b
   const m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b
@@ -233,7 +226,7 @@ function rgbToOklab([r, g, b]) {
   ]
 }
 
-function oklabToRgb([L, a, b]) {
+export function oklabToRgb([L, a, b]) {
   const l_ = L + 0.3963377774 * a + 0.2158037573 * b
   const m_ = L - 0.1055613458 * a - 0.0638541728 * b
   const s_ = L - 0.0894841775 * a - 1.2914855480 * b
@@ -280,10 +273,17 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
   const colorSeeds         = useMemo(makeColorSeeds, [])
   const tinySizeRef        = useRef({ w: 48, h: 48 })
   // Snap detector (2026-08-04) — watches the actual RENDERED output frame to
-  // frame, not the state. If this ever fires again after the rewrite above,
-  // it names its own cause: check the console.log tags emitted right before
-  // it (startBlendTo/shuffleKey-reset/entrance-release) for what just ran.
+  // frame, not the state. If this ever fires again, its own console.warn
+  // payload (blendStart/elapsed/dur/hidden) is the starting point — the
+  // startBlendTo diagnostic log this comment used to point to was removed
+  // 2026-08-07 (production log cleanup); triage from the warn's own fields
+  // and recent code changes instead.
   const anchorHistRef      = useRef({ a0: null, a1: null, ts: 0 })
+  // Committed once-per-frame hue traversal arc for the per-pixel blend in
+  // draw() (2026-08-07) — see lerpOklabPolar's header for why this exists.
+  // Reset to null in startBlendTo/settleNow/on natural blend completion so a
+  // new song doesn't inherit the previous anchor pair's committed direction.
+  const hueArcRef          = useRef(null)
 
   const st = useRef(null)
   if (!st.current) {
@@ -338,11 +338,11 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     // `elapsed < duration`; when a tab went hidden mid-blend and stayed
     // hidden well past its expiry, that gate fell through to the stale
     // pre-blend steadyRgb instead — a real corrupt-state snap.
-    console.log('[grad] startBlendTo', { to: newHex, durationMs, from: currentRgb(), hidden: document.hidden })
     s.outRgb          = currentRgb()
     s.inRgb           = parseColors(newHex, NUM_ANCHORS)
     s.blendStart      = performance.now()
     s.blendDurationMs = durationMs
+    hueArcRef.current = null
     if (!rafRef.current && mountedRef.current) startLoop()
   }
 
@@ -354,6 +354,7 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     const s = st.current
     s.steadyRgb  = currentRgb()
     s.blendStart = -1
+    hueArcRef.current = null
   }
 
   // shuffleKey: new session starts. No black snap — a forced black reset
@@ -501,6 +502,12 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     if (s.blendStart >= 0 && ts - s.blendStart >= s.blendDurationMs) {
       s.steadyRgb  = s.inRgb.map(c => [...c])
       s.blendStart = -1
+      // Not required for correctness with the unwrap approach (steady,
+      // non-drifting anchors converge the unwrapped arc to a stable value
+      // within one frame on their own) — reset anyway for symmetry with
+      // startBlendTo/settleNow, so every place that changes which colors
+      // are being tracked resets the same way (2026-08-07, Opus review).
+      hueArcRef.current = null
     }
 
     // Snap detector — a 7.5s blend can move at most ~0.04 OKLab units per
@@ -540,6 +547,34 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     // position (so the boundary visibly travels).
     const divider = anchorDivider(tSec)
 
+    // Commit the hue traversal arc ONCE per frame, not per pixel (2026-08-07,
+    // see lerpOklabPolar's header) — anchor1/anchor0 are this frame's live-
+    // drifting colors, fixed for every pixel below.
+    //
+    // UNWRAP, not hysteresis (2026-08-07, Opus review — the hysteresis
+    // version shipped first and was a real regression, caught before this
+    // reached a live TV): a sign-flip THRESHOLD only delays the flip, it
+    // doesn't remove it — the anchors' hue gap sweeps continuously during a
+    // 7.5s crossfade, so by the time the gap clears the threshold and
+    // "releases," the released arc can be ~180deg away from the previous
+    // frame's, producing exactly the full-width single-frame color jump
+    // this whole rewrite exists to prevent (simulated: ~27% of random
+    // transitions hit a >60 RGB-unit single-frame jump with the threshold
+    // version, worst case 377 — matches the historical "~34% of vivid
+    // near-complementary pairs" figure from the original bug report).
+    // Unwrapping instead accumulates the arc continuously: each frame's raw
+    // shortest-path delta gets folded onto the PREVIOUS frame's arc via its
+    // own shortest delta, so a small change in the anchors' raw hue gap can
+    // only ever produce a small change in the committed arc, even as the
+    // raw value itself wraps across +-pi. Same simulation with the unwrap:
+    // 0% of transitions exceed a 60-unit jump, worst case 19.
+    const hue1 = Math.atan2(anchor1[2], anchor1[1])
+    const hue0 = Math.atan2(anchor0[2], anchor0[1])
+    const rawArc = shortestDelta(hue1, hue0)
+    const prevArc = hueArcRef.current
+    const hueArc = prevArc === null ? rawArc : prevArc + shortestDelta(prevArc, rawArc)
+    hueArcRef.current = hueArc
+
     const img = sctx.getImageData(0, 0, SW, SH)
     const data = img.data
     for (let y = 0; y < SH; y++) {
@@ -563,11 +598,11 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
         const score = (n0 - n1) * ANCHOR_NOISE_CONTRAST + edge * ANCHOR_SWING
         const mix = 0.5 + 0.5 * Math.tanh(score * ANCHOR_MIX_SHARPNESS)  // no floor clamp — see file header
 
-        // Polar blend, not lerp(anchor1, anchor0, mix) on each L/a/b channel
-        // separately — see lerpOklabPolar's header comment. Cartesian a/b
-        // lerp is exactly what produced the muddy gray band on near-
-        // complementary anchor pairs.
-        const [L, a, b] = lerpOklabPolar(anchor1, anchor0, mix)
+        // Polar blend along this frame's committed hueArc (see above) — a
+        // plain per-channel lerp(anchor1, anchor0, mix) is what produced the
+        // muddy gray band on near-complementary anchor pairs; see
+        // lerpOklabPolar's header comment for the full fix history.
+        const [L, a, b] = lerpOklabPolar(anchor1, anchor0, mix, hueArc)
 
         const [r, g, bb] = oklabToRgb([L, a, b])
         const idx = (y * SW + x) * 4
@@ -616,7 +651,16 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
     window.addEventListener('resize', resize)
 
     mountedRef.current = true
-    if (activeRef.current) startLoop()
+    // !rafRef.current guard added (2026-08-07, Opus review) for consistency
+    // with every other startLoop() call site (:346, :459, :467) — on
+    // FIRST mount this was harmless in practice (React runs effects in
+    // declaration order, so the [active] effect above already ran and
+    // bailed on `mountedRef.current === false` at that point, meaning this
+    // was the only startLoop() call). But it's still a real gap on any
+    // later re-run of THIS effect (its own dep is [colorSeeds], which is a
+    // stable useMemo so that's rare, but not impossible) without a matching
+    // unmount/cleanup having nulled rafRef first. Cheap to close either way.
+    if (activeRef.current && !rafRef.current) startLoop()
 
     return () => {
       mountedRef.current = false
