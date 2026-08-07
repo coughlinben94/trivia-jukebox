@@ -970,7 +970,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         {shown ? (
           <>
             {/* Record + tonearm scene */}
-            <div className="relative w-[330px] h-[330px] sm:w-[368px] sm:h-[368px]">
+            <div className="relative w-[370px] h-[370px] sm:w-[412px] sm:h-[412px]">
 
               {/* Layer 2 – fly wrapper: drops in on entrance, flies straight up on exit.
                    Never rotated — fly-up is always vertical regardless of spin angle.
@@ -1069,17 +1069,17 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
             >
               <h1
                 ref={titleRef}
-                className="text-5xl sm:text-6xl text-white tracking-tight leading-tight mb-2"
+                className="text-[54px] sm:text-[67px] text-white tracking-tight leading-tight mb-2"
                 style={{
                   fontFamily: FONT_DISPLAY,
                   textShadow: TEXT_SCRIM,
-                  ...(titleScale < 1 ? { fontSize: `${(titleBasePxRef.current ?? 48) * titleScale}px` } : {}),
+                  ...(titleScale < 1 ? { fontSize: `${(titleBasePxRef.current ?? 54) * titleScale}px` } : {}),
                 }}
               >
                 {displayName(shown.name)}
               </h1>
               <p
-                className="text-2xl sm:text-3xl text-white font-medium italic"
+                className="text-[27px] sm:text-[34px] text-white font-medium italic"
                 style={{ fontFamily: FONT_BODY, textShadow: TEXT_SCRIM }}
               >
                 {/* Cap the collaborator list at 2 names — a song with a
