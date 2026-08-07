@@ -914,7 +914,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
   }, [])
 
   return (
-    <div className={`fixed inset-0 bg-black z-50 overflow-hidden flex flex-col items-center justify-start transition-opacity duration-200 ${closing ? 'opacity-0' : 'opacity-100'}`}>
+    <div className={`fixed inset-0 bg-black z-50 overflow-hidden flex flex-col items-center justify-center transition-opacity duration-200 ${closing ? 'opacity-0' : 'opacity-100'}`}>
 
       {/* active is always true — grading breaks are exactly when the screen
           sits paused for minutes, and that's precisely when the ambient
@@ -966,7 +966,7 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
         style={{ background: 'radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,0.32) 100%)' }}
       />
 
-      <div className="relative z-10 flex flex-col items-center gap-8 px-10 text-center max-w-lg w-full" style={{ paddingTop: '10vh' }}>
+      <div className="relative z-10 flex flex-col items-center gap-8 px-10 text-center max-w-lg w-full">
         {shown ? (
           <>
             {/* Record + tonearm scene */}
@@ -989,10 +989,12 @@ function LiveScreen({ currentTrack, isPaused, ending, onClose, shuffleKey, onUpc
                      2026-08-07: the platter and spindle used to sit OUTSIDE this
                      wrapper as siblings, so they never faded — and the fly-off's
                      y:-500 does not actually clear the top of the viewport. The
-                     leftover on screen after a fly-off is
-                     (paddingTop + recordHeight - 500)px of the record's bottom
-                     edge: at the then-current 15vh anchor that was ~3px at the
-                     old 368px record (invisible) but ~47px on a 900px-tall
+                     leftover on screen after a fly-off is (distance-from-top +
+                     recordHeight - 500)px of the record's bottom edge, whatever
+                     that distance is (originally a fixed 15vh padding-top,
+                     since replaced by true flex centering on the outer
+                     wrapper): at the then-current 15vh anchor that was ~3px at
+                     the old 368px record (invisible) but ~47px on a 900px-tall
                      viewport at today's 412px size — i.e. the "bottom 10% of the
                      album stuck near the top of the screen" Ben reported, as a
                      dark platter chord that then sat there until the whole
