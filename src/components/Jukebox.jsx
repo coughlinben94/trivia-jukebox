@@ -1777,7 +1777,7 @@ function LibraryCard({ track, isPlaying, isPaused, onRemove, onClick, onDragStar
       onDragEnd={onDragEnd}
       onClick={onClick}
     >
-      <div className="aspect-square bg-white/[0.04]">
+      <div className="relative aspect-square bg-white/[0.04]">
         {img
           ? <img src={img.url} alt="" className="w-full h-full object-cover" draggable={false} />
           : <div className="w-full h-full" />
