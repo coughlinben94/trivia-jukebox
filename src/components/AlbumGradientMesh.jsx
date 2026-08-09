@@ -800,6 +800,9 @@ export default function AlbumGradientMesh({ colors = [], nextColors = [], active
         // rotating axis now instead of a fixed vertical one. Replaces the
         // old fixed small-lean `tilt` hack entirely (2026-08-07) — real
         // rotation, not a fake stand-in for it.
+        // `proj` is a manually-inlined copy of dividerEdge()'s projection math
+        // (this file, ~line 200) -- hoisted out of function-call form so cosT/
+        // sinT aren't recomputed per pixel. Keep both in sync by hand.
         const proj = (x / SW - 0.5) * aspect * cosT + (y / SH - 0.5) * sinT
         const edge = Math.tanh((proj / (2 * half) - offset) * ANCHOR_SHARPNESS)
 

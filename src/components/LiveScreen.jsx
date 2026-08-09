@@ -239,7 +239,12 @@ function LiveScreen({ currentTrack, isPaused, error, ending, onClose, shuffleKey
     // re-run to correct it. Re-measure once the real font is actually active.
     // Same gotcha Trivia OS's own autoFitText guards against for this reason.
     let cancelled = false
-    document.fonts?.ready?.then(() => { if (!cancelled) measure() })
+    // Skip the re-measure once fonts are already loaded (true for every song
+    // after the first) -- measure() above already ran against the real font
+    // metrics, so a second pass would just reproduce the same number.
+    if (document.fonts?.status !== 'loaded') {
+      document.fonts?.ready?.then(() => { if (!cancelled) measure() })
+    }
     return () => { cancelled = true }
   }, [shown?.name])
 
