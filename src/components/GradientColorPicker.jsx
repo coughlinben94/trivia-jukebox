@@ -193,12 +193,19 @@ export default function GradientColorPicker({
             )
           })}
 
+          {/* Labeled "Back", not "Done" (2026-08-09) — this only returns to
+              the trim editor underneath, it doesn't save-and-exit. Reusing
+              "Done" here sat in the exact same spot as the trim editor's own
+              real Done button, so picking colors then tapping this out of
+              habit read as one action that closed the whole song popup and,
+              if the out-point was already set, silently dropped the song
+              out of the Unscrubbed tab. */}
           <button
             onClick={onClose}
             style={{ transition: 'transform 160ms cubic-bezier(0.23,1,0.32,1)' }}
             className="w-full mt-2 py-3 bg-accent text-black text-sm font-bold rounded-xl hover:bg-accent-hover active:scale-[0.97] cursor-pointer"
           >
-            Done
+            ← Back to song
           </button>
         </div>
       </div>
