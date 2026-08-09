@@ -1368,7 +1368,7 @@ const [newSetName, setNewSetName] = useState('')
       <div className="flex flex-1 overflow-hidden">
 
         {/* Left sidebar — trivia themes */}
-        <aside className="w-44 flex-shrink-0 border-r border-white/[0.05] bg-surface-inset flex flex-col py-4 overflow-y-auto">
+        <aside className="w-44 flex-shrink-0 border-r border-white/[0.05] bg-surface-inset flex flex-col pt-4 pb-32 overflow-y-auto">
           {/* Add new theme — at top */}
           <div className="px-2 mb-3">
             {addingSet ? (
