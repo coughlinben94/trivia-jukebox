@@ -166,7 +166,15 @@ export function brightnessOffset() { return lerp(-0.06, 0.06, T('BRIGHTNESS') / 
 // FLOW_SPEED's base value (flowSpeedAt() still layers its own +-25% breathing
 // cycle on top of whatever this returns — MOTION sets the average tempo, not
 // the breathing itself).
-export function flowSpeedBase()    { return lerp(0.30, 0.80, T('MOTION') / 100) }           // 50 → 0.55
+//
+// Frozen 2026-08-09 (5-agent think-tank + Fable critique, "bright/fun/alive"
+// tuning pass for the public TV during grading breaks): MOTION=55 -> 0.575,
+// a small nudge up from the 0.55 default, still under the 0.79 an earlier
+// live session rejected as "too fast." Was live off T('MOTION') via
+// gradientTuning's DIALS board; now a frozen constant per this file's own
+// COPY VALUES workflow (see header) — the MOTION dial on the tuning board is
+// now a no-op for this value until someone unfreezes it back to the T() form.
+export function flowSpeedBase()    { return 0.575 }
 
 // The divider's offset-from-center amplitude cap — see anchorDivider()'s own
 // header for why this exists (the 2026-08-07 bleed-over fix: three sine
@@ -184,13 +192,25 @@ export function dividerOffsetCap() { return Math.min(0.30, lerp(0.05, 0.55, T('S
 // ("sharp pool edges vs. a soft, wide gradient where they meet"): lower is a
 // wider, softer band where the two colors visibly mix; higher snaps to a
 // crisper line with less visible in-between.
-export function mixSharpness()     { return lerp(0.6, 2.2, T('BLEND') / 100) }              // 50 → 1.4
+// Frozen 2026-08-09 (5-agent think-tank + Fable critique): BLEND=42 -> 1.272,
+// softer than the 1.4 default — wider visible in-between hue band, "melts"
+// rather than "cuts." Fable verified this stays clear of the mud/gray failure
+// modes this file's history describes fighting (those were all chroma-
+// cancellation bugs, fixed elsewhere in lerpOklabPolar; softening mixSharpness
+// doesn't reopen them) and that hand-picked colors still render near-full-
+// strength (tanh(1.272*1.2)≈0.955 vs 0.967 default — the no-ANCHOR_FLOOR
+// guarantee holds). Was live off T('BLEND'); now frozen per COPY VALUES.
+export function mixSharpness()     { return 1.272 }
 
 // How much local noise texture (vs. the divider sweep) shapes the boundary's
 // wobble and each pool's internal richness (ANCHOR_NOISE_CONTRAST) — DEPTH's
 // hint: "how much the edge flows, and how much each color shades within
 // itself."
-export function noiseContrast()    { return lerp(0.7, 2.3, T('DEPTH') / 100) }              // 50 → 1.5
+// Frozen 2026-08-09 (5-agent think-tank + Fable critique): DEPTH=55 -> 1.58,
+// a small lift from the 1.5 default for a touch more internal shading/
+// richness ("aliveness") within each color's stronghold. Was live off
+// T('DEPTH'); now frozen per COPY VALUES.
+export function noiseContrast()    { return 1.58 }
 
 // VARIETY resolves through the SAME curve as the server (paletteDefaults.js)
 // — used client-side only for the board's own readout; the actual palette

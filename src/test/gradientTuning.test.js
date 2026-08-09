@@ -12,12 +12,16 @@ import {
 describe('gradient tuning — wired to AlbumGradientMesh.jsx', () => {
   beforeEach(() => clearDials())
 
-  it('keeps every dial at its exact pre-rewire hardcoded value by default', () => {
+  // MOTION/BLEND/DEPTH frozen 2026-08-09 (5-agent think-tank + Fable
+  // critique, "bright/fun/alive" pass) — those 3 no longer read T() at all,
+  // so their default-dial value IS their only value now. BRIGHTNESS/SIZE/
+  // CROSSFADE stayed live and still reproduce the pre-rewire default.
+  it('BRIGHTNESS/SIZE/CROSSFADE hold their pre-rewire default; MOTION/BLEND/DEPTH hold their 2026-08-09 shipped freeze', () => {
     expect(brightnessOffset()).toBe(0)
-    expect(flowSpeedBase()).toBeCloseTo(0.55, 10)
+    expect(flowSpeedBase()).toBeCloseTo(0.575, 10)
     expect(dividerOffsetCap()).toBeCloseTo(0.30, 10)
-    expect(mixSharpness()).toBeCloseTo(1.4, 10)
-    expect(noiseContrast()).toBeCloseTo(1.5, 10)
+    expect(mixSharpness()).toBeCloseTo(1.272, 10)
+    expect(noiseContrast()).toBeCloseTo(1.58, 10)
     expect(blendDurationMs()).toBe(7500)
   })
 
