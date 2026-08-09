@@ -462,9 +462,16 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
   }, [])
 
   // ─── Manual scrub ────────────────────────────────────────────────
-  const seek = useCallback((ms) => {
+  // disableStopWatch: SongDetailModal passes this so dragging past the
+  // song's saved trim-out point doesn't immediately trigger the position
+  // monitor's fade+pause (it's still watching for the OLD stopMs from
+  // whichever playTrack call is live) — lets the preview scrubber roam the
+  // whole track. Player.jsx's live-playback scrubber omits it, so trims
+  // still stop live playback at the host's chosen out-point.
+  const seek = useCallback((ms, { disableStopWatch = false } = {}) => {
     seekingRef.current = true
     clearTimeout(seekTimerRef.current)
+    if (disableStopWatch) clearInterval(monitorRef.current)
     setPosition(ms)
     const deviceId = deviceIdRef.current
     // REST API seek only — more reliable than the SDK's player.seek(), same as playTrack's doSeek

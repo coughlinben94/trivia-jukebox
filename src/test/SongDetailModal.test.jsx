@@ -487,7 +487,7 @@ describe('Scrubber', () => {
 
     drag(screen.getByRole('slider'), 60000)
 
-    expect(seek).toHaveBeenCalledWith(60000)
+    expect(seek).toHaveBeenCalledWith(60000, { disableStopWatch: true })
   })
 
   it('updates local position display without calling seek() when track is not active', () => {

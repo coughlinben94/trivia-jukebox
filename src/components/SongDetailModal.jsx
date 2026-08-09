@@ -241,7 +241,7 @@ export default function SongDetailModal({ track, player, onUpdateTimes, onUpdate
               }}
               onPointerUp={e => {
                 const final = Number(e.target.value)
-                if (isActive) seek(final)
+                if (isActive) seek(final, { disableStopWatch: true })
                 else setLocalPos(final)
                 draggingRef.current = false
                 setDragMs(null)
