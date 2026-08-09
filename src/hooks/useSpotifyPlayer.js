@@ -68,6 +68,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
   const monitorRef = useRef(null)
   const seekingRef = useRef(false)
   const seekTimerRef = useRef(null)
+  const stopWatchDisabledRef = useRef(false)
   const maxVolumeRef = useRef(0.8)
   const onAdvanceRef = useRef(onAdvance)
   const onFadeStartRef = useRef(onFadeStart)
@@ -161,6 +162,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
   // match the fade-in's own budget (see playTrack) so the two never overlap.
   const startMonitor = useCallback((stopMs, gen, preview = false, fadeOutBudget = FADE_MS) => {
     clearInterval(monitorRef.current)
+    stopWatchDisabledRef.current = false
     // Capture this monitor's own interval id in the closure rather than reading
     // monitorRef.current at clear-time — a stale tick from a superseded generation
     // could otherwise clear a *newer* monitor's interval (it reassigns monitorRef
@@ -190,7 +192,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
       // instead of hitting it at full volume — acceptable to avoid ever
       // overshooting the host's chosen stop point.
       // Guard !state.paused: don't trigger on Spotify's own buffering pauses near stopMs
-      if (stopMs > 0 && pos >= stopMs - fadeOutBudget && !state.paused) {
+      if (stopMs > 0 && pos >= stopMs - fadeOutBudget && !state.paused && !stopWatchDisabledRef.current) {
         clearInterval(intervalId)
         if (!preview) onFadeStartRef.current?.()
         // Clamp to whatever's actually left before the out-point — polling is
@@ -471,7 +473,7 @@ export function useSpotifyPlayer({ onAdvance, onFadeStart } = {}) {
   const seek = useCallback((ms, { disableStopWatch = false } = {}) => {
     seekingRef.current = true
     clearTimeout(seekTimerRef.current)
-    if (disableStopWatch) clearInterval(monitorRef.current)
+    if (disableStopWatch) stopWatchDisabledRef.current = true
     setPosition(ms)
     const deviceId = deviceIdRef.current
     // REST API seek only — more reliable than the SDK's player.seek(), same as playTrack's doSeek
