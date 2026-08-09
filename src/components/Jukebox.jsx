@@ -223,7 +223,12 @@ const [newSetName, setNewSetName] = useState('')
   // aggregate instead. Shared by addToLibrary and resultsList's `inLibrary`
   // mark so both check against the actual write target, not the view.
   const realActiveSongs = sets.items[sets.activeId]?.songs ?? []
-  const library = unscrubbedView ? unscrubbedAggregate : realActiveSongs
+  // Untrimmed songs stay OUT of the real-set grid (Ben, 2026-08-09) --
+  // they only surface via the Unscrubbed aggregate until hasTrim() is true,
+  // then they reappear here automatically on next render. realActiveSongs
+  // itself stays unfiltered since dedup-guard/inLibrary checks need every
+  // song regardless of trim state.
+  const library = unscrubbedView ? unscrubbedAggregate : realActiveSongs.filter(hasTrim)
   const activeSetName = unscrubbedView ? 'Unscrubbed' : (sets.items[sets.activeId]?.name ?? 'Library')
   // Recomputed only when the library's songs actually change, not on every
   // 300ms position tick from playback (Jukebox re-renders on every tick).
@@ -1488,6 +1493,11 @@ const [newSetName, setNewSetName] = useState('')
               <div className="flex flex-col items-center justify-center h-full text-center select-none pb-16">
                 <p className="text-white text-sm">Nothing waiting to be scrubbed</p>
                 <p className="text-ink-muted text-xs mt-1">Every song across every library has trim points set</p>
+              </div>
+            ) : realActiveSongs.length > 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-center select-none pb-16">
+                <p className="text-white text-sm">{activeSetName}&rsquo;s songs are all unscrubbed</p>
+                <p className="text-ink-muted text-xs mt-1">Set trim points from the Unscrubbed tab to bring them in here</p>
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center h-full text-center select-none pb-16">
