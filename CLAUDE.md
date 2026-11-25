@@ -1,16 +1,5 @@
 # trivia-jukebox — Claude Code Instructions
 
-## Superpowers (read first, every session)
-Read `~/.agents/skills/using-superpowers/SKILL.md` at the start of every session. Non-negotiable.
-
-Invoke these automatically:
-- systematic-debugging → before any bug fix
-- writing-plans → before any new feature
-- verification-before-completion → before marking anything done
-- dispatching-parallel-agents → for large multi-part tasks
-- subagent-driven-development → for complex feature builds
-- brainstorming → before entering plan mode
-
 ## Read These First
 1. `~/.agents/skills/trivia-jukebox/SKILL.md` — THE playbook for this app: turntable/playback UI, track fades + trim points, canvas album-gradient background, palette extraction, shuffle, libraries/sets, QuickAdd route, Trivia OS handoff, Supabase sync
 2. `~/.agents/skills/baynes-ops/SKILL.md` — suite-wide context, Supabase patterns
@@ -21,8 +10,8 @@ Invoke these automatically:
 - **Local dev is broken on Vite 8** (`npm run dev` is flaky — import-analysis parser bug). Test against the live URL `trivia-jukebox.vercel.app`, not localhost. Don't try to fix local dev.
 - **Deploy is `git push` → Vercel auto-deploys.** No separate deploy command.
 - **Playwright is unusable here** — Spotify OAuth blocks automation browsers. Unit tests (`vitest run`) cover `shuffle.js`/`track.js`/`SongDetailModal.jsx`; playback/OAuth flows require a manual live-URL check.
-- **Supabase table `jukebox_state`** (singleton row) lives in the Trivia project (`qwtbgusqfoypvehnungr`) — migrated 2026-08-07 from the Business Suite project it was accidentally wired to in June. `trivia-os` also reads it (read-only, `?lib=` host-dropdown handoff) via its own `VITE_JUKEBOX_SUPABASE_URL`/`_ANON_KEY` env vars — keep both apps' env vars pointed at the same project if this ever moves again. Never create a new project.
+- **Supabase table `jukebox_state`** (singleton row) lives in the Trivia project (`qwtbgusqfoypvehnungr`), not Business Suite. `trivia-os` also reads it (read-only, `?lib=` host-dropdown handoff) via its own `VITE_JUKEBOX_SUPABASE_URL`/`_ANON_KEY` env vars — keep both apps' env vars pointed at the same project if this ever moves again. Never create a new project.
 - **Do not re-add in-app volume ducking** — it was intentionally deleted; volume is handled at system level (BetterTouchTool + Stream Deck).
 - **No iframe embedding** — Spotify blocks it. Trivia OS integration uses full-page navigation.
-- **When a data-fed visual looks wrong, dump the data before touching the renderer.** The gradient is driven by `api/palette.js`; the renderer only draws what the palette hands it. On 2026-07-19 roughly five hours and eight commits went into tuning gradient renderers — a WebGL noise version, a from-scratch OKLab mesh, sharpened weights, a rebuilt two-color collision, an intensity bump — chasing "flat, no color." At 21:30 commit `30e6594` found the actual cause: bucket-averaging in `api/palette.js` was washing out vivid colors before any renderer saw them. Print the extracted palette for the offending album cover first. If the colors are already dull in the array, the renderer is not the bug.
+- **When a data-fed visual looks wrong, dump the data before touching the renderer.** The gradient is driven by `api/palette.js`; the renderer only draws what the palette hands it. Bucket-averaging in `api/palette.js` once washed out vivid colors and cost hours of renderer tuning (fixed in `30e6594`). Print the extracted palette for the offending album cover first. If the colors are already dull in the array, the renderer is not the bug.
 - **One live gradient renderer exists: `AlbumGradientMesh.jsx`** (imported as `GradientBackground` in `LiveScreen.jsx`). Do not add engine A/B switches, URL/localStorage renderer selection, or parallel experimental renderers. Debug palette input first; renderer tuning cannot repair bad extracted colors.
